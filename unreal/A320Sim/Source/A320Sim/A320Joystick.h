@@ -13,6 +13,8 @@ struct FA320JoystickDevice
 	int32 NumButtons = 0;
 	uint32 AxisMin[a320::joy::kAxes] = {};
 	uint32 AxisMax[a320::joy::kAxes] = {};
+	bool HasAxis[a320::joy::kAxes] = {};  // from the capability flags, not the axis count
+	bool bHasPov = false;
 };
 
 // USB joysticks, throttles and rudder pedals through the Windows joystick API (winmm), which

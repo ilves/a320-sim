@@ -10,6 +10,29 @@
 #include "Windows/HideWindowsPlatformTypes.h"
 #endif
 
+namespace
+{
+#if PLATFORM_WINDOWS
+	// The product name Windows shows in "Game Controllers": JOYCAPS only has a generic driver
+	// name, the real one is stored per VID/PID in the registry.
+	FString OemName(WORD Mid, WORD Pid)
+	{
+		const FString Key = FString::Printf(
+			TEXT("System\\CurrentControlSet\\Control\\MediaProperties\\PrivateProperties\\Joystick\\OEM\\VID_%04X&PID_%04X"), Mid, Pid);
+		for (HKEY Root : {HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE})
+		{
+			WCHAR Buffer[256] = {};
+			DWORD Size = sizeof(Buffer);
+			if (RegGetValueW(Root, *Key, L"OEMName", RRF_RT_REG_SZ, nullptr, Buffer, &Size) == ERROR_SUCCESS)
+			{
+				return FString(Buffer);
+			}
+		}
+		return FString();
+	}
+#endif
+}
+
 using namespace a320::joy;
 
 void FA320Joystick::Init(const FString& InConfigPath)
@@ -52,20 +75,29 @@ void FA320Joystick::Rescan()
 		}
 		FA320JoystickDevice Device;
 		Device.SystemId = static_cast<int32>(Id);
-		Device.Name = FString(Caps.szPname);
-		if (Device.Name.Contains(TEXT("XBOX")) || Device.Name.Contains(TEXT("XInput")))
+		const FString Oem = OemName(Caps.wMid, Caps.wPid);
+		Device.Name = Oem.IsEmpty() ? FString(Caps.szPname) : Oem;
+		// Xbox/XInput pads are already Unreal gamepads; reading them here too would double them.
+		constexpr WORD MicrosoftVid = 0x045E;
+		if (Device.Name.Contains(TEXT("xbox")) || Device.Name.Contains(TEXT("xinput")) ||
+			(Caps.wMid == MicrosoftVid && Device.Name.Contains(TEXT("controller"))))
 		{
-			continue;  // handled as a gamepad by Unreal
+			UE_LOG(LogA320, Log, TEXT("Skipping %s: used as a gamepad"), *Device.Name);
+			continue;
 		}
 		Device.NumAxes = static_cast<int32>(Caps.wNumAxes);
 		Device.NumButtons = static_cast<int32>(Caps.wNumButtons);
 		const UINT Mins[kAxes] = {Caps.wXmin, Caps.wYmin, Caps.wZmin, Caps.wRmin, Caps.wUmin, Caps.wVmin};
 		const UINT Maxs[kAxes] = {Caps.wXmax, Caps.wYmax, Caps.wZmax, Caps.wRmax, Caps.wUmax, Caps.wVmax};
+		const bool Present[kAxes] = {true, true, (Caps.wCaps & JOYCAPS_HASZ) != 0, (Caps.wCaps & JOYCAPS_HASR) != 0,
+			(Caps.wCaps & JOYCAPS_HASU) != 0, (Caps.wCaps & JOYCAPS_HASV) != 0};
 		for (int32 A = 0; A < kAxes; ++A)
 		{
 			Device.AxisMin[A] = Mins[A];
 			Device.AxisMax[A] = Maxs[A];
+			Device.HasAxis[A] = Present[A];
 		}
+		Device.bHasPov = (Caps.wCaps & JOYCAPS_HASPOV) != 0;
 		UE_LOG(LogA320, Log, TEXT("Joystick %d: %s (%d axes, %d buttons)"), Devices.Num(), *Device.Name, Device.NumAxes, Device.NumButtons);
 		Devices.Add(Device);
 	}
@@ -97,7 +129,7 @@ void FA320Joystick::Poll(float DeltaSeconds)
 	{
 		JOYINFOEX Info = {};
 		Info.dwSize = sizeof(Info);
-		Info.dwFlags = JOY_RETURNALL;
+		Info.dwFlags = JOY_RETURNALL | JOY_RETURNPOVCTS;
 		if (joyGetPosEx(static_cast<UINT>(Devices[D].SystemId), &Info) != JOYERR_NOERROR)
 		{
 			Rescan();  // unplugged
@@ -107,12 +139,13 @@ void FA320Joystick::Poll(float DeltaSeconds)
 		for (int32 A = 0; A < kAxes; ++A)
 		{
 			Axes[static_cast<size_t>(D)][static_cast<size_t>(A)] =
-				A < Devices[D].NumAxes ? normalize(Raw[A], Devices[D].AxisMin[A], Devices[D].AxisMax[A]) : 0.0;
+				Devices[D].HasAxis[A] ? normalize(Raw[A], Devices[D].AxisMin[A], Devices[D].AxisMax[A]) : 0.0;
 		}
 		if (D == MainDevice)
 		{
 			ButtonsNow = static_cast<uint32>(Info.dwButtons);
-			Pov = Info.dwPOV == JOY_POVCENTERED ? -1 : static_cast<int32>(Info.dwPOV);
+			// Hundredths of a degree; anything outside 0..35999 (e.g. 65535) means centred.
+			Pov = Devices[D].bHasPov && Info.dwPOV <= 35999 ? static_cast<int32>(Info.dwPOV) : -1;
 		}
 	}
 #endif
@@ -184,19 +217,32 @@ void FA320Joystick::CycleAxis(int32 F)
 	{
 		return;
 	}
-	// None -> device 0 X..V -> device 1 X..V -> ... -> None
+	// None -> each axis the devices actually have, device by device -> None.
 	Binding& B = JoyConfig.bind[F];
-	if (B.device < 0)
+	int32 Dev = B.device, Axis = B.device < 0 ? -1 : B.axis;
+	for (;;)
 	{
-		B.device = Devices.Num() > 0 ? 0 : -1;
-		B.axis = 0;
-	}
-	else if (++B.axis >= kAxes)
-	{
-		B.axis = 0;
-		if (++B.device >= Devices.Num())
+		if (Dev < 0)
+		{
+			Dev = 0;
+			Axis = -1;
+		}
+		if (++Axis >= kAxes)
+		{
+			Axis = 0;
+			++Dev;
+		}
+		if (Dev >= Devices.Num())
 		{
 			B.device = -1;
+			B.axis = 0;
+			break;
+		}
+		if (Devices[Dev].HasAxis[Axis])
+		{
+			B.device = Dev;
+			B.axis = Axis;
+			break;
 		}
 	}
 	Save();

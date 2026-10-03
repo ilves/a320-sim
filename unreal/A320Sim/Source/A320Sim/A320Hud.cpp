@@ -1109,6 +1109,7 @@ void AA320Hud::DrawOverhead(const AA320Aircraft& Aircraft)
 	const double W = Canvas->ClipX, H = Canvas->ClipY;
 	const double OX = W * 0.17, OY = H * 0.075, OW = W * 0.66, OH = H * 0.47;
 	Fill(OX, OY, OW, OH, FLinearColor(0.2f, 0.23f, 0.26f, 0.97f));
+	Buttons.Add({FBox2D(FVector2D(OX, OY), FVector2D(OX + OW, OY + OH)), EA320Command::None});  // swallows clicks
 	Frame(OX, OY, OW, OH, FLinearColor(0.5f, 0.52f, 0.55f), 2.0);
 	Text(TEXT("OVERHEAD PANEL"), OX + OW / 2.0, OY + 0.025 * H, White, 1, 1);
 	AddButton(OX + OW - 0.04 * W, OY + 0.008 * H, 0.032 * W, 0.034 * H, TEXT("X"), EA320Command::OverheadToggle, false);
@@ -1175,6 +1176,7 @@ void AA320Hud::DrawJoystickPanel(const AA320PlayerController& Controller)
 	// Above the cockpit panel (which starts at 58 % of the height), like the overhead panel.
 	const double PX = W * 0.2, PY = H * 0.055, PW = W * 0.6, PH = H * 0.52;
 	Fill(PX, PY, PW, PH, FLinearColor(0.08f, 0.09f, 0.1f, 0.97f));
+	Buttons.Add({FBox2D(FVector2D(PX, PY), FVector2D(PX + PW, PY + PH)), EA320Command::None});  // swallows clicks
 	Frame(PX, PY, PW, PH, FLinearColor(0.5f, 0.52f, 0.55f), 2.0);
 	Text(TEXT("JOYSTICK SETUP"), PX + PW / 2.0, PY + 0.025 * H, White, 1, 1);
 	AddButton(PX + PW - 0.04 * W, PY + 0.008 * H, 0.032 * W, 0.034 * H, TEXT("X"), EA320Command::JoystickPanel, false);
@@ -1206,7 +1208,7 @@ void AA320Hud::DrawJoystickPanel(const AA320PlayerController& Controller)
 	for (int32 F = 0; F < kFunctionCount; ++F)
 	{
 		const Binding& B = Joy.GetConfig().bind[F];
-		const bool bBound = Joy.IsBound(static_cast<Function>(F));
+		const bool bBound = Joy.IsBound(static_cast<a320::joy::Function>(F));
 		Text(UTF8_TO_TCHAR(functionName(F)), PX + 0.02 * W, RowY + BtnH / 2.0, White, 0, 0);
 		const FString AxisText = B.device < 0 ? FString(TEXT("none")) : FString::Printf(TEXT("dev %d  %s"), B.device, UTF8_TO_TCHAR(axisName(B.axis)));
 		AddButton(ColAxis, RowY, 0.1 * W, BtnH, AxisText, static_cast<EA320Command>(static_cast<int32>(EA320Command::JoyAxis0) + F), bBound);
@@ -1218,7 +1220,7 @@ void AA320Hud::DrawJoystickPanel(const AA320PlayerController& Controller)
 		Fill(ColBar, RowY + BtnH * 0.3, BarW, BtnH * 0.4, Screen);
 		if (bBound)
 		{
-			const double V = Joy.Value(static_cast<Function>(F));
+			const double V = Joy.Value(static_cast<a320::joy::Function>(F));
 			const double Mid = ColBar + BarW / 2.0;
 			const double End = Mid + FMath::Clamp(V, -1.0, 1.0) * BarW / 2.0;
 			Fill(FMath::Min(Mid, End), RowY + BtnH * 0.3, FMath::Max(FMath::Abs(End - Mid), 2.0), BtnH * 0.4, Cyan);

@@ -51,6 +51,10 @@ TEST(joystick_config_roundtrip) {
   CHECK_NEAR(back.deadzone, 0.1, 1e-9);
   CHECK(back.buttons[0] == "AP_DISCONNECT");
   CHECK(back.buttons[7] == "VIEW");
+  Config spaced;
+  CHECK(fromText("  rudder = 1:4:1 \r\nbutton1 = GEAR\n", spaced));
+  CHECK(spaced.bind[kRudder].device == 1 && spaced.bind[kRudder].invert);
+  CHECK(spaced.buttons[0] == "GEAR");
   Config untouched = defaults();
   CHECK(!fromText("# nothing here\nfoo=bar\n", untouched));
   CHECK(untouched.bind[kPitch].axis == 1);

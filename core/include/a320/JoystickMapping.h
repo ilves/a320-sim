@@ -129,7 +129,12 @@ inline bool fromText(const std::string& text, Config& c) {
     if (line.empty() || line[0] == '#') continue;
     const size_t eq = line.find('=');
     if (eq == std::string::npos) continue;
-    const std::string key = line.substr(0, eq), value = line.substr(eq + 1);
+    auto trim = [](std::string t) {
+      const size_t b = t.find_first_not_of(" \t");
+      const size_t e = t.find_last_not_of(" \t");
+      return b == std::string::npos ? std::string() : t.substr(b, e - b + 1);
+    };
+    const std::string key = trim(line.substr(0, eq)), value = trim(line.substr(eq + 1));
     for (int f = 0; f < kFunctionCount; ++f) {
       if (key != kKeys[f]) continue;
       // "<device>:<axis>:<invert>"
