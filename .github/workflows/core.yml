@@ -1,0 +1,38 @@
+name: core
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S core -B build -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build --config Release --parallel
+      - name: Test (unit + scripted JSBSim flights)
+        run: ctest --test-dir build -C Release --output-on-failure
+
+  # Runs the same setup script a Windows user runs, minus the Unreal part.
+  windows-setup-script:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup.ps1 -CoreOnly
+        shell: powershell
+        run: .\scripts\setup.ps1 -CoreOnly
+      - name: Check installed files
+        shell: powershell
+        run: |
+          foreach ($f in 'bin\A320Core.dll', 'lib\A320Core.lib', 'include\a320\a320_api.h', 'include\a320\Geometry2D.h') {
+            $p = Join-Path 'unreal\A320Sim\Source\ThirdParty\A320Core' $f
+            if (-not (Test-Path $p)) { throw "missing $p" }
+          }
+          if (-not (Test-Path 'unreal\A320Sim\Binaries\Win64\A320Core.dll')) { throw 'DLL not copied to Binaries' }

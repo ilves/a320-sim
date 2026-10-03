@@ -1,0 +1,17 @@
+# Build outputs
+/build/
+/dist/
+
+# Unreal generated
+unreal/A320Sim/Binaries/
+unreal/A320Sim/Intermediate/
+unreal/A320Sim/Saved/
+unreal/A320Sim/DerivedDataCache/
+unreal/A320Sim/.vs/
+unreal/A320Sim/*.sln
+unreal/A320Sim/.vsconfig
+
+# IDEs
+.vs/
+.vscode/
+.idea/

@@ -1,0 +1,13 @@
+{
+	"FileVersion": 3,
+	"EngineAssociation": "",
+	"Category": "",
+	"Description": "A320 flight simulator MVP: JSBSim flight model, Tallinn EETN with ILS",
+	"Modules": [
+		{
+			"Name": "A320Sim",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		}
+	]
+}
