@@ -50,8 +50,21 @@ function Find-UnrealEngine([string]$Override) {
             if ($dir) { $candidates += [pscustomobject]@{ Dir = $dir; Version = $key.PSChildName } }
         }
     }
-    foreach ($dir in Get-ChildItem 'C:\Program Files\Epic Games' -Directory -Filter 'UE_5.*' -ErrorAction SilentlyContinue) {
-        $candidates += [pscustomobject]@{ Dir = $dir.FullName; Version = $dir.Name.Substring(3) }
+    # Source builds registered by the engine's Setup/GenerateProjectFiles.
+    $builds = Get-ItemProperty 'HKCU:\SOFTWARE\Epic Games\Unreal Engine\Builds' -ErrorAction SilentlyContinue
+    if ($builds) {
+        foreach ($prop in $builds.PSObject.Properties | Where-Object { $_.Name -notlike 'PS*' }) {
+            $candidates += [pscustomobject]@{ Dir = [string]$prop.Value; Version = '' }
+        }
+    }
+    # Default and custom launcher locations on every drive: X:\Program Files\Epic Games\UE_5.x,
+    # X:\Epic Games\UE_5.x, X:\UE_5.x.
+    foreach ($drive in Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue) {
+        foreach ($parent in @((Join-Path $drive.Root 'Program Files\Epic Games'), (Join-Path $drive.Root 'Epic Games'), $drive.Root)) {
+            foreach ($dir in Get-ChildItem $parent -Directory -Filter 'UE_5.*' -ErrorAction SilentlyContinue) {
+                $candidates += [pscustomobject]@{ Dir = $dir.FullName; Version = $dir.Name.Substring(3) }
+            }
+        }
     }
 
     $valid = $candidates | Where-Object { Test-Path (Join-Path $_.Dir 'Engine\Binaries\Win64\UnrealEditor.exe') }
@@ -65,8 +78,11 @@ function Find-UnrealEngine([string]$Override) {
 function Get-EngineOrFail([string]$Override) {
     $engine = Find-UnrealEngine $Override
     if (-not $engine) {
-        Fail ("Unreal Engine 5 was not found. Install it from the Epic Games Launcher " +
-              "(Unreal Engine > Library > +), or pass -EngineDir 'C:\Path\To\UE_5.x'.")
+        Fail ("Unreal Engine 5 was not found (looked in the Epic Games Launcher's install list, the registry and " +
+              "<drive>:\Program Files\Epic Games\UE_5.x, <drive>:\Epic Games\UE_5.x, <drive>:\UE_5.x).`n" +
+              "Install it: Epic Games Launcher > Unreal Engine > Library > Engine Versions > + > Install (5.5 or newer).`n" +
+              "If it is installed somewhere else, run: Setup.bat -EngineDir `"D:\Path\To\UE_5.x`" " +
+              "(the folder that contains Engine\Binaries).")
     }
     return $engine
 }
