@@ -48,6 +48,9 @@ private:
 	void DrawSimBar(const AA320Aircraft& Aircraft);
 	void DrawOverhead(const AA320Aircraft& Aircraft);
 	void DrawJoystickPanel(const class AA320PlayerController& Controller);
+	// First-start progress (shader/asset compilation) instead of a black screen; also logs
+	// progress lines and "READY" for the launcher window (scripts/play.ps1).
+	void DrawLoadingStatus(const AA320Aircraft* Aircraft);
 	// Airbus-style pushbutton: upper legend (e.g. FAULT/AVAIL) and lower legend (e.g. ON).
 	void Pushbutton(double X, double Y, double W, double H, const FString& Name, const FString& Upper,
 		const FLinearColor& UpperColor, const FString& Lower, const FLinearColor& LowerColor, EA320Command Command);
@@ -74,6 +77,10 @@ private:
 
 	TArray<FButton> Buttons;
 	TArray<FLeverSlot> Levers;
+	int32 MaxPending = 0;
+	double NextStatusLog = 0.0;
+	double QuietSince = -1.0;
+	bool bReadyLogged = false;
 	double Scale = 1.0;
 	double SpeedTrendKtS = 0.0;
 	double LastIas = 0.0;

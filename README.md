@@ -71,6 +71,14 @@ Setup.bat          (once: builds the flight model, runs its tests, compiles the 
 Play.bat           (starts the simulator in a window)
 ```
 
+The first start compiles the engine's shaders, which takes 5-15 minutes; later starts take seconds.
+While it starts, the `Play.bat` window shows a progress bar with the current stage (engine, flight
+model, shaders left to compile) and closes itself when the simulator is ready, and the game window
+shows a "Preparing graphics" panel with a progress bar instead of a black screen. If the game
+closes during start-up, `Play.bat` prints the last lines of its log
+(`unreal\A320Sim\Saved\Logs\A320Sim.log`) and stays open. `Play.bat -NoWait` skips the progress
+window.
+
 Other scripts:
 
 | Script | What it does |

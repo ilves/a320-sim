@@ -10,6 +10,10 @@
 #include "GameFramework/PlayerController.h"
 #include "RenderUtils.h"
 #include "a320/Geometry2D.h"
+#if WITH_EDITOR
+#include "AssetCompilingManager.h"
+#include "ShaderCompiler.h"
+#endif
 
 namespace
 {
@@ -142,8 +146,13 @@ void AA320Hud::DrawHUD()
 	Levers.Reset();
 	const APlayerController* PC = GetOwningPlayerController();
 	const AA320Aircraft* Aircraft = PC ? Cast<AA320Aircraft>(PC->GetPawn()) : nullptr;
-	if (!Canvas || !Aircraft)
+	if (!Canvas)
 	{
+		return;
+	}
+	if (!Aircraft)
+	{
+		DrawLoadingStatus(nullptr);
 		return;
 	}
 
@@ -194,6 +203,7 @@ void AA320Hud::DrawHUD()
 		}
 	}
 	DrawOverlays(*Aircraft);
+	DrawLoadingStatus(Aircraft);
 }
 
 void AA320Hud::DrawPfd(const AA320Aircraft& Aircraft, double X, double Y, double S)
@@ -1258,4 +1268,87 @@ void AA320Hud::DrawJoystickPanel(const AA320PlayerController& Controller)
 		PX + 0.02 * W, RowY, Grey, 0, 0);
 	Text(TEXT("Pitch: pull back = +. Throttle: full forward = +1 (TOGA). Use INV if a bar moves the wrong way."),
 		PX + 0.02 * W, PY + PH - 0.025 * H, FLinearColor(0.8f, 0.85f, 0.9f), 0, 0);
+}
+
+void AA320Hud::DrawLoadingStatus(const AA320Aircraft* Aircraft)
+{
+	int32 Shaders = 0;
+	int32 Assets = 0;
+#if WITH_EDITOR
+	// Only uncooked runs (Play.bat, the editor) compile on the fly; packaged builds never do.
+	if (GShaderCompilingManager)
+	{
+		Shaders = GShaderCompilingManager->GetNumRemainingJobs();
+	}
+	Assets = FAssetCompilingManager::Get().GetNumRemainingAssets();
+#endif
+	const int32 Pending = Shaders + Assets;
+	const double Now = GetWorld()->GetRealTimeSeconds();
+	MaxPending = FMath::Max(MaxPending, Pending);
+
+	if (Now >= NextStatusLog && Pending > 0)
+	{
+		NextStatusLog = Now + 2.0;
+		UE_LOG(LogA320, Log, TEXT("Preparing graphics: %d shaders, %d assets remaining (of %d)"), Shaders, Assets, MaxPending);
+	}
+	// Ready once nothing has been compiling for a moment and the aircraft exists.
+	if (!bReadyLogged)
+	{
+		if (Pending > 0 || !Aircraft)
+		{
+			QuietSince = -1.0;
+		}
+		else if (QuietSince < 0.0)
+		{
+			QuietSince = Now;
+		}
+		else if (Now - QuietSince > 1.5)
+		{
+			bReadyLogged = true;
+			UE_LOG(LogA320, Log, TEXT("READY"));
+		}
+	}
+
+	const double W = Canvas->ClipX, H = Canvas->ClipY;
+	Scale = FMath::Max(H / 1080.0, 0.6);
+	if (Pending == 0 && Aircraft)
+	{
+		return;
+	}
+	if (bReadyLogged)
+	{
+		// Later, small on-demand compiles: just a quiet note.
+		Text(FString::Printf(TEXT("Compiling shaders: %d"), Pending), 20.0 * Scale, H * 0.55, Grey, 0, 0);
+		return;
+	}
+
+	// First start: a progress panel over the (still incomplete) view.
+	const double BW = 760.0 * Scale, BH = 230.0 * Scale;
+	const double BX = (W - BW) / 2.0, BY = H * 0.18;
+	Fill(BX, BY, BW, BH, FLinearColor(0.02f, 0.03f, 0.05f, 0.92f));
+	Frame(BX, BY, BW, BH, FLinearColor(0.4f, 0.45f, 0.5f), 2.0);
+	Text(TEXT("A320 SIM  -  preparing graphics"), BX + BW / 2.0, BY + 32.0 * Scale, White, 2, 1);
+	FString Detail;
+	if (!Aircraft)
+	{
+		Detail = TEXT("Loading the flight model and the airport...");
+	}
+	else
+	{
+		Detail = FString::Printf(TEXT("Compiling shaders: %d remaining"), Shaders);
+		if (Assets > 0)
+		{
+			Detail += FString::Printf(TEXT(",  building assets: %d"), Assets);
+		}
+	}
+	Text(Detail, BX + BW / 2.0, BY + 82.0 * Scale, Amber, 1, 1);
+	const double Progress = MaxPending > 0 ? 1.0 - static_cast<double>(Pending) / MaxPending : 0.0;
+	const double BarX = BX + 40.0 * Scale, BarY = BY + 112.0 * Scale, BarW = BW - 80.0 * Scale, BarH = 18.0 * Scale;
+	Fill(BarX, BarY, BarW, BarH, FLinearColor(0.12f, 0.13f, 0.15f));
+	Fill(BarX, BarY, BarW * FMath::Clamp(Progress, 0.0, 1.0), BarH, Cyan);
+	const int32 Elapsed = static_cast<int32>(Now);
+	Text(FString::Printf(TEXT("%d%%   -   %d:%02d elapsed"), static_cast<int32>(Progress * 100.0), Elapsed / 60, Elapsed % 60),
+		BX + BW / 2.0, BarY + 36.0 * Scale, White, 0, 1);
+	Text(TEXT("This happens once (results are cached); the next start takes seconds."), BX + BW / 2.0, BarY + 64.0 * Scale, Grey, 0, 1);
+	Text(TEXT("The aircraft is parked with the brakes set, so it is safe to wait."), BX + BW / 2.0, BarY + 86.0 * Scale, Grey, 0, 1);
 }
