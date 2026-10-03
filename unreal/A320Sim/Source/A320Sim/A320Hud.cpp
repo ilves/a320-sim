@@ -1315,9 +1315,9 @@ void AA320Hud::DrawLoadingStatus(const AA320Aircraft* Aircraft)
 	{
 		return;
 	}
-	if (bReadyLogged)
+	if (bReadyLogged || (Aircraft && MaxPending < 100))
 	{
-		// Later, small on-demand compiles: just a quiet note.
+		// Small on-demand compiles (later starts, new views): just a quiet note.
 		Text(FString::Printf(TEXT("Compiling shaders: %d"), Pending), 20.0 * Scale, H * 0.55, Grey, 0, 0);
 		return;
 	}
