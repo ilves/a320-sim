@@ -2,6 +2,7 @@
 
 #include "A320Aircraft.h"
 #include "A320PlayerController.h"
+#include "A320Sim.h"
 #include "CanvasItem.h"
 #include "Engine/Canvas.h"
 #include "Engine/Engine.h"
