@@ -9,6 +9,7 @@
 #include "initialization/FGInitialCondition.h"
 #include "initialization/FGTrim.h"
 #include "models/FGPropulsion.h"
+#include "models/propulsion/FGTurbine.h"
 #include "simgear/misc/sg_path.hxx"
 
 #include "a320/Units.h"
@@ -75,7 +76,18 @@ bool Simulation::reset(A320Scenario scenario, int runwayIndex) {
   state_.calloutSeq = calloutSeq;
   state_.touchdownSeq = touchdownSeq;
 
-  const bool onRunway = scenario == A320_SCENARIO_RUNWAY;
+  const bool coldDark = scenario == A320_SCENARIO_COLD_DARK;
+  const bool onRunway = scenario == A320_SCENARIO_RUNWAY || coldDark;
+  apu_.setRunning(false);
+  decel_.reset();
+  // Engines running: masters on, mode NORM; cold and dark: everything off.
+  controls_.engMaster[0] = controls_.engMaster[1] = coldDark ? 0 : 1;
+  controls_.engMode = A320_ENG_MODE_NORM;
+  controls_.lights = coldDark ? 0
+                    : A320_LT_BEACON | A320_LT_STROBE | A320_LT_NAV | A320_LT_LANDING | A320_LT_TAKEOFF;
+  controls_.signs = A320_SIGN_NO_SMOKING | (coldDark ? 0 : A320_SIGN_SEATBELTS);
+  controls_.spoilersArmed = onRunway ? 1 : 0;
+  controls_.autobrake = onRunway && !coldDark ? A320_AUTOBRAKE_MAX : A320_AUTOBRAKE_OFF;
   double speedKt = 0.0;
   RunwayPoint start;
   if (onRunway) {
@@ -124,7 +136,7 @@ bool Simulation::reset(A320Scenario scenario, int runwayIndex) {
       std::snprintf(name, sizeof(name), "propulsion/engine[%d]/reverser-angle-rad", i);
       setProp(name, 0.0);
     }
-    fdm_->GetPropulsion()->InitRunning(-1);
+    if (!coldDark) fdm_->GetPropulsion()->InitRunning(-1);
     thsDeg = onRunway ? kTakeoffThsDeg : trimAirborne();
     if (onRunway) {
       setProp("fcs/ths-pos-rad", thsDeg * kDegToRad);
@@ -153,6 +165,27 @@ bool Simulation::reset(A320Scenario scenario, int runwayIndex) {
   wasOnGround_ = state_.onGround != 0;
   airborneS_ = lastAirborneS_ = wasOnGround_ ? 0.0 : 60.0;
   return true;
+}
+
+void Simulation::updateEngines(bool bleedAvailable) {
+  const A320Controls& c = controls_;
+  for (int i = 0; i < 2; ++i) {
+    auto engine = std::static_pointer_cast<JSBSim::FGTurbine>(fdm_->GetPropulsion()->GetEngine(i));
+    if (!engine) continue;
+    const bool running = engine->GetRunning();
+    if (!c.engMaster[i]) {
+      // Fuel off. With the selector in CRANK the starter still motors the engine dry.
+      engine->SetCutoff(true);
+      engine->SetStarter(!running && c.engMode == A320_ENG_MODE_CRANK && bleedAvailable);
+    } else if (!running) {
+      // FADEC automatic start: starter on, fuel and ignition at ~20 % N2 (JSBSim needs >15 %).
+      const bool starter = c.engMode == A320_ENG_MODE_IGN_START && bleedAvailable;
+      engine->SetStarter(starter);
+      engine->SetCutoff(!(starter && engine->GetN2() >= 20.0));
+    } else {
+      engine->SetCutoff(false);
+    }
+  }
 }
 
 double Simulation::trimAirborne() {
@@ -249,6 +282,11 @@ void Simulation::applyControls() {
   const A320Controls& c = controls_;
   const bool onGround = state_.onGround != 0;
 
+  apu_.update(c.apuMaster != 0, c.apuStart != 0, clock_.stepS());
+  bool anyEngineRunning = false;
+  for (int i = 0; i < 2; ++i) anyEngineRunning = anyEngineRunning || state_.engRunning[i];
+  updateEngines((c.apuBleed && apu_.avail()) || anyEngineRunning);
+
   const ApOutput ap = ap_.update(apInput());
   const double stickPitch = ap.apActive ? ap.stickPitch : c.stickPitch;
   const double stickRoll = ap.apActive ? ap.stickRoll : c.stickRoll;
@@ -289,9 +327,19 @@ void Simulation::applyControls() {
     setProp(name, reverse ? kReverserAngleRad : 0.0);
   }
 
+  GroundDecelInput gd;
+  gd.onGround = onGround;
+  gd.armed = c.spoilersArmed != 0;
+  gd.autobrake = c.autobrake;
+  gd.thrustLever = clamp(c.thrustLever, 0.0, 1.0);
+  gd.reverse = reverse;
+  gd.groundSpeedKt = state_.groundSpeedKt;
+  gd.pilotBrake = std::fmax(c.brakeLeft, c.brakeRight);
+  gd.dtS = clock_.stepS();
+  const double autoBrake = decel_.update(gd);
   const double park = c.parkBrake ? 1.0 : 0.0;
-  setProp("fcs/left-brake-cmd-norm", std::fmax(clamp(c.brakeLeft, 0.0, 1.0), park));
-  setProp("fcs/right-brake-cmd-norm", std::fmax(clamp(c.brakeRight, 0.0, 1.0), park));
+  setProp("fcs/left-brake-cmd-norm", std::fmax(std::fmax(clamp(c.brakeLeft, 0.0, 1.0), park), autoBrake));
+  setProp("fcs/right-brake-cmd-norm", std::fmax(std::fmax(clamp(c.brakeRight, 0.0, 1.0), park), autoBrake));
 
   // Ground interlock: the gear lever cannot be raised with weight on wheels.
   if (c.gearDown || !onGround) setProp("gear/gear-cmd-norm", c.gearDown ? 1.0 : 0.0);
@@ -299,7 +347,7 @@ void Simulation::applyControls() {
   if (c.flapsLever != flaps_.lever()) flaps_.setLever(c.flapsLever, state_.iasKt);
   flaps_.update(state_.iasKt);
   setProp("fcs/flap-cmd-norm", flaps_.flapTargetDeg() / 40.0);
-  setProp("fcs/speedbrake-cmd-norm", clamp(c.speedbrake, 0.0, 1.0));
+  setProp("fcs/speedbrake-cmd-norm", decel_.spoilersOut() ? 1.0 : clamp(c.speedbrake, 0.0, 1.0));
 }
 
 void Simulation::refreshState() {
@@ -379,6 +427,27 @@ void Simulation::refreshState() {
   s.fcuAltFt = ap_.altFt();
   s.fcuVsFpm = ap_.vsFpm();
   s.apDisconnectSeq = ap_.disconnectSeq();
+
+  s.apuN = apu_.n();
+  s.apuAvail = apu_.avail() ? 1 : 0;
+  s.apuStarting = apu_.starting() ? 1 : 0;
+  s.apuMaster = controls_.apuMaster;
+  s.apuBleed = controls_.apuBleed;
+  s.engMode = controls_.engMode;
+  for (int i = 0; i < 2; ++i) {
+    auto engine = std::static_pointer_cast<JSBSim::FGTurbine>(fdm_->GetPropulsion()->GetEngine(i));
+    s.engMaster[i] = controls_.engMaster[i];
+    s.engRunning[i] = engine && engine->GetRunning() ? 1 : 0;
+    s.engStarting[i] = engine && !engine->GetRunning() && engine->GetStarter() ? 1 : 0;
+  }
+  s.bleedAvailable = (controls_.apuBleed && apu_.avail()) || s.engRunning[0] || s.engRunning[1] ? 1 : 0;
+  s.autobrake = decel_.mode();
+  s.autobrakeActive = decel_.autobrakeActive() ? 1 : 0;
+  s.autobrakeDecel = decel_.decelReached() ? 1 : 0;
+  s.spoilersArmed = controls_.spoilersArmed;
+  s.groundSpoilers = decel_.spoilersOut() ? 1 : 0;
+  s.lights = controls_.lights;
+  s.signs = controls_.signs;
 
   const bool takeoffPhase = s.onGround || (s.radioAltFt < 1500.0 && s.thrustLever > kLeverClimb + 0.05);
   const SpeedLimits lim = computeSpeedLimits(s.flapsLever, s.onePlusF != 0, s.flapDeg, weightLbs,

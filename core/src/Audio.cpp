@@ -133,6 +133,14 @@ void AudioEngine::synthesizeClips() {
     hi += 0.12f * (n - hi);
     return 0.5f * (lo - hi) * std::exp(-t * 8.0f);
   });
+  // Cabin chime ("ding-dong") when the seat belt or no smoking signs change.
+  make("ding", 1.2f, [](float t) {
+    const float second = t > 0.35f ? 1.0f : 0.0f;
+    const float t2 = t - 0.35f;
+    const float a = std::min(t / 0.004f, 1.0f) * std::exp(-t * 3.5f) * std::sin(kTwoPi * 880.0f * t);
+    const float b = second * std::exp(-t2 * 3.5f) * std::sin(kTwoPi * 698.5f * t2);
+    return 0.35f * (a + b);
+  });
   make("clunk", 0.2f, [&](float t) { return 0.6f * std::sin(kTwoPi * 90.0f * t) * std::exp(-t * 25.0f) + 0.3f * rnd() * std::exp(-t * 60.0f); });
 }
 
@@ -178,6 +186,9 @@ AudioEngine::Params AudioEngine::targetParams(const A320State& s) const {
     p.rumbleAmp = 0.22f * static_cast<float>(s.gearPos) * std::pow(clamp(ias / 220.0f, 0.0f, 1.0f), 2.0f);
   }
   p.buffetAmp = 0.25f * static_cast<float>(s.speedbrakePos) * std::pow(clamp(ias / 250.0f, 0.0f, 1.0f), 2.0f);
+  // APU: a high turbine whine that rises with its speed.
+  p.apuFreq = 2600.0f * static_cast<float>(s.apuN / 100.0);
+  p.apuAmp = 0.025f * static_cast<float>(clamp(s.apuN / 60.0, 0.0, 1.0));
   return p;
 }
 
@@ -188,6 +199,7 @@ void AudioEngine::detectEvents(const A320State& s, double blockS) {
     touchdownSeq_ = s.touchdownSeq;
     apSeq_ = s.apDisconnectSeq;
     gearPos_ = s.gearPos;
+    signs_ = s.signs;
     synced_ = true;
   }
   if (clickPending_) {
@@ -211,6 +223,10 @@ void AudioEngine::detectEvents(const A320State& s, double blockS) {
   const bool gearWasMoving = gearPos_ > 0.001 && gearPos_ < 0.999;
   if (gearSettled && gearWasMoving) play("clunk", 0.9f);
   gearPos_ = s.gearPos;
+  if (s.signs != signs_) {
+    signs_ = s.signs;
+    play("ding", 0.8f);
+  }
 
   if (s.paused) return;
   // Master warning: continuous repetitive chime until acknowledged. Stall and GPWS speak instead.
@@ -260,6 +276,8 @@ void AudioEngine::render(int16_t* out, int frames, const A320State& s) {
     p_.windA += glide * (target.windA - p_.windA);
     p_.rumbleAmp += glide * (target.rumbleAmp - p_.rumbleAmp);
     p_.buffetAmp += glide * (target.buffetAmp - p_.buffetAmp);
+    p_.apuFreq += glide * (target.apuFreq - p_.apuFreq);
+    p_.apuAmp += glide * (target.apuAmp - p_.apuAmp);
 
     const float n = noise();
     roar1_ += p_.roarA * (n - roar1_);
@@ -272,6 +290,8 @@ void AudioEngine::render(int16_t* out, int frames, const A320State& s) {
 
     whinePhase_ += p_.whineFreq * invRate;
     corePhase_ += p_.coreFreq * invRate;
+    apuPhase_ += p_.apuFreq * invRate;
+    apuPhase_ -= std::floor(apuPhase_);
     whinePhase_ -= std::floor(whinePhase_);
     corePhase_ -= std::floor(corePhase_);
 
@@ -279,7 +299,8 @@ void AudioEngine::render(int16_t* out, int frames, const A320State& s) {
     float mix = 3.0f * p_.roarAmp * roar2_ + 2.0f * p_.windAmp * wind2_ + 6.0f * p_.rumbleAmp * rumble2_ +
                 5.0f * p_.buffetAmp * buffet_ +
                 p_.whineAmp * std::sin(kTwoPi * static_cast<float>(whinePhase_)) +
-                p_.coreAmp * std::sin(kTwoPi * static_cast<float>(corePhase_));
+                p_.coreAmp * std::sin(kTwoPi * static_cast<float>(corePhase_)) +
+                p_.apuAmp * std::sin(kTwoPi * static_cast<float>(apuPhase_));
     for (Voice& v : voices_) {
       if (v.pos < v.clip->size()) mix += v.gain * (*v.clip)[v.pos++];
     }

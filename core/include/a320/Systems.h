@@ -77,6 +77,57 @@ struct WarningInput {
 uint32_t computeWarnings(const WarningInput& in);
 const char* warningText(Warning w);
 
+// APU: MASTER SW opens the inlet, START spins it up (about 30 s), AVAIL at 95 %.
+class Apu {
+ public:
+  void update(bool master, bool startButton, double dtS);
+  void setRunning(bool running);
+  double n() const { return n_; }
+  bool avail() const { return n_ >= 95.0; }
+  bool starting() const { return starting_; }
+
+ private:
+  double n_ = 0.0;
+  bool starting_ = false;
+  bool lastStart_ = false;
+};
+
+// Ground spoilers and autobrake. Armed spoilers extend at touchdown (or a rejected takeoff
+// above 72 kt) with the thrust levers at idle, or whenever reverse is selected; they retract
+// when the levers are advanced. The autobrake works once they are out and holds a
+// deceleration: LO 1.7, MED 3.0 m/s2, MAX full braking.
+struct GroundDecelInput {
+  bool onGround = false;
+  bool armed = false;
+  int autobrake = A320_AUTOBRAKE_OFF;
+  double thrustLever = 0.0;
+  bool reverse = false;
+  double groundSpeedKt = 0.0;
+  double pilotBrake = 0.0;
+  double dtS = 1.0 / 120.0;
+};
+
+class GroundDecel {
+ public:
+  void reset();
+  // Returns the autobrake's brake command (0..1).
+  double update(const GroundDecelInput& in);
+  bool spoilersOut() const { return spoilers_; }
+  bool autobrakeActive() const { return active_; }
+  bool decelReached() const { return decelLight_; }
+  int mode() const { return mode_; }
+
+ private:
+  bool spoilers_ = false;
+  bool active_ = false;
+  bool decelLight_ = false;
+  int mode_ = A320_AUTOBRAKE_OFF;
+  int requested_ = A320_AUTOBRAKE_OFF;  // the selector; a disarm sticks until it changes
+  double lastGsKt_ = -1.0;
+  double decel_ = 0.0;
+  double brake_ = 0.0;
+};
+
 // Radio-altitude callouts announced when descending through each height.
 class Callouts {
  public:

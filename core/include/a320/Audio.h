@@ -41,7 +41,7 @@ class AudioEngine {
   };
   struct Params {
     float roarAmp = 0, roarA = 0, whineFreq = 0, whineAmp = 0, coreFreq = 0, coreAmp = 0;
-    float windAmp = 0, windA = 0, rumbleAmp = 0, buffetAmp = 0;
+    float windAmp = 0, windA = 0, rumbleAmp = 0, buffetAmp = 0, apuFreq = 0, apuAmp = 0;
   };
 
   void play(const std::string& name, float gain = 1.0f);
@@ -56,13 +56,14 @@ class AudioEngine {
   std::vector<Voice> voices_;
 
   Params p_;
-  double whinePhase_ = 0.0, corePhase_ = 0.0;
+  double whinePhase_ = 0.0, corePhase_ = 0.0, apuPhase_ = 0.0;
   float roar1_ = 0, roar2_ = 0, wind1_ = 0, wind2_ = 0, rumble1_ = 0, rumble2_ = 0, buffet_ = 0;
   uint32_t rng_ = 0x12345678u;
 
   bool synced_ = false;
   uint32_t calloutSeq_ = 0, touchdownSeq_ = 0, apSeq_ = 0;
   double gearPos_ = 1.0;
+  int signs_ = 0;
   uint32_t acked_ = 0;
   double chimeTimer_ = 0.0, voiceTimer_ = 0.0;
   bool clickPending_ = false;

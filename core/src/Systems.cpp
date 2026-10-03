@@ -120,6 +120,74 @@ const char* warningText(Warning w) {
   }
 }
 
+void Apu::update(bool master, bool startButton, double dtS) {
+  if (!master) {
+    starting_ = false;
+    n_ = std::fmax(n_ - 5.0 * dtS, 0.0);
+  } else {
+    if (startButton && !lastStart_ && n_ < 95.0) starting_ = true;
+    if (starting_) {
+      n_ = std::fmin(n_ + 3.5 * dtS, 100.0);
+      if (n_ >= 100.0) starting_ = false;
+    }
+  }
+  lastStart_ = startButton;
+}
+
+void Apu::setRunning(bool running) {
+  n_ = running ? 100.0 : 0.0;
+  starting_ = false;
+}
+
+void GroundDecel::reset() {
+  spoilers_ = active_ = decelLight_ = false;
+  mode_ = requested_ = A320_AUTOBRAKE_OFF;
+  lastGsKt_ = -1.0;
+  decel_ = brake_ = 0.0;
+}
+
+double GroundDecel::update(const GroundDecelInput& in) {
+  // Measured deceleration from ground speed, smoothed.
+  if (lastGsKt_ >= 0.0 && in.dtS > 0.0) {
+    const double d = (lastGsKt_ - in.groundSpeedKt) * kKtToMps / in.dtS;
+    decel_ += (d - decel_) * 0.05;
+  }
+  lastGsKt_ = in.groundSpeedKt;
+
+  const bool idle = in.thrustLever < 0.05;
+  if (!in.onGround || (!idle && !in.reverse) || (!in.armed && !in.reverse)) spoilers_ = false;
+  else if (in.reverse || (in.armed && idle && in.groundSpeedKt > 72.0)) spoilers_ = true;
+
+  if (in.autobrake != requested_) {
+    requested_ = in.autobrake;
+    mode_ = requested_;
+    if (mode_ == A320_AUTOBRAKE_OFF) active_ = false;
+  }
+  // Disarmed by firm pilot braking or by advancing the thrust levers.
+  if (active_ && (in.pilotBrake > 0.6 || (!idle && !in.reverse))) {
+    active_ = false;
+    mode_ = A320_AUTOBRAKE_OFF;
+  }
+  if (!active_ && mode_ != A320_AUTOBRAKE_OFF && spoilers_) active_ = true;
+  if (!active_) {
+    brake_ = 0.0;
+    decelLight_ = false;
+    return 0.0;
+  }
+
+  if (mode_ == A320_AUTOBRAKE_MAX) {
+    brake_ = 1.0;
+  } else {
+    const double target = mode_ == A320_AUTOBRAKE_LO ? 1.7 : 3.0;
+    brake_ = clamp(brake_ + 0.25 * (target - decel_) * in.dtS, 0.0, 1.0);
+    decelLight_ = decel_ > 0.8 * target;
+  }
+  if (mode_ == A320_AUTOBRAKE_MAX) decelLight_ = decel_ > 4.0;
+  // Hold the aircraft once stopped.
+  if (in.groundSpeedKt < 1.0) brake_ = std::fmax(brake_, 0.5);
+  return brake_;
+}
+
 const char* Callouts::update(double radioAltFt, bool onGround, double thrustLever) {
   struct Callout { double ft; const char* text; };
   static const Callout kCallouts[] = {

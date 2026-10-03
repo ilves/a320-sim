@@ -42,8 +42,7 @@ struct ApFlight {
     a320_get_runway(sim, idx, &rw);
     magVar = a320_magnetic_variation_deg(sim);
     a320_get_state(sim, &s);
-    c.gearDown = s.gearLeverDown;
-    c.flapsLever = s.flapsLever;
+    a320_get_controls(sim, &c);
     c.thrustLever = 0.75;  // CL detent: autothrust range
   }
   ~ApFlight() { a320_destroy(sim); }

@@ -56,6 +56,10 @@ void a320_set_controls(A320Sim* sim, const A320Controls* controls) {
   if (sim && controls) sim->sim.setControls(*controls);
 }
 
+void a320_get_controls(const A320Sim* sim, A320Controls* controls) {
+  if (sim && controls) *controls = sim->sim.controls();
+}
+
 void a320_update(A320Sim* sim, double realDtS) {
   if (!sim) return;
   try {

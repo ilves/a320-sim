@@ -63,6 +63,9 @@ class Simulation {
   FlyByWire fbw_;
   FlapsSystem flaps_;
   Autopilot ap_;
+  Apu apu_;
+  GroundDecel decel_;
+  void updateEngines(bool bleedAvailable);
   AudioEngine audio_;
   double throttle_ = 0.0;
   bool athrActive_ = false;

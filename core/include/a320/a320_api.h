@@ -21,12 +21,13 @@
 extern "C" {
 #endif
 
-#define A320_API_VERSION 2
+#define A320_API_VERSION 3
 
 typedef enum A320Scenario {
   A320_SCENARIO_RUNWAY = 0,     /* lined up, engines idle, CONF 1+F, park brake set */
   A320_SCENARIO_FINAL_10NM = 1, /* established on the ILS, gear down, CONF 3 */
-  A320_SCENARIO_FINAL_4NM = 2   /* established on the ILS, gear down, CONF FULL */
+  A320_SCENARIO_FINAL_4NM = 2,  /* established on the ILS, gear down, CONF FULL */
+  A320_SCENARIO_COLD_DARK = 3   /* lined up, engines and APU off: start them yourself */
 } A320Scenario;
 
 /* Autoflight (FCU) modes, as shown on the PFD's flight mode annunciator. */
@@ -78,6 +79,28 @@ typedef enum A320WarningBit {
 #define A320_WARN_COUNT 8
 #define A320_WARN_CAUTION_MASK (A320_WARN_GLIDESLOPE | A320_WARN_SINK_RATE)
 
+/* Exterior lights (A320Controls.lights / A320State.lights) and cabin signs. */
+#define A320_LT_BEACON 1
+#define A320_LT_STROBE 2
+#define A320_LT_NAV 4
+#define A320_LT_LANDING 8
+#define A320_LT_TAXI 16       /* nose light TAXI */
+#define A320_LT_TAKEOFF 32    /* nose light T.O */
+#define A320_LT_RWY_TURNOFF 64
+#define A320_SIGN_SEATBELTS 1
+#define A320_SIGN_NO_SMOKING 2
+
+/* ENG MODE selector. */
+#define A320_ENG_MODE_CRANK 0
+#define A320_ENG_MODE_NORM 1
+#define A320_ENG_MODE_IGN_START 2
+
+/* AUTO BRK. */
+#define A320_AUTOBRAKE_OFF 0
+#define A320_AUTOBRAKE_LO 1
+#define A320_AUTOBRAKE_MED 2
+#define A320_AUTOBRAKE_MAX 3
+
 typedef struct A320Controls {
   double stickPitch;  /* -1..1, +1 = full back (nose up) */
   double stickRoll;   /* -1..1, +1 = full right */
@@ -90,6 +113,15 @@ typedef struct A320Controls {
   int flapsLever;     /* 0..4 = 0, 1, 2, 3, FULL */
   int parkBrake;
   double speedbrake;  /* 0..1 */
+  int spoilersArmed;  /* speedbrake lever pulled up to ARM: ground spoilers extend at touchdown */
+  int autobrake;      /* A320_AUTOBRAKE_* */
+  int engMaster[2];   /* ENG MASTER 1 / 2 */
+  int engMode;        /* A320_ENG_MODE_* */
+  int apuMaster;      /* APU MASTER SW */
+  int apuStart;       /* APU START pushbutton (held or latched: rising edge starts the APU) */
+  int apuBleed;       /* APU BLEED */
+  int lights;         /* A320_LT_* bits */
+  int signs;          /* A320_SIGN_* bits */
 } A320Controls;
 
 typedef struct A320State {
@@ -139,6 +171,15 @@ typedef struct A320State {
   int latMode, vertMode, athrMode, armed; /* A320LatMode, A320VertMode, A320AthrMode, A320_ARMED_* bits */
   double fcuSpdKt, fcuHdgMagDeg, fcuAltFt, fcuVsFpm;
   uint32_t apDisconnectSeq; /* increments on every autopilot disconnect (cavalry charge) */
+
+  /* Systems. */
+  double apuN;              /* APU speed % */
+  int apuAvail, apuStarting, apuMaster, apuBleed;
+  int bleedAvailable;       /* start air: APU bleed or a running engine */
+  int engMaster[2], engMode, engRunning[2], engStarting[2];
+  int autobrake, autobrakeActive, autobrakeDecel; /* DECEL light: target deceleration reached */
+  int spoilersArmed, groundSpoilers;              /* ground spoilers extended */
+  int lights, signs;
 } A320State;
 
 typedef struct A320RunwayInfo {
@@ -162,6 +203,9 @@ A320_API int a320_api_version(void);
 
 A320_API int a320_reset(A320Sim* sim, A320Scenario scenario, int runwayIndex);
 A320_API void a320_set_controls(A320Sim* sim, const A320Controls* controls);
+/* The controls the core is using: after a reset, the scenario's switch and lever positions.
+ * Start from these rather than a zeroed struct (zero means engine masters off). */
+A320_API void a320_get_controls(const A320Sim* sim, A320Controls* controls);
 /* Advances by real elapsed time; the core runs fixed 120 Hz steps, honouring pause and rate. */
 A320_API void a320_update(A320Sim* sim, double realDtS);
 A320_API void a320_get_state(const A320Sim* sim, A320State* state);

@@ -44,11 +44,8 @@ struct Flight {
     }
     a320_reset(sim, scenario, idx);
     a320_get_state(sim, &s);
+    a320_get_controls(sim, &c);
     lastCalloutSeq = s.calloutSeq;
-    c.gearDown = s.gearLeverDown;
-    c.flapsLever = s.flapsLever;
-    c.parkBrake = s.parkBrake;
-    c.thrustLever = s.thrustLever;
   }
   ~Flight() { a320_destroy(sim); }
 
