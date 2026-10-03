@@ -4,6 +4,8 @@
 #include "A320World.h"
 #include "Camera/CameraComponent.h"
 #include "Components/AudioComponent.h"
+#include "Components/PointLightComponent.h"
+#include "Components/SpotLightComponent.h"
 #include "Sound/SoundWaveProcedural.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
@@ -54,6 +56,45 @@ AA320Aircraft::AA320Aircraft()
 	ChaseCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("ChaseCamera"));
 	ChaseCamera->SetupAttachment(ChaseArm, USpringArmComponent::SocketName);
 	ChaseCamera->SetFieldOfView(70.0f);
+
+	// Exterior lights (metres from the CG): beacon on top, strobes and nav lights at the wing
+	// tips, landing lights in the wing roots, taxi/take-off light on the nose gear.
+	auto MakePoint = [this](const TCHAR* Name, const FVector& PosM, const FLinearColor& Color, float Candela)
+	{
+		UPointLightComponent* L = CreateDefaultSubobject<UPointLightComponent>(Name);
+		L->SetupAttachment(Root);
+		L->SetRelativeLocation(PosM * 100.0);
+		L->SetIntensityUnits(ELightUnits::Candelas);
+		L->SetIntensity(Candela);
+		L->SetLightColor(Color);
+		L->SetAttenuationRadius(3000.0f);
+		L->SetCastShadows(false);
+		L->SetVisibility(false);
+		return L;
+	};
+	auto MakeSpot = [this](const TCHAR* Name, const FVector& PosM, float PitchDeg, float Candela, float ConeDeg)
+	{
+		USpotLightComponent* L = CreateDefaultSubobject<USpotLightComponent>(Name);
+		L->SetupAttachment(Root);
+		L->SetRelativeLocation(PosM * 100.0);
+		L->SetRelativeRotation(FRotator(PitchDeg, 0.0, 0.0));
+		L->SetIntensityUnits(ELightUnits::Candelas);
+		L->SetIntensity(Candela);
+		L->SetOuterConeAngle(ConeDeg);
+		L->SetInnerConeAngle(ConeDeg * 0.6f);
+		L->SetAttenuationRadius(120000.0f);
+		L->SetCastShadows(false);
+		L->SetVisibility(false);
+		return L;
+	};
+	BeaconLight = MakePoint(TEXT("Beacon"), FVector(-2.0, 0.0, 3.1), FLinearColor(1.0f, 0.05f, 0.05f), 2000.0f);
+	StrobeLeft = MakePoint(TEXT("StrobeL"), FVector(-6.0, -17.0, 0.6), FLinearColor::White, 20000.0f);
+	StrobeRight = MakePoint(TEXT("StrobeR"), FVector(-6.0, 17.0, 0.6), FLinearColor::White, 20000.0f);
+	NavLeft = MakePoint(TEXT("NavL"), FVector(-5.8, -17.0, 0.6), FLinearColor(1.0f, 0.0f, 0.0f), 300.0f);
+	NavRight = MakePoint(TEXT("NavR"), FVector(-5.8, 17.0, 0.6), FLinearColor(0.0f, 1.0f, 0.1f), 300.0f);
+	LandingLeft = MakeSpot(TEXT("LandingL"), FVector(2.5, -4.0, -1.0), -4.0f, 150000.0f, 12.0f);
+	LandingRight = MakeSpot(TEXT("LandingR"), FVector(2.5, 4.0, -1.0), -4.0f, 150000.0f, 12.0f);
+	NoseLight = MakeSpot(TEXT("NoseLight"), FVector(12.3, 0.0, -1.6), -6.0f, 60000.0f, 25.0f);
 
 	AudioOut = CreateDefaultSubobject<UAudioComponent>(TEXT("Audio"));
 	AudioOut->SetupAttachment(Root);
@@ -145,7 +186,12 @@ void AA320Aircraft::Tick(float DeltaSeconds)
 	a320_set_controls(Sim, &Controls);
 	a320_update(Sim, DeltaSeconds);
 	a320_get_state(Sim, &State);
+	// APU START is a momentary pushbutton (the core reacts to the press), and the autobrake
+	// selector follows the core, which disarms it when the pilot brakes.
+	Controls.apuStart = 0;
+	Controls.autobrake = State.autobrake;
 	UpdateTransform();
+	UpdateExteriorLights();
 	if (World)
 	{
 		World->UpdatePapi(State.ilsRunwayIndex, State.papiWhite);
@@ -180,8 +226,8 @@ void AA320Aircraft::PumpAudio(float DeltaSeconds)
 	{
 		return;
 	}
-	// Keep ~120 ms queued: enough to ride out frame hitches, short enough to feel immediate.
-	const int32 TargetBytes = AudioRate * 2 * 12 / 100;
+	// Keep ~200 ms queued: rides out frame hitches such as a scenario reset.
+	const int32 TargetBytes = AudioRate * 2 / 5;  // 200 ms
 	const int32 Missing = TargetBytes - AudioWave->GetAvailableAudioByteCount();
 	if (Missing <= 0)
 	{
@@ -244,7 +290,59 @@ void AA320Aircraft::ExecuteCommand(EA320Command Command, bool bLarge)
 	case EA320Command::FcuAthr: Fcu(A320_FCU_ATHR); break;
 	case EA320Command::FcuHdgPull: Fcu(A320_FCU_HDG_PULL); break;
 	case EA320Command::FcuLoc: Fcu(A320_FCU_LOC); break;
-	case EA320Command::FcuAppr: Fcu(A320_FCU_APPR); bLsOn = true; break;
+	case EA320Command::FcuAppr:
+		Fcu(A320_FCU_APPR);
+		bLsOn = bLsOn || (State.armed & A320_ARMED_GS) != 0;
+		break;
+	case EA320Command::ResetColdDark: ResetScenario(A320_SCENARIO_COLD_DARK); break;
+	case EA320Command::OverheadToggle: bOverheadVisible = !bOverheadVisible; break;
+	case EA320Command::NdModeToggle: bNdRose = !bNdRose; break;
+	case EA320Command::EngMaster1: Controls.engMaster[0] = Controls.engMaster[0] ? 0 : 1; break;
+	case EA320Command::EngMaster2: Controls.engMaster[1] = Controls.engMaster[1] ? 0 : 1; break;
+	case EA320Command::EngModeCrank: Controls.engMode = A320_ENG_MODE_CRANK; break;
+	case EA320Command::EngModeNorm: Controls.engMode = A320_ENG_MODE_NORM; break;
+	case EA320Command::EngModeIgnStart: Controls.engMode = A320_ENG_MODE_IGN_START; break;
+	case EA320Command::ApuMaster: Controls.apuMaster = Controls.apuMaster ? 0 : 1; break;
+	case EA320Command::ApuStart: Controls.apuStart = 1; break;
+	case EA320Command::ApuBleed: Controls.apuBleed = Controls.apuBleed ? 0 : 1; break;
+	case EA320Command::AutobrakeLo:
+		Controls.autobrake = State.autobrake == A320_AUTOBRAKE_LO ? A320_AUTOBRAKE_OFF : A320_AUTOBRAKE_LO;
+		break;
+	case EA320Command::AutobrakeMed:
+		Controls.autobrake = State.autobrake == A320_AUTOBRAKE_MED ? A320_AUTOBRAKE_OFF : A320_AUTOBRAKE_MED;
+		break;
+	case EA320Command::AutobrakeMax:
+		Controls.autobrake = State.autobrake == A320_AUTOBRAKE_MAX ? A320_AUTOBRAKE_OFF : A320_AUTOBRAKE_MAX;
+		break;
+	case EA320Command::SpoilerArm:
+		Controls.spoilersArmed = Controls.spoilersArmed ? 0 : 1;
+		if (Controls.spoilersArmed)
+		{
+			Controls.speedbrake = 0.0;
+		}
+		break;
+	case EA320Command::LightStrobe: Controls.lights ^= A320_LT_STROBE; break;
+	case EA320Command::LightBeacon: Controls.lights ^= A320_LT_BEACON; break;
+	case EA320Command::LightNav: Controls.lights ^= A320_LT_NAV; break;
+	case EA320Command::LightLanding: Controls.lights ^= A320_LT_LANDING; break;
+	case EA320Command::LightRwyTurnoff: Controls.lights ^= A320_LT_RWY_TURNOFF; break;
+	case EA320Command::LightNose:
+		// OFF -> TAXI -> T.O -> OFF
+		if (Controls.lights & A320_LT_TAKEOFF)
+		{
+			Controls.lights &= ~(A320_LT_TAKEOFF | A320_LT_TAXI);
+		}
+		else if (Controls.lights & A320_LT_TAXI)
+		{
+			Controls.lights = (Controls.lights & ~A320_LT_TAXI) | A320_LT_TAKEOFF;
+		}
+		else
+		{
+			Controls.lights |= A320_LT_TAXI;
+		}
+		break;
+	case EA320Command::SignSeatbelts: Controls.signs ^= A320_SIGN_SEATBELTS; break;
+	case EA320Command::SignNoSmoking: Controls.signs ^= A320_SIGN_NO_SMOKING; break;
 	case EA320Command::FcuAltPull: Fcu(A320_FCU_ALT_PULL); break;
 	case EA320Command::FcuVsPull: Fcu(A320_FCU_VS_PULL); break;
 	case EA320Command::SpdDec: AdjustFcu(-Step, 0.0, 0.0, 0.0); break;
@@ -327,18 +425,81 @@ void AA320Aircraft::ResetScenario(A320Scenario Scenario)
 	}
 	a320_reset(Sim, Scenario, ActiveRunway);
 	a320_get_state(Sim, &State);
-	SyncControlsFromState();
-	bLsOn = Scenario != A320_SCENARIO_RUNWAY;
+	a320_get_controls(Sim, &Controls);
+	bLsOn = Scenario == A320_SCENARIO_FINAL_10NM || Scenario == A320_SCENARIO_FINAL_4NM;
 	UpdateTransform();
 }
 
-void AA320Aircraft::SyncControlsFromState()
+void AA320Aircraft::UpdateExteriorLights()
 {
-	Controls = A320Controls{};
-	Controls.gearDown = State.gearLeverDown;
-	Controls.flapsLever = State.flapsLever;
-	Controls.parkBrake = State.parkBrake;
-	Controls.thrustLever = State.thrustLever;
+	const double T = GetWorld()->GetTimeSeconds();
+	const int32 L = State.lights;
+	BeaconLight->SetVisibility((L & A320_LT_BEACON) && FMath::Fmod(T, 1.0) < 0.12);
+	// Strobes: double flash every 1.5 s.
+	const double Ph = FMath::Fmod(T, 1.5);
+	const bool bStrobe = (L & A320_LT_STROBE) && (Ph < 0.05 || (Ph > 0.12 && Ph < 0.17));
+	StrobeLeft->SetVisibility(bStrobe);
+	StrobeRight->SetVisibility(bStrobe);
+	NavLeft->SetVisibility((L & A320_LT_NAV) != 0);
+	NavRight->SetVisibility((L & A320_LT_NAV) != 0);
+	LandingLeft->SetVisibility((L & A320_LT_LANDING) != 0);
+	LandingRight->SetVisibility((L & A320_LT_LANDING) != 0);
+	NoseLight->SetVisibility((L & (A320_LT_TAXI | A320_LT_TAKEOFF)) != 0);
+	NoseLight->SetIntensity((L & A320_LT_TAKEOFF) ? 100000.0f : 40000.0f);
+}
+
+void AA320Aircraft::SetLever(EA320Lever Lever, double Position)
+{
+	Position = FMath::Clamp(Position, 0.0, 1.0);
+	switch (Lever)
+	{
+	case EA320Lever::Thrust:
+	{
+		// Top 72 % of the slot is forward thrust (TOGA at the top), the rest reverse.
+		constexpr double ForwardSpan = 0.72;
+		if (Position <= ForwardSpan || !State.onGround)
+		{
+			double Lev = 1.0 - FMath::Min(Position, ForwardSpan) / ForwardSpan;
+			for (const double Detent : {1.0, 0.88, 0.75, 0.0})
+			{
+				if (FMath::Abs(Lev - Detent) < 0.035)
+				{
+					Lev = Detent;
+				}
+			}
+			Controls.reverse = 0;
+			Controls.thrustLever = Lev;
+		}
+		else
+		{
+			Controls.reverse = 1;
+			Controls.thrustLever = (Position - ForwardSpan) / (1.0 - ForwardSpan);
+		}
+		break;
+	}
+	case EA320Lever::Flaps:
+		Controls.flapsLever = FMath::Clamp(FMath::RoundToInt(Position * 4.0), 0, 4);
+		break;
+	case EA320Lever::Speedbrake:
+	{
+		double Sb = Position;
+		for (const double Detent : {0.0, 0.5, 1.0})
+		{
+			if (FMath::Abs(Sb - Detent) < 0.08)
+			{
+				Sb = Detent;
+			}
+		}
+		Controls.speedbrake = Sb;
+		if (Sb > 0.0)
+		{
+			Controls.spoilersArmed = 0;  // ARM only exists with the lever at RET
+		}
+		break;
+	}
+	case EA320Lever::None:
+		break;
+	}
 }
 
 void AA320Aircraft::AddLook(double YawDeg, double PitchDeg)

@@ -14,7 +14,11 @@ the ILS and land, from a glass cockpit with a working PFD, ND and E/WD.
     deviation.
   - ND: map in ARC mode with the runway and the ILS extended centreline.
   - E/WD: N1, flaps, gear, THS, warnings and memos.
-  - A clickable button panel, plus radio-altimeter callouts ("FIFTY … RETARD").
+  - FCU and EFIS controls on the glareshield.
+  - Pedestal: draggable thrust levers (detents, reverse), speedbrake lever with ARM, flaps
+    lever, engine masters, ENG MODE selector and parking brake.
+  - Centre panel: gear lever and the AUTO/BRK pushbuttons.
+  - A pop-up overhead panel: APU, APU bleed, exterior lights and signs.
 - **Autopilot and autothrust** through the FCU: HDG, LOC, APPR with **autoland** (G/S, LAND,
   FLARE, ROLL OUT), OPEN CLIMB/DESCENT, V/S, ALT capture and hold, and SPEED autothrust with
   RETARD. The modes show on the PFD's flight mode annunciator.
@@ -24,7 +28,14 @@ the ILS and land, from a glass cockpit with a working PFD, ND and E/WD.
   - master-warning chimes and the autopilot-disconnect "cavalry charge";
   - spoken radio-altimeter callouts ("FIFTY … RETARD") and GPWS ("GLIDE SLOPE", "SINK RATE",
     "STALL").
-- **Pause** (P), sim rate ×2/×4, and instant scenarios (lined up, 10 NM final, 4 NM final).
+- **Systems behind the switches:**
+  - APU start;
+  - engine start from cold and dark (starter, fuel at about 20% N2, spool to idle);
+  - ground spoilers that extend at touchdown;
+  - autobrake LO/MED/MAX holding 1.7 m/s², 3 m/s² or full braking;
+  - exterior lights on the model, and cabin signs with the cabin chime.
+- **Pause** (P), sim rate ×2/×4, and instant scenarios (lined up, cold and dark, 10 NM final,
+  4 NM final). These are in the bar at the top right.
 - Engine: **Unreal Engine 5** (Windows). The world is built from code, so the repo contains
   no binary assets.
 
@@ -92,10 +103,22 @@ Other scripts:
 | FCU targets | 1/2 SPD, 3/4 HDG, 5/6 ALT, 7/8 V/S (Shift = ×10) | |
 | FCU modes | U fly the HDG, 9 climb/descend to ALT (LVL/CH), 0 hold V/S | |
 | Sound on/off, silence master warning | - (minus), M or click MASTER WARN | |
+| Overhead panel | O | |
+| Cold and dark | Shift + F5 | |
 | Help overlay | H or F1 | |
 | Quit | Esc (standalone game) | |
 
-Every action is also a button on the cockpit panel (bottom right).
+Every action is also on the cockpit panels, where you click switches and drag levers. The
+simulator functions (pause, views, scenarios, sound) are in the bar at the top right.
+
+**Cold and dark start (Shift + F5).**
+1. Press **O** to open the overhead panel. Press APU **MASTER SW**, then **START**.
+2. After about 30 s **AVAIL** lights up. Press **APU BLEED**.
+3. On the pedestal, set **ENG MODE IGN/START**, then **ENG 1 ON**. N2 spools on the starter,
+   fuel comes on at about 20%, and the engine settles at idle after about 30 s.
+4. Start **ENG 2** the same way, then set **ENG MODE NORM** and switch APU BLEED off.
+5. Before takeoff: set the flaps to 1, **ARM** the spoilers, set **AUTO/BRK MAX**, and switch
+   the lights on (strobe, landing, nose T.O).
 
 ## First flight
 
@@ -187,7 +210,10 @@ The flight tests fly the real JSBSim A320 with a scripted pilot:
 - the autopilot: OP CLB with ALT capture, a HDG turn, a V/S descent with capture, LOC
   intercept from a heading, instinctive disconnect, and a full autoland to a stop;
 - the audio engine: WAV loading, engine level following thrust, pause, callouts, and the
-  master warning and its acknowledgment.
+  master warning and its acknowledgment;
+- cockpit systems: a cold-and-dark start (APU, starter, light-off, crossbleed, shutdown),
+  ground spoilers, autobrake LO/MED deceleration and stopping distance, and the autobrake
+  disarming when the pilot brakes.
 
 CI runs these tests on Linux and Windows, and runs `Setup.ps1 -CoreOnly` on Windows.
 

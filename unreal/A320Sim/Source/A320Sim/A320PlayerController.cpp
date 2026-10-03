@@ -88,6 +88,7 @@ void AA320PlayerController::PlayerTick(float DeltaTime)
 		{EKeys::Seven, EA320Command::VsDec},
 		{EKeys::Eight, EA320Command::VsInc},
 		{EKeys::M, EA320Command::MasterWarnAck},
+		{EKeys::O, EA320Command::OverheadToggle},
 		{EKeys::Hyphen, EA320Command::SoundToggle},
 		{EKeys::Gamepad_FaceButton_Bottom, EA320Command::GearToggle},
 		{EKeys::Gamepad_LeftShoulder, EA320Command::FlapsUp},
@@ -102,7 +103,9 @@ void AA320PlayerController::PlayerTick(float DeltaTime)
 	{
 		if (WasInputKeyJustPressed(Binding.Key))
 		{
-			Aircraft->ExecuteCommand(Binding.Command, bShift);
+			// Shift+F5: cold and dark instead of lined up with engines running.
+			const bool bCold = Binding.Command == EA320Command::ResetRunway && bShift;
+			Aircraft->ExecuteCommand(bCold ? EA320Command::ResetColdDark : Binding.Command, bShift);
 		}
 	}
 
@@ -143,11 +146,25 @@ void AA320PlayerController::PlayerTick(float DeltaTime)
 	float MouseX = 0.0f, MouseY = 0.0f;
 	const bool bHasMouse = GetMousePosition(MouseX, MouseY);
 	const FVector2D Mouse(MouseX, MouseY);
-	if (bHasMouse && WasInputKeyJustPressed(EKeys::LeftMouseButton))
+	const AA320Hud* Hud = Cast<AA320Hud>(GetHUD());
+	if (bHasMouse && Hud && WasInputKeyJustPressed(EKeys::LeftMouseButton))
 	{
-		if (const AA320Hud* Hud = Cast<AA320Hud>(GetHUD()))
+		// Levers are dragged; everything else is a pushbutton or switch.
+		DraggedLever = Hud->LeverAt(Mouse);
+		if (DraggedLever == EA320Lever::None)
 		{
 			Aircraft->ExecuteCommand(Hud->CommandAt(Mouse), bShift);
+		}
+	}
+	if (DraggedLever != EA320Lever::None)
+	{
+		if (bHasMouse && Hud && IsInputKeyDown(EKeys::LeftMouseButton))
+		{
+			Aircraft->SetLever(DraggedLever, Hud->LeverPosition(DraggedLever, Mouse));
+		}
+		else
+		{
+			DraggedLever = EA320Lever::None;
 		}
 	}
 	if (bHasMouse && IsInputKeyDown(EKeys::RightMouseButton))

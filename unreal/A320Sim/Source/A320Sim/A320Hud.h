@@ -23,6 +23,9 @@ public:
 
 	// The panel button under a screen position (from the last drawn frame).
 	EA320Command CommandAt(const FVector2D& ScreenPos) const;
+	// The lever slot under a screen position, and the handle position (0 = top) for a drag.
+	EA320Lever LeverAt(const FVector2D& ScreenPos) const;
+	double LeverPosition(EA320Lever Lever, const FVector2D& ScreenPos) const;
 
 private:
 	struct FButton
@@ -34,7 +37,22 @@ private:
 	void DrawPfd(const AA320Aircraft& Aircraft, double X, double Y, double S);
 	void DrawNd(const AA320Aircraft& Aircraft, double X, double Y, double S);
 	void DrawEwd(const AA320Aircraft& Aircraft, double X, double Y, double S);
-	void DrawPanelButtons(const AA320Aircraft& Aircraft, double X, double Y, double W, double H);
+	struct FLeverSlot
+	{
+		FBox2D Box;
+		EA320Lever Lever;
+	};
+
+	void DrawCenterPanel(const AA320Aircraft& Aircraft, double X, double Y, double W, double H);
+	void DrawPedestal(const AA320Aircraft& Aircraft, double X, double Y, double W, double H);
+	void DrawSimBar(const AA320Aircraft& Aircraft);
+	void DrawOverhead(const AA320Aircraft& Aircraft);
+	// Airbus-style pushbutton: upper legend (e.g. FAULT/AVAIL) and lower legend (e.g. ON).
+	void Pushbutton(double X, double Y, double W, double H, const FString& Name, const FString& Upper,
+		const FLinearColor& UpperColor, const FString& Lower, const FLinearColor& LowerColor, EA320Command Command);
+	// Toggle/rotary switch: shows the current position; clicking moves it to the next one.
+	void Switch(double X, double Y, double W, double H, const FString& Name, const FString& Position, EA320Command Command);
+	void LeverSlot(double X, double Y, double W, double H, EA320Lever Lever);
 	void DrawFcu(const AA320Aircraft& Aircraft, double X, double Y, double W, double H);
 	void DrawFma(const A320State& St, double X, double Y, double S);
 	void AddButton(double X, double Y, double W, double H, const FString& Label, EA320Command Command, bool bLit);
@@ -54,6 +72,7 @@ private:
 	UFont* FontFor(int32 Size) const;
 
 	TArray<FButton> Buttons;
+	TArray<FLeverSlot> Levers;
 	double Scale = 1.0;
 	double SpeedTrendKtS = 0.0;
 	double LastIas = 0.0;

@@ -11,6 +11,8 @@
 
 class AA320World;
 class UAudioComponent;
+class UPointLightComponent;
+class USpotLightComponent;
 class USoundWaveProcedural;
 class UCameraComponent;
 class USpringArmComponent;
@@ -41,6 +43,7 @@ public:
 	void SetFlightInputs(const FA320FlightInputs& Inputs, float DeltaSeconds);
 	// bLarge: Shift held, for 10x FCU steps.
 	void ExecuteCommand(EA320Command Command, bool bLarge = false);
+	void SetLever(EA320Lever Lever, double Position);
 	void AddLook(double YawDeg, double PitchDeg);
 	void ResetLook();
 
@@ -57,6 +60,8 @@ public:
 	int32 GetNdRangeNm() const { return NdRangeNm; }
 	bool IsHelpVisible() const { return bHelpVisible; }
 	bool IsSoundOn() const { return bSoundOn; }
+	bool IsOverheadVisible() const { return bOverheadVisible; }
+	bool IsNdRose() const { return bNdRose; }
 
 protected:
 	virtual void BeginPlay() override;
@@ -67,7 +72,7 @@ private:
 	UStaticMeshComponent* AddPart(UStaticMesh* Mesh, const FVector& CentreM, const FRotator& Rotation,
 		const FVector& SizeM, const FLinearColor& Color);
 	void ResetScenario(A320Scenario Scenario);
-	void SyncControlsFromState();
+	void UpdateExteriorLights();
 	void ApplyView();
 	void UpdateTransform();
 	void StartAudio();
@@ -87,6 +92,8 @@ private:
 	bool bLsOn = false;
 	bool bHelpVisible = true;
 	bool bSoundOn = true;
+	bool bOverheadVisible = false;
+	bool bNdRose = false;
 	int32 AudioRate = 44100;
 	TArray<int16> AudioScratch;
 	int32 NdRangeNm = 10;
@@ -100,5 +107,13 @@ private:
 	UPROPERTY() TObjectPtr<AA320World> World;
 	UPROPERTY() TObjectPtr<UAudioComponent> AudioOut;
 	UPROPERTY() TObjectPtr<USoundWaveProcedural> AudioWave;
+	UPROPERTY() TObjectPtr<UPointLightComponent> BeaconLight;
+	UPROPERTY() TObjectPtr<UPointLightComponent> StrobeLeft;
+	UPROPERTY() TObjectPtr<UPointLightComponent> StrobeRight;
+	UPROPERTY() TObjectPtr<UPointLightComponent> NavLeft;
+	UPROPERTY() TObjectPtr<UPointLightComponent> NavRight;
+	UPROPERTY() TObjectPtr<USpotLightComponent> LandingLeft;
+	UPROPERTY() TObjectPtr<USpotLightComponent> LandingRight;
+	UPROPERTY() TObjectPtr<USpotLightComponent> NoseLight;
 	UPROPERTY() FA320Shapes Shapes;
 };

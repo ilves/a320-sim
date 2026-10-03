@@ -3,6 +3,8 @@
 #include "CoreMinimal.h"
 #include "GameFramework/PlayerController.h"
 
+#include "A320Commands.h"
+
 #include "A320PlayerController.generated.h"
 
 // Polls keyboard, gamepad and mouse every frame (no input assets needed) and drives the
@@ -25,5 +27,6 @@ private:
 	double KeyStickRoll = 0.0;
 	double KeyPedals = 0.0;
 	FVector2D LastMouse = FVector2D::ZeroVector;
+	EA320Lever DraggedLever = EA320Lever::None;
 	bool bLooking = false;
 };

@@ -45,4 +45,37 @@ enum class EA320Command : uint8
 	VsInc,
 	MasterWarnAck,
 	SoundToggle,
+	// Cockpit panels.
+	ResetColdDark,
+	OverheadToggle,
+	NdModeToggle,
+	EngMaster1,
+	EngMaster2,
+	EngModeCrank,
+	EngModeNorm,
+	EngModeIgnStart,
+	ApuMaster,
+	ApuStart,
+	ApuBleed,
+	AutobrakeLo,
+	AutobrakeMed,
+	AutobrakeMax,
+	SpoilerArm,
+	LightStrobe,
+	LightBeacon,
+	LightNav,
+	LightLanding,
+	LightNose,
+	LightRwyTurnoff,
+	SignSeatbelts,
+	SignNoSmoking,
+};
+
+// Levers dragged with the mouse; the value is the handle position, 0 at the top of its slot.
+enum class EA320Lever : uint8
+{
+	None,
+	Thrust,
+	Flaps,
+	Speedbrake,
 };
