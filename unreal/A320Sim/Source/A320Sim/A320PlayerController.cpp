@@ -5,6 +5,7 @@
 #include "A320Hud.h"
 #include "Engine/World.h"
 #include "InputCoreTypes.h"
+#include "Misc/Paths.h"
 
 namespace
 {
@@ -37,6 +38,103 @@ void AA320PlayerController::BeginPlay()
 	Mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
 	Mode.SetHideCursorDuringCapture(false);
 	SetInputMode(Mode);
+	Joystick.Init(FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("A320Joystick.ini")));
+}
+
+bool AA320PlayerController::HandleJoystickCommand(EA320Command Command)
+{
+	const int32 Learn = static_cast<int32>(Command) - static_cast<int32>(EA320Command::JoyLearn0);
+	const int32 Axis = static_cast<int32>(Command) - static_cast<int32>(EA320Command::JoyAxis0);
+	const int32 Invert = static_cast<int32>(Command) - static_cast<int32>(EA320Command::JoyInvert0);
+	if (Command == EA320Command::JoystickPanel)
+	{
+		bJoystickPanel = !bJoystickPanel;
+	}
+	else if (Command == EA320Command::JoyRescan)
+	{
+		Joystick.Rescan();
+	}
+	else if (Learn >= 0 && Learn < a320::joy::kFunctionCount)
+	{
+		Joystick.StartLearn(Learn);
+	}
+	else if (Axis >= 0 && Axis < a320::joy::kFunctionCount)
+	{
+		Joystick.CycleAxis(Axis);
+	}
+	else if (Invert >= 0 && Invert < a320::joy::kFunctionCount)
+	{
+		Joystick.ToggleInvert(Invert);
+	}
+	else
+	{
+		return false;
+	}
+	return true;
+}
+
+void AA320PlayerController::ApplyJoystickButtons(AA320Aircraft* Aircraft, FA320FlightInputs& Inputs, float DeltaTime)
+{
+	using namespace a320::joy;
+	Inputs.StickPitch += Joystick.Value(kPitch);
+	Inputs.StickRoll += Joystick.Value(kRoll);
+	Inputs.Pedals += Joystick.Value(kRudder);
+	Inputs.Brakes = FMath::Max3(Inputs.Brakes, brakeAmount(Joystick.Value(kBrakeLeft)), brakeAmount(Joystick.Value(kBrakeRight)));
+	if (Joystick.ThrottleMoved())
+	{
+		Aircraft->SetThrustLever(throttleLever(Joystick.Value(kThrottle)));
+	}
+
+	// Buttons, by the command names in Saved/A320Joystick.ini.
+	for (int32 B = 0; B < kButtons; ++B)
+	{
+		const FString CommandName = Joystick.ButtonCommand(B);
+		if (CommandName.IsEmpty())
+		{
+			continue;
+		}
+		if (CommandName == TEXT("BRAKES"))
+		{
+			if (Joystick.IsButtonDown(B))
+			{
+				Inputs.Brakes = 1.0;
+			}
+			continue;
+		}
+		if (!Joystick.WasButtonPressed(B))
+		{
+			continue;
+		}
+		static const TPair<const TCHAR*, EA320Command> Map[] = {
+			TPair<const TCHAR*, EA320Command>(TEXT("AP_DISCONNECT"), EA320Command::ApDisconnect),
+			TPair<const TCHAR*, EA320Command>(TEXT("FLAPS_UP"), EA320Command::FlapsUp),
+			TPair<const TCHAR*, EA320Command>(TEXT("FLAPS_DOWN"), EA320Command::FlapsDown),
+			TPair<const TCHAR*, EA320Command>(TEXT("GEAR"), EA320Command::GearToggle),
+			TPair<const TCHAR*, EA320Command>(TEXT("REVERSE"), EA320Command::ReverseToggle),
+			TPair<const TCHAR*, EA320Command>(TEXT("SPEEDBRAKE"), EA320Command::SpeedbrakeToggle),
+			TPair<const TCHAR*, EA320Command>(TEXT("VIEW"), EA320Command::ViewToggle),
+			TPair<const TCHAR*, EA320Command>(TEXT("PAUSE"), EA320Command::PauseToggle),
+			TPair<const TCHAR*, EA320Command>(TEXT("TOGA"), EA320Command::ThrustToga),
+			TPair<const TCHAR*, EA320Command>(TEXT("IDLE"), EA320Command::ThrustIdle),
+			TPair<const TCHAR*, EA320Command>(TEXT("AP1"), EA320Command::FcuAp),
+			TPair<const TCHAR*, EA320Command>(TEXT("ATHR"), EA320Command::FcuAthr),
+		};
+		for (const TPair<const TCHAR*, EA320Command>& Entry : Map)
+		{
+			if (CommandName == Entry.Key)
+			{
+				Aircraft->ExecuteCommand(Entry.Value);
+			}
+		}
+	}
+
+	// Hat switch: look around.
+	const int32 Pov = Joystick.GetPov();
+	if (Pov >= 0)
+	{
+		const double Rad = FMath::DegreesToRadians(Pov / 100.0);
+		Aircraft->AddLook(FMath::Sin(Rad) * 90.0 * DeltaTime, FMath::Cos(Rad) * 60.0 * DeltaTime);
+	}
 }
 
 void AA320PlayerController::PlayerTick(float DeltaTime)
@@ -89,6 +187,7 @@ void AA320PlayerController::PlayerTick(float DeltaTime)
 		{EKeys::Eight, EA320Command::VsInc},
 		{EKeys::M, EA320Command::MasterWarnAck},
 		{EKeys::O, EA320Command::OverheadToggle},
+		{EKeys::F2, EA320Command::JoystickPanel},
 		{EKeys::Hyphen, EA320Command::SoundToggle},
 		{EKeys::Gamepad_FaceButton_Bottom, EA320Command::GearToggle},
 		{EKeys::Gamepad_LeftShoulder, EA320Command::FlapsUp},
@@ -101,7 +200,7 @@ void AA320PlayerController::PlayerTick(float DeltaTime)
 	const bool bShift = IsInputKeyDown(EKeys::LeftShift) || IsInputKeyDown(EKeys::RightShift);
 	for (const FKeyCommand& Binding : Bindings)
 	{
-		if (WasInputKeyJustPressed(Binding.Key))
+		if (WasInputKeyJustPressed(Binding.Key) && !HandleJoystickCommand(Binding.Command))
 		{
 			// Shift+F5: cold and dark instead of lined up with engines running.
 			const bool bCold = Binding.Command == EA320Command::ResetRunway && bShift;
@@ -131,6 +230,7 @@ void AA320PlayerController::PlayerTick(float DeltaTime)
 	KeyStickRoll = MoveTowards(KeyStickRoll, RollTarget, 3.0 * DeltaTime);
 	KeyPedals = MoveTowards(KeyPedals, PedalTarget, 2.0 * DeltaTime);
 
+	Joystick.Poll(DeltaTime);
 	FA320FlightInputs Inputs;
 	Inputs.StickPitch = KeyStickPitch - Deadzone(GetInputAnalogKeyState(EKeys::Gamepad_LeftY));
 	Inputs.StickRoll = KeyStickRoll + Deadzone(GetInputAnalogKeyState(EKeys::Gamepad_LeftX));
@@ -140,6 +240,7 @@ void AA320PlayerController::PlayerTick(float DeltaTime)
 		(double)GetInputAnalogKeyState(EKeys::Gamepad_LeftTriggerAxis));
 	Inputs.ThrustRate = (IsInputKeyDown(EKeys::PageUp) ? 0.4 : 0.0) - (IsInputKeyDown(EKeys::PageDown) ? 0.4 : 0.0)
 		+ 0.4 * Deadzone(GetInputAnalogKeyState(EKeys::Gamepad_RightY));
+	ApplyJoystickButtons(Aircraft, Inputs, DeltaTime);
 	Aircraft->SetFlightInputs(Inputs, DeltaTime);
 
 	// Mouse: left click presses panel buttons, right drag looks around, middle resets.
@@ -149,11 +250,12 @@ void AA320PlayerController::PlayerTick(float DeltaTime)
 	const AA320Hud* Hud = Cast<AA320Hud>(GetHUD());
 	if (bHasMouse && Hud && WasInputKeyJustPressed(EKeys::LeftMouseButton))
 	{
-		// Levers are dragged; everything else is a pushbutton or switch.
-		DraggedLever = Hud->LeverAt(Mouse);
-		if (DraggedLever == EA320Lever::None)
+		// Pushbuttons and switches first (pop-up panels sit on top), then levers to drag.
+		const EA320Command Clicked = Hud->CommandAt(Mouse);
+		DraggedLever = Clicked == EA320Command::None ? Hud->LeverAt(Mouse) : EA320Lever::None;
+		if (Clicked != EA320Command::None && !HandleJoystickCommand(Clicked))
 		{
-			Aircraft->ExecuteCommand(Hud->CommandAt(Mouse), bShift);
+			Aircraft->ExecuteCommand(Clicked, bShift);
 		}
 	}
 	if (DraggedLever != EA320Lever::None)

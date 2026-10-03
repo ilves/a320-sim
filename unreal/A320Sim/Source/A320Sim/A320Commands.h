@@ -69,6 +69,14 @@ enum class EA320Command : uint8
 	LightRwyTurnoff,
 	SignSeatbelts,
 	SignNoSmoking,
+	// Joystick setup (handled by the player controller). Per-function commands are
+	// contiguous: function index = command - first.
+	JoystickPanel,
+	JoyRescan,
+	JoyLearn0, JoyLearn1, JoyLearn2, JoyLearn3, JoyLearn4, JoyLearn5,
+	JoyAxis0, JoyAxis1, JoyAxis2, JoyAxis3, JoyAxis4, JoyAxis5,
+	JoyInvert0, JoyInvert1, JoyInvert2, JoyInvert3, JoyInvert4, JoyInvert5,
+	ApDisconnect,
 };
 
 // Levers dragged with the mouse; the value is the handle position, 0 at the top of its slot.

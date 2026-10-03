@@ -47,6 +47,7 @@ private:
 	void DrawPedestal(const AA320Aircraft& Aircraft, double X, double Y, double W, double H);
 	void DrawSimBar(const AA320Aircraft& Aircraft);
 	void DrawOverhead(const AA320Aircraft& Aircraft);
+	void DrawJoystickPanel(const class AA320PlayerController& Controller);
 	// Airbus-style pushbutton: upper legend (e.g. FAULT/AVAIL) and lower legend (e.g. ON).
 	void Pushbutton(double X, double Y, double W, double H, const FString& Name, const FString& Upper,
 		const FLinearColor& UpperColor, const FString& Lower, const FLinearColor& LowerColor, EA320Command Command);

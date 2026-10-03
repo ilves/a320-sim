@@ -85,7 +85,7 @@ Other scripts:
 
 | Action | Keys | Gamepad |
 | --- | --- | --- |
-| Sidestick | Arrow keys / numpad (Shift = full deflection) | Left stick |
+| Sidestick | Arrow keys / numpad (Shift = full deflection), or a USB joystick | Left stick |
 | Rudder and nosewheel | Q / E (or Z / X) | Right stick X |
 | Thrust levers | PgUp / PgDn; Home TOGA, Del FLX/MCT, Ins CL, End IDLE | Right stick Y |
 | Reversers | R (on the ground), then PgUp | Y |
@@ -104,12 +104,32 @@ Other scripts:
 | FCU modes | U fly the HDG, 9 climb/descend to ALT (LVL/CH), 0 hold V/S | |
 | Sound on/off, silence master warning | - (minus), M or click MASTER WARN | |
 | Overhead panel | O | |
+| Joystick setup | F2 | |
 | Cold and dark | Shift + F5 | |
 | Help overlay | H or F1 | |
 | Quit | Esc (standalone game) | |
 
 Every action is also on the cockpit panels, where you click switches and drag levers. The
 simulator functions (pause, views, scenarios, sound) are in the bar at the top right.
+
+**USB joystick, throttle and rudder pedals.** Any Windows game controller works: the sim
+reads it through the Windows joystick API, so it needs no drivers or plugins. Plug it in
+before or while the sim runs; it's picked up within 5 seconds.
+- **Defaults:**
+  - stick X/Y for roll and pitch, twist (R) for rudder, and the slider (Z) for the thrust
+    levers, which snap into the TOGA, FLX/MCT, CL and IDLE detents;
+  - trigger for autopilot disconnect, button 2 for brakes, 3/4 for flaps up/down, 5 for
+    gear and 6 for reverse;
+  - the hat switch looks around.
+- **Setup panel:** open it with **F2** or **JOYSTICK** in the top bar. It shows each axis
+  live.
+  - Click **LEARN** next to a function, then move the axis you want for it.
+  - Use **INV** if an axis moves the wrong way.
+  - Rudder pedals with toe brakes work too: learn RUDDER, BRAKE L and BRAKE R on the pedals'
+    axes.
+- **Settings file:** `unreal\A320Sim\Saved\A320Joystick.ini`. Edit `buttonN=` lines to remap
+  buttons. Available commands: `AP_DISCONNECT`, `BRAKES`, `FLAPS_UP`, `FLAPS_DOWN`, `GEAR`,
+  `REVERSE`, `SPEEDBRAKE`, `VIEW`, `PAUSE`, `TOGA`, `IDLE`, `AP1`, `ATHR`.
 
 **Cold and dark start (Shift + F5).**
 1. Press **O** to open the overhead panel. Press APU **MASTER SW**, then **START**.
@@ -211,6 +231,8 @@ The flight tests fly the real JSBSim A320 with a scripted pilot:
   intercept from a heading, instinctive disconnect, and a full autoland to a stop;
 - the audio engine: WAV loading, engine level following thrust, pause, callouts, and the
   master warning and its acknowledgment;
+- joystick mapping: axis scaling, deadzone, throttle detents, learn mode and the settings
+  file;
 - cockpit systems: a cold-and-dark start (APU, starter, light-off, crossbleed, shutdown),
   ground spoilers, autobrake LO/MED deceleration and stopping distance, and the autobrake
   disarming when the pilot brakes.

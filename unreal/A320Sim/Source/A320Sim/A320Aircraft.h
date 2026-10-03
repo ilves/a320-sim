@@ -44,6 +44,8 @@ public:
 	// bLarge: Shift held, for 10x FCU steps.
 	void ExecuteCommand(EA320Command Command, bool bLarge = false);
 	void SetLever(EA320Lever Lever, double Position);
+	// Thrust lever from a hardware throttle (0..1); in reverse it sets the reverse amount.
+	void SetThrustLever(double Lever);
 	void AddLook(double YawDeg, double PitchDeg);
 	void ResetLook();
 

@@ -1,6 +1,7 @@
 #include "A320Hud.h"
 
 #include "A320Aircraft.h"
+#include "A320PlayerController.h"
 #include "CanvasItem.h"
 #include "Engine/Canvas.h"
 #include "Engine/Engine.h"
@@ -123,11 +124,12 @@ void AA320Hud::Text(const FString& Str, double X, double Y, const FLinearColor& 
 
 EA320Command AA320Hud::CommandAt(const FVector2D& ScreenPos) const
 {
-	for (const FButton& Button : Buttons)
+	// Last drawn is on top (pop-up panels are drawn after the cockpit).
+	for (int32 i = Buttons.Num() - 1; i >= 0; --i)
 	{
-		if (Button.Box.IsInside(ScreenPos))
+		if (Buttons[i].Box.IsInside(ScreenPos))
 		{
-			return Button.Command;
+			return Buttons[i].Command;
 		}
 	}
 	return EA320Command::None;
@@ -184,6 +186,13 @@ void AA320Hud::DrawHUD()
 		}
 	}
 	DrawSimBar(*Aircraft);
+	if (const AA320PlayerController* A320PC = Cast<AA320PlayerController>(PC))
+	{
+		if (A320PC->IsJoystickPanelVisible())
+		{
+			DrawJoystickPanel(*A320PC);
+		}
+	}
 	DrawOverlays(*Aircraft);
 }
 
@@ -729,6 +738,7 @@ void AA320Hud::DrawHelp()
 		TEXT("View           C cockpit / outside,  right mouse drag to look, middle click to reset"),
 		TEXT("Scenarios      F5 lined up 26,  Shift+F5 cold and dark,  F6 10 NM final,  F7 4 NM final,  F9 swap runway"),
 		TEXT("Cockpit        drag the thrust, flaps and speedbrake levers;  click switches;  O overhead panel"),
+		TEXT("Joystick       F2 (or JOYSTICK, top right): pick axes with LEARN; trigger = AP disconnect, hat = look"),
 		TEXT("Autopilot      A AP1,  T A/THR (thrust levers in CL: Ins),  K APPR (autoland),  J LOC"),
 		TEXT("FCU            1/2 SPD,  3/4 HDG,  5/6 ALT,  7/8 V/S  (Shift = x10);  U fly HDG,  9 climb/descend to ALT,  0 hold V/S"),
 		TEXT("Sound          - (minus) on/off,  M silence master warning"),
@@ -1073,6 +1083,7 @@ void AA320Hud::DrawSimBar(const AA320Aircraft& Aircraft)
 		{FString::Printf(TEXT("SIM x%d"), FMath::Max(1, FMath::RoundToInt(St.simRate))), EA320Command::SimRateCycle, St.simRate > 1.0},
 		{Aircraft.IsCockpitView() ? TEXT("VIEW: CKPT") : TEXT("VIEW: EXT"), EA320Command::ViewToggle, false},
 		{TEXT("OVERHEAD"), EA320Command::OverheadToggle, Aircraft.IsOverheadVisible()},
+		{TEXT("JOYSTICK"), EA320Command::JoystickPanel, false},
 		{Aircraft.IsSoundOn() ? TEXT("SOUND ON") : TEXT("SOUND OFF"), EA320Command::SoundToggle, !Aircraft.IsSoundOn()},
 		{TEXT("HELP"), EA320Command::HelpToggle, Aircraft.IsHelpVisible()},
 		{TEXT("SWAP RWY"), EA320Command::RunwaySwap, false},
@@ -1154,4 +1165,95 @@ void AA320Hud::DrawOverhead(const AA320Aircraft& Aircraft)
 
 	Text(TEXT("Cold start: APU MASTER SW, START, wait for AVAIL, APU BLEED; ENG MODE IGN/START, ENG 1 then ENG 2 ON; ENG MODE NORM."),
 		OX + OW / 2.0, OY + OH - 0.03 * H, FLinearColor(0.8f, 0.85f, 0.9f), 0, 1);
+}
+
+void AA320Hud::DrawJoystickPanel(const AA320PlayerController& Controller)
+{
+	using namespace a320::joy;
+	const FA320Joystick& Joy = Controller.GetJoystick();
+	const double W = Canvas->ClipX, H = Canvas->ClipY;
+	// Above the cockpit panel (which starts at 58 % of the height), like the overhead panel.
+	const double PX = W * 0.2, PY = H * 0.055, PW = W * 0.6, PH = H * 0.52;
+	Fill(PX, PY, PW, PH, FLinearColor(0.08f, 0.09f, 0.1f, 0.97f));
+	Frame(PX, PY, PW, PH, FLinearColor(0.5f, 0.52f, 0.55f), 2.0);
+	Text(TEXT("JOYSTICK SETUP"), PX + PW / 2.0, PY + 0.025 * H, White, 1, 1);
+	AddButton(PX + PW - 0.04 * W, PY + 0.008 * H, 0.032 * W, 0.034 * H, TEXT("X"), EA320Command::JoystickPanel, false);
+	AddButton(PX + PW - 0.12 * W, PY + 0.008 * H, 0.07 * W, 0.034 * H, TEXT("RESCAN"), EA320Command::JoyRescan, false);
+
+	// Devices.
+	double RowY = PY + 0.07 * H;
+	const TArray<FA320JoystickDevice>& Devices = Joy.GetDevices();
+	if (Devices.Num() == 0)
+	{
+		Text(TEXT("No joystick found. Plug it in (it is picked up within 5 s) or press RESCAN."), PX + 0.02 * W, RowY, Amber, 0, 0);
+		RowY += 0.035 * H;
+	}
+	for (int32 D = 0; D < Devices.Num(); ++D)
+	{
+		Text(FString::Printf(TEXT("Device %d: %s  (%d axes, %d buttons)"), D, *Devices[D].Name, Devices[D].NumAxes, Devices[D].NumButtons),
+			PX + 0.02 * W, RowY, Green, 0, 0);
+		RowY += 0.03 * H;
+	}
+
+	// One row per function: binding (click to cycle), INV, LEARN and the live value.
+	RowY += 0.02 * H;
+	const double ColAxis = PX + 0.14 * W, ColInv = PX + 0.25 * W, ColLearn = PX + 0.31 * W, ColBar = PX + 0.4 * W;
+	const double BtnH = 0.028 * H, BarW = 0.17 * W;
+	Text(TEXT("FUNCTION"), PX + 0.02 * W, RowY, Grey, 0, 0);
+	Text(TEXT("AXIS (click)"), ColAxis, RowY, Grey, 0, 0);
+	Text(TEXT("VALUE"), ColBar, RowY, Grey, 0, 0);
+	RowY += 0.035 * H;
+	for (int32 F = 0; F < kFunctionCount; ++F)
+	{
+		const Binding& B = Joy.GetConfig().bind[F];
+		const bool bBound = Joy.IsBound(static_cast<Function>(F));
+		Text(UTF8_TO_TCHAR(functionName(F)), PX + 0.02 * W, RowY + BtnH / 2.0, White, 0, 0);
+		const FString AxisText = B.device < 0 ? FString(TEXT("none")) : FString::Printf(TEXT("dev %d  %s"), B.device, UTF8_TO_TCHAR(axisName(B.axis)));
+		AddButton(ColAxis, RowY, 0.1 * W, BtnH, AxisText, static_cast<EA320Command>(static_cast<int32>(EA320Command::JoyAxis0) + F), bBound);
+		AddButton(ColInv, RowY, 0.05 * W, BtnH, TEXT("INV"), static_cast<EA320Command>(static_cast<int32>(EA320Command::JoyInvert0) + F), B.invert);
+		const bool bLearning = Joy.GetLearning() == F;
+		AddButton(ColLearn, RowY, 0.08 * W, BtnH, bLearning ? TEXT("MOVE IT...") : TEXT("LEARN"),
+			static_cast<EA320Command>(static_cast<int32>(EA320Command::JoyLearn0) + F), bLearning);
+		// Live value: -1..1 bar (throttle and brakes shown the same way).
+		Fill(ColBar, RowY + BtnH * 0.3, BarW, BtnH * 0.4, Screen);
+		if (bBound)
+		{
+			const double V = Joy.Value(static_cast<Function>(F));
+			const double Mid = ColBar + BarW / 2.0;
+			const double End = Mid + FMath::Clamp(V, -1.0, 1.0) * BarW / 2.0;
+			Fill(FMath::Min(Mid, End), RowY + BtnH * 0.3, FMath::Max(FMath::Abs(End - Mid), 2.0), BtnH * 0.4, Cyan);
+			Text(FString::Printf(TEXT("%+.2f"), V), ColBar + BarW + 0.01 * W, RowY + BtnH / 2.0, Cyan, 0, 0);
+		}
+		Line(ColBar + BarW / 2.0, RowY, ColBar + BarW / 2.0, RowY + BtnH, Grey, 1.0);
+		RowY += BtnH + 0.008 * H;
+	}
+
+	// Buttons currently pressed and what they do.
+	RowY += 0.01 * H;
+	FString Pressed;
+	for (int32 Btn = 0; Btn < kButtons; ++Btn)
+	{
+		if (Joy.IsButtonDown(Btn))
+		{
+			const FString Cmd = Joy.ButtonCommand(Btn);
+			Pressed += FString::Printf(TEXT("%d%s  "), Btn + 1, Cmd.IsEmpty() ? TEXT("") : *FString::Printf(TEXT(" (%s)"), *Cmd));
+		}
+	}
+	Text(FString::Printf(TEXT("Buttons pressed: %s"), Pressed.IsEmpty() ? TEXT("-") : *Pressed), PX + 0.02 * W, RowY, White, 0, 0);
+	RowY += 0.03 * H;
+	FString Mapping;
+	for (int32 Btn = 0; Btn < 8; ++Btn)
+	{
+		const FString Cmd = Joy.ButtonCommand(Btn);
+		if (!Cmd.IsEmpty())
+		{
+			Mapping += FString::Printf(TEXT("%d=%s  "), Btn + 1, *Cmd);
+		}
+	}
+	Text(FString::Printf(TEXT("Button mapping: %s"), *Mapping), PX + 0.02 * W, RowY, Grey, 0, 0);
+	RowY += 0.03 * H;
+	Text(FString::Printf(TEXT("Hat switch looks around. Settings are saved to %s (edit it to change buttons)."), *Joy.GetConfigPath()),
+		PX + 0.02 * W, RowY, Grey, 0, 0);
+	Text(TEXT("Pitch: pull back = +. Throttle: full forward = +1 (TOGA). Use INV if a bar moves the wrong way."),
+		PX + 0.02 * W, PY + PH - 0.025 * H, FLinearColor(0.8f, 0.85f, 0.9f), 0, 0);
 }

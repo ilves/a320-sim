@@ -9,5 +9,9 @@ public class A320Sim : ModuleRules
 		bUseUnity = false;
 		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore" });
 		PrivateDependencyModuleNames.AddRange(new string[] { "RenderCore", "A320Core" });
+		if (Target.Platform == UnrealTargetPlatform.Win64)
+		{
+			PublicSystemLibraries.Add("winmm.lib");  // joyGetPosEx: USB joysticks, throttles, pedals
+		}
 	}
 }

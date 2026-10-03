@@ -295,6 +295,12 @@ void AA320Aircraft::ExecuteCommand(EA320Command Command, bool bLarge)
 		bLsOn = bLsOn || (State.armed & A320_ARMED_GS) != 0;
 		break;
 	case EA320Command::ResetColdDark: ResetScenario(A320_SCENARIO_COLD_DARK); break;
+	case EA320Command::ApDisconnect:
+		if (State.apEngaged)
+		{
+			Fcu(A320_FCU_AP1);
+		}
+		break;
 	case EA320Command::OverheadToggle: bOverheadVisible = !bOverheadVisible; break;
 	case EA320Command::NdModeToggle: bNdRose = !bNdRose; break;
 	case EA320Command::EngMaster1: Controls.engMaster[0] = Controls.engMaster[0] ? 0 : 1; break;
@@ -414,6 +420,7 @@ void AA320Aircraft::ExecuteCommand(EA320Command Command, bool bLarge)
 	case EA320Command::ResetFinal10: ResetScenario(A320_SCENARIO_FINAL_10NM); break;
 	case EA320Command::ResetFinal4: ResetScenario(A320_SCENARIO_FINAL_4NM); break;
 	case EA320Command::None: break;
+	default: break;  // joystick setup commands are handled by the player controller
 	}
 }
 
@@ -446,6 +453,11 @@ void AA320Aircraft::UpdateExteriorLights()
 	LandingRight->SetVisibility((L & A320_LT_LANDING) != 0);
 	NoseLight->SetVisibility((L & (A320_LT_TAXI | A320_LT_TAKEOFF)) != 0);
 	NoseLight->SetIntensity((L & A320_LT_TAKEOFF) ? 100000.0f : 40000.0f);
+}
+
+void AA320Aircraft::SetThrustLever(double Lever)
+{
+	Controls.thrustLever = FMath::Clamp(Lever, 0.0, 1.0);
 }
 
 void AA320Aircraft::SetLever(EA320Lever Lever, double Position)

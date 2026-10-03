@@ -4,6 +4,7 @@
 #include "GameFramework/PlayerController.h"
 
 #include "A320Commands.h"
+#include "A320Joystick.h"
 
 #include "A320PlayerController.generated.h"
 
@@ -19,6 +20,9 @@ public:
 
 	virtual void PlayerTick(float DeltaTime) override;
 
+	const FA320Joystick& GetJoystick() const { return Joystick; }
+	bool IsJoystickPanelVisible() const { return bJoystickPanel; }
+
 protected:
 	virtual void BeginPlay() override;
 
@@ -28,5 +32,11 @@ private:
 	double KeyPedals = 0.0;
 	FVector2D LastMouse = FVector2D::ZeroVector;
 	EA320Lever DraggedLever = EA320Lever::None;
+	FA320Joystick Joystick;
+	bool bJoystickPanel = false;
+
+	// Joystick setup commands are handled here; everything else goes to the aircraft.
+	bool HandleJoystickCommand(EA320Command Command);
+	void ApplyJoystickButtons(class AA320Aircraft* Aircraft, struct FA320FlightInputs& Inputs, float DeltaTime);
 	bool bLooking = false;
 };
