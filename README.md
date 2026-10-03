@@ -24,10 +24,16 @@ the ILS and land, from a glass cockpit with a working PFD, ND and E/WD.
 You need:
 
 1. **Windows 10/11** and a DX12 GPU.
-2. **Visual Studio 2022** with the *Game development with C++* workload:
+2. **Visual Studio 2022 or 2026**, with these selected in the Visual Studio Installer:
+   - workloads: *Desktop development with C++* and *Game development with C++*;
+   - individual components: a *Windows 11 SDK* and *MSVC v143 - VS 2022 C++ x64/x86 build
+     tools (Latest)*. Unreal Engine 5 builds with v143, including inside VS 2026.
+
+   For a fresh install:
    ```
-   winget install Microsoft.VisualStudio.2022.Community --override "--add Microsoft.VisualStudio.Workload.NativeGame --includeRecommended --passive"
+   winget install Microsoft.VisualStudio.2022.Community --override "--add Microsoft.VisualStudio.Workload.NativeGame --add Microsoft.VisualStudio.Workload.NativeDesktop --includeRecommended --passive"
    ```
+   `Setup.bat` lists what it finds and tells you what is missing.
 3. **CMake 3.25 or newer**: `winget install Kitware.CMake`. Alternatively, add *C++ CMake
    tools for Windows* in the Visual Studio Installer.
 4. **Unreal Engine 5.3 or newer**, from the Epic Games Launcher (Unreal Engine → Library → +).

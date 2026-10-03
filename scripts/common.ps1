@@ -70,3 +70,65 @@ function Get-EngineOrFail([string]$Override) {
     }
     return $engine
 }
+
+# Every Visual Studio install with the MSVC toolsets that actually have a compiler, newest first.
+function Get-VisualStudioInstances {
+    $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+    if (-not (Test-Path $vswhere)) { return @() }
+    $json = (& $vswhere -all -products * -prerelease -format json) | Out-String
+    $result = @()
+    foreach ($vs in @($json | ConvertFrom-Json)) {
+        $msvcRoot = Join-Path $vs.installationPath 'VC\Tools\MSVC'
+        $toolsets = @(Get-ChildItem $msvcRoot -Directory -ErrorAction SilentlyContinue |
+            Where-Object { Test-Path (Join-Path $_.FullName 'bin\Hostx64\x64\cl.exe') } |
+            ForEach-Object { $_.Name })
+        $result += [pscustomobject]@{
+            Path = $vs.installationPath
+            Name = $vs.displayName
+            Major = [int]($vs.installationVersion.Split('.')[0])
+            Msvc = $toolsets
+        }
+    }
+    return $result | Sort-Object Major -Descending
+}
+
+# MSVC compiler folder version (e.g. 14.44.35207) -> MSBuild platform toolset (v143).
+function Get-PlatformToolset([string]$MsvcVersion) {
+    $minor = [int]($MsvcVersion.Split('.')[1])
+    if ($minor -ge 50) { return 'v145' }
+    if ($minor -ge 30) { return 'v143' }
+    if ($minor -ge 20) { return 'v142' }
+    return ''
+}
+
+# Installed Windows 10/11 SDK versions that have the headers a C++ build needs, newest first.
+function Get-WindowsSdkVersions {
+    $roots = @()
+    $key = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows Kits\Installed Roots' -ErrorAction SilentlyContinue
+    if ($key -and $key.KitsRoot10) { $roots += $key.KitsRoot10 }
+    $roots += Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10'
+    $versions = @()
+    foreach ($root in ($roots | Select-Object -Unique)) {
+        foreach ($dir in Get-ChildItem (Join-Path $root 'Include') -Directory -Filter '10.*' -ErrorAction SilentlyContinue) {
+            if ((Test-Path (Join-Path $dir.FullName 'um\Windows.h')) -and (Test-Path (Join-Path $dir.FullName 'ucrt\stdio.h'))) {
+                $versions += $dir.Name
+            }
+        }
+    }
+    return @($versions | Select-Object -Unique | Sort-Object { [version]$_ } -Descending)
+}
+
+# Picks the Visual Studio install and toolset to build with. Unreal Engine 5 builds with
+# the v143 (VS 2022) toolset, so an install that has it is preferred.
+function Select-VisualStudio($Instances) {
+    $usable = @($Instances | Where-Object { $_.Msvc.Count -gt 0 })
+    if ($usable.Count -eq 0) { return $null }
+    $withV143 = @($usable | Where-Object { @($_.Msvc | Where-Object { (Get-PlatformToolset $_) -eq 'v143' }).Count -gt 0 })
+    $vs = if ($withV143.Count -gt 0) { $withV143[0] } else { $usable[0] }
+    $generator = switch ($vs.Major) { 17 { 'Visual Studio 17 2022' } 18 { 'Visual Studio 18 2026' } default { "Visual Studio $($vs.Major)" } }
+    $defaultToolset = switch ($vs.Major) { 17 { 'v143' } 18 { 'v145' } default { '' } }
+    $installed = @($vs.Msvc | ForEach-Object { Get-PlatformToolset $_ } | Select-Object -Unique)
+    # Only force a toolset when the generator's default one is not installed.
+    $toolset = if ($installed -contains $defaultToolset) { '' } elseif ($installed -contains 'v143') { 'v143' } else { $installed[0] }
+    return [pscustomobject]@{ Instance = $vs; Generator = $generator; Toolset = $toolset; Toolsets = $installed }
+}

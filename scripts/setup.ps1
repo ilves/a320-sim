@@ -21,29 +21,49 @@ $ThirdPartyDir = Join-Path $RepoRoot 'unreal\A320Sim\Source\ThirdParty\A320Core'
 $BinariesDir = Join-Path $RepoRoot 'unreal\A320Sim\Binaries\Win64'
 New-Item -ItemType Directory -Force -Path $BuildDir | Out-Null
 
-Write-Step 'Checking Visual Studio (C++ toolset)'
-$vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
-if (-not (Test-Path $vswhere)) {
-    Fail ("Visual Studio 2022 was not found. Install it with the 'Game development with C++' workload:`n" +
-          "  winget install Microsoft.VisualStudio.2022.Community --override `"--add Microsoft.VisualStudio.Workload.NativeGame --includeRecommended --passive`"")
+Write-Step 'Checking Visual Studio, MSVC and the Windows SDK'
+$vsInstallHelp = ("In the Visual Studio Installer choose Modify, then tick the 'Desktop development with C++' and " +
+                  "'Game development with C++' workloads, and under Individual components " +
+                  "'MSVC v143 - VS 2022 C++ x64/x86 build tools (Latest)' and a 'Windows 11 SDK'. Then run Setup.bat again.")
+$instances = @(Get-VisualStudioInstances)
+if ($instances.Count -eq 0) {
+    Fail ("Visual Studio was not found. Install Visual Studio 2022 with the 'Game development with C++' workload:`n" +
+          "  winget install Microsoft.VisualStudio.2022.Community --override `"--add Microsoft.VisualStudio.Workload.NativeGame --add Microsoft.VisualStudio.Workload.NativeDesktop --includeRecommended --passive`"")
 }
-$vsPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-$vsMajor = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationVersion
-if (-not $vsPath) {
-    Fail "Visual Studio is installed without the C++ tools. Add the 'Game development with C++' workload in the Visual Studio Installer."
+foreach ($vs in $instances) {
+    $sets = if ($vs.Msvc.Count) { ($vs.Msvc | ForEach-Object { "$_ ($(Get-PlatformToolset $_))" }) -join ', ' } else { 'no C++ compiler' }
+    Write-Host "Found: $($vs.Name) at $($vs.Path): $sets"
 }
-$vsMajor = [int]($vsMajor.Split('.')[0])
-$generator = switch ($vsMajor) { 17 { 'Visual Studio 17 2022' } 18 { 'Visual Studio 18 2026' } default { 'Visual Studio 17 2022' } }
-Write-Host "Visual Studio: $vsPath ($generator)"
+$selected = Select-VisualStudio $instances
+if (-not $selected) {
+    Fail "None of the Visual Studio installs has the C++ compiler. $vsInstallHelp"
+}
+$vsPath = $selected.Instance.Path
+$generator = $selected.Generator
+$sdks = @(Get-WindowsSdkVersions)
+if ($sdks.Count -eq 0) {
+    Fail "No Windows SDK was found (needed for any C++ build). $vsInstallHelp"
+}
+$toolsetText = if ($selected.Toolset) { $selected.Toolset } else { 'default' }
+Write-Host "Using: $($selected.Instance.Name), generator '$generator', toolset $toolsetText, Windows SDK $($sdks[0])"
+if (-not $CoreOnly -and ($selected.Toolsets -notcontains 'v143')) {
+    Write-Host ("WARNING: Unreal Engine 5 builds with the MSVC v143 toolset, which is not installed. " +
+                "Add 'MSVC v143 - VS 2022 C++ x64/x86 build tools (Latest)' in the Visual Studio Installer if the Unreal build fails.") -ForegroundColor Yellow
+}
 
 Write-Step 'Checking CMake'
-$cmake = (Get-Command cmake -ErrorAction SilentlyContinue).Source
-if (-not $cmake) {
-    $bundled = Join-Path $vsPath 'Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe'
-    if (Test-Path $bundled) { $cmake = $bundled }
+# Prefer the CMake that ships with the selected Visual Studio: it always knows its generator.
+$cmakeCandidates = @(
+    (Join-Path $vsPath 'Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe'),
+    (Get-Command cmake -ErrorAction SilentlyContinue).Source
+) | Where-Object { $_ -and (Test-Path $_) }
+$cmake = $null
+foreach ($candidate in $cmakeCandidates) {
+    if ((& $candidate --help | Out-String) -match [regex]::Escape($generator)) { $cmake = $candidate; break }
 }
 if (-not $cmake) {
-    Fail "CMake was not found. Install it ('winget install Kitware.CMake') or add the 'C++ CMake tools for Windows' component in the Visual Studio Installer."
+    Fail ("No CMake that supports '$generator' was found. Install the latest CMake ('winget install Kitware.CMake') " +
+          "or add 'C++ CMake tools for Windows' in the Visual Studio Installer.")
 }
 $ctest = Join-Path (Split-Path $cmake) 'ctest.exe'
 Write-Host "CMake: $cmake ($((& $cmake --version | Select-Object -First 1)))"
@@ -61,8 +81,27 @@ if (-not (Test-Path (Join-Path $jsbsimDir 'CMakeLists.txt'))) {
 Write-Host "JSBSim: $jsbsimDir"
 
 Write-Step 'Building the flight model (A320Core.dll)'
-Invoke-Checked $cmake @('-S', (Join-Path $RepoRoot 'core'), '-B', $CoreBuildDir, '-G', $generator, '-A', 'x64',
-                        "-DA320_JSBSIM_SOURCE_DIR=$jsbsimDir")
+$configureArgs = @('-S', (Join-Path $RepoRoot 'core'), '-B', $CoreBuildDir, '-G', $generator, '-A', 'x64',
+                   "-DCMAKE_GENERATOR_INSTANCE=$vsPath", "-DCMAKE_SYSTEM_VERSION=$($sdks[0])",
+                   "-DA320_JSBSIM_SOURCE_DIR=$jsbsimDir")
+if ($selected.Toolset) { $configureArgs += @('-T', $selected.Toolset) }
+# A cache from another generator, toolset or failed attempt cannot be reused.
+$stampFile = Join-Path $BuildDir 'core-configure.txt'
+$stamp = $configureArgs -join '|'
+if ((Test-Path $CoreBuildDir) -and (-not (Test-Path $stampFile) -or (Get-Content $stampFile -Raw).Trim() -ne $stamp)) {
+    Remove-Item -Recurse -Force $CoreBuildDir
+}
+& $cmake @configureArgs
+if ($LASTEXITCODE -ne 0) {
+    $log = Join-Path $CoreBuildDir 'CMakeFiles\CMakeConfigureLog.yaml'
+    if (Test-Path $log) {
+        Write-Host ''
+        Write-Host 'Compiler check output (from CMakeConfigureLog.yaml):' -ForegroundColor Yellow
+        Select-String -Path $log -Pattern 'error|cannot|not found' | Select-Object -Last 15 | ForEach-Object { Write-Host "  $($_.Line.Trim())" }
+    }
+    Fail "CMake could not set up the C++ compiler. $vsInstallHelp"
+}
+Set-Content -Path $stampFile -Value $stamp
 Invoke-Checked $cmake @('--build', $CoreBuildDir, '--config', 'Release', '--parallel')
 
 if (-not $SkipTests) {
