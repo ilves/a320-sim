@@ -109,6 +109,8 @@ void AA320Aircraft::BeginPlay()
 
 	ResetScenario(A320_SCENARIO_RUNWAY);
 	ApplyView();
+	UE_LOG(LogA320, Log, TEXT("Flight model ready: %d runways, lined up on %s"), Runways.Num(),
+		Runways.IsValidIndex(ActiveRunway) ? UTF8_TO_TCHAR(Runways[ActiveRunway].ident) : TEXT("?"));
 }
 
 void AA320Aircraft::EndPlay(const EEndPlayReason::Type Reason)

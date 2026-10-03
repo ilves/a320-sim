@@ -20,4 +20,6 @@ $editor = Join-Path $engine.Dir 'Engine\Binaries\Win64\UnrealEditor.exe'
 $launchArgs = @("`"$ProjectFile`"", '-game', '-log=A320Sim.log')
 if ($Fullscreen) { $launchArgs += '-fullscreen' } else { $launchArgs += @('-windowed', "-ResX=$ResX", "-ResY=$ResY") }
 Write-Host "Starting A320 Sim ($editor)..."
+Write-Host 'The first start compiles shaders and can show a black window for 5-15 minutes.' -ForegroundColor Yellow
+Write-Host "Log: $(Join-Path $RepoRoot 'unreal\A320Sim\Saved\Logs\A320Sim.log')"
 Start-Process -FilePath $editor -ArgumentList $launchArgs
