@@ -40,6 +40,8 @@ set(A320_WARNINGS $<IF:$<CXX_COMPILER_ID:MSVC>,/W4,-Wall -Wextra -Wpedantic -Wsh
 
 add_library(a320core_static STATIC
   src/Airport.cpp
+  src/Audio.cpp
+  src/Autopilot.cpp
   src/FlyByWire.cpp
   src/Geo.cpp
   src/Ils.cpp

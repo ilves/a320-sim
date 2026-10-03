@@ -35,6 +35,9 @@ private:
 	void DrawNd(const AA320Aircraft& Aircraft, double X, double Y, double S);
 	void DrawEwd(const AA320Aircraft& Aircraft, double X, double Y, double S);
 	void DrawPanelButtons(const AA320Aircraft& Aircraft, double X, double Y, double W, double H);
+	void DrawFcu(const AA320Aircraft& Aircraft, double X, double Y, double W, double H);
+	void DrawFma(const A320State& St, double X, double Y, double S);
+	void AddButton(double X, double Y, double W, double H, const FString& Label, EA320Command Command, bool bLit);
 	void DrawOverlays(const AA320Aircraft& Aircraft);
 	void DrawHelp();
 

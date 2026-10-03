@@ -10,6 +10,8 @@
 #include "A320Aircraft.generated.h"
 
 class AA320World;
+class UAudioComponent;
+class USoundWaveProcedural;
 class UCameraComponent;
 class USpringArmComponent;
 class UStaticMeshComponent;
@@ -37,7 +39,8 @@ public:
 	virtual void Tick(float DeltaSeconds) override;
 
 	void SetFlightInputs(const FA320FlightInputs& Inputs, float DeltaSeconds);
-	void ExecuteCommand(EA320Command Command);
+	// bLarge: Shift held, for 10x FCU steps.
+	void ExecuteCommand(EA320Command Command, bool bLarge = false);
 	void AddLook(double YawDeg, double PitchDeg);
 	void ResetLook();
 
@@ -53,6 +56,7 @@ public:
 	bool IsLsOn() const { return bLsOn; }
 	int32 GetNdRangeNm() const { return NdRangeNm; }
 	bool IsHelpVisible() const { return bHelpVisible; }
+	bool IsSoundOn() const { return bSoundOn; }
 
 protected:
 	virtual void BeginPlay() override;
@@ -66,6 +70,9 @@ private:
 	void SyncControlsFromState();
 	void ApplyView();
 	void UpdateTransform();
+	void StartAudio();
+	void PumpAudio(float DeltaSeconds);
+	void AdjustFcu(double DSpd, double DHdg, double DAlt, double DVs);
 
 	A320Sim* Sim = nullptr;
 	A320State State{};
@@ -79,6 +86,9 @@ private:
 	bool bCockpitView = true;
 	bool bLsOn = false;
 	bool bHelpVisible = true;
+	bool bSoundOn = true;
+	int32 AudioRate = 44100;
+	TArray<int16> AudioScratch;
 	int32 NdRangeNm = 10;
 	FRotator LookOffset = FRotator::ZeroRotator;
 
@@ -88,5 +98,7 @@ private:
 	UPROPERTY() TObjectPtr<UCameraComponent> ChaseCamera;
 	UPROPERTY() TArray<TObjectPtr<UStaticMeshComponent>> ModelParts;
 	UPROPERTY() TObjectPtr<AA320World> World;
+	UPROPERTY() TObjectPtr<UAudioComponent> AudioOut;
+	UPROPERTY() TObjectPtr<USoundWaveProcedural> AudioWave;
 	UPROPERTY() FA320Shapes Shapes;
 };

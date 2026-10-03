@@ -120,6 +120,39 @@ int a320_get_runway(const A320Sim* sim, int index, A320RunwayInfo* info) {
   return 1;
 }
 
+void a320_fcu_command(A320Sim* sim, A320FcuCommand command) {
+  if (sim) sim->sim.fcuCommand(command);
+}
+
+void a320_fcu_set_targets(A320Sim* sim, double spdKt, double hdgMagDeg, double altFt, double vsFpm) {
+  if (sim) sim->sim.setFcuTargets(spdKt, hdgMagDeg, altFt, vsFpm);
+}
+
+const char* a320_lat_mode_name(int latMode) { return a320::latModeName(latMode); }
+const char* a320_vert_mode_name(int vertMode) { return a320::vertModeName(vertMode); }
+const char* a320_athr_mode_name(int athrMode) { return a320::athrModeName(athrMode); }
+
+int a320_audio_init(A320Sim* sim, int sampleRate, const char* soundsDir) {
+  if (!sim) return 0;
+  try {
+    return sim->sim.audio().init(sampleRate, soundsDir ? soundsDir : "") ? 1 : 0;
+  } catch (...) {
+    return 0;
+  }
+}
+
+void a320_audio_render(A320Sim* sim, int16_t* out, int frames) {
+  if (sim && out) sim->sim.audio().render(out, frames, sim->sim.state());
+}
+
+void a320_audio_event(A320Sim* sim, A320SoundEvent event) {
+  if (sim) sim->sim.audio().event(event);
+}
+
+void a320_audio_set_volume(A320Sim* sim, double volume) {
+  if (sim) sim->sim.audio().setVolume(volume);
+}
+
 const char* a320_warning_text(uint32_t warningBit) {
   return a320::warningText(static_cast<a320::Warning>(warningBit));
 }

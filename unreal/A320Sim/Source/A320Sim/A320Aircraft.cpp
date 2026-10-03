@@ -3,6 +3,8 @@
 #include "A320Sim.h"
 #include "A320World.h"
 #include "Camera/CameraComponent.h"
+#include "Components/AudioComponent.h"
+#include "Sound/SoundWaveProcedural.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/World.h"
@@ -52,6 +54,11 @@ AA320Aircraft::AA320Aircraft()
 	ChaseCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("ChaseCamera"));
 	ChaseCamera->SetupAttachment(ChaseArm, USpringArmComponent::SocketName);
 	ChaseCamera->SetFieldOfView(70.0f);
+
+	AudioOut = CreateDefaultSubobject<UAudioComponent>(TEXT("Audio"));
+	AudioOut->SetupAttachment(Root);
+	AudioOut->bAutoActivate = false;
+	AudioOut->bAllowSpatialization = false;
 }
 
 void AA320Aircraft::BeginPlay()
@@ -109,12 +116,17 @@ void AA320Aircraft::BeginPlay()
 
 	ResetScenario(A320_SCENARIO_RUNWAY);
 	ApplyView();
+	StartAudio();
 	UE_LOG(LogA320, Log, TEXT("Flight model ready: %d runways, lined up on %s"), Runways.Num(),
 		Runways.IsValidIndex(ActiveRunway) ? UTF8_TO_TCHAR(Runways[ActiveRunway].ident) : TEXT("?"));
 }
 
 void AA320Aircraft::EndPlay(const EEndPlayReason::Type Reason)
 {
+	if (AudioOut)
+	{
+		AudioOut->Stop();
+	}
 	if (Sim)
 	{
 		a320_destroy(Sim);
@@ -137,6 +149,56 @@ void AA320Aircraft::Tick(float DeltaSeconds)
 	if (World)
 	{
 		World->UpdatePapi(State.ilsRunwayIndex, State.papiWhite);
+	}
+	PumpAudio(DeltaSeconds);
+}
+
+void AA320Aircraft::StartAudio()
+{
+	const FString SoundsDir = FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectContentDir(), TEXT("Sounds")));
+	if (!Sim || !a320_audio_init(Sim, AudioRate, TCHAR_TO_UTF8(*SoundsDir)))
+	{
+		UE_LOG(LogA320, Warning, TEXT("Audio disabled"));
+		return;
+	}
+	// The core renders the whole cockpit soundscape; this wave just streams it.
+	AudioWave = NewObject<USoundWaveProcedural>(this);
+	AudioWave->SetSampleRate(AudioRate);
+	AudioWave->NumChannels = 1;
+	AudioWave->Duration = INDEFINITELY_LOOPING_DURATION;
+	AudioWave->SoundGroup = SOUNDGROUP_Default;
+	AudioWave->bLooping = false;
+	PumpAudio(0.0f);
+	AudioOut->SetSound(AudioWave);
+	AudioOut->Play();
+	UE_LOG(LogA320, Log, TEXT("Audio started (%d Hz, sounds from %s)"), AudioRate, *SoundsDir);
+}
+
+void AA320Aircraft::PumpAudio(float DeltaSeconds)
+{
+	if (!Sim || !AudioWave)
+	{
+		return;
+	}
+	// Keep ~120 ms queued: enough to ride out frame hitches, short enough to feel immediate.
+	const int32 TargetBytes = AudioRate * 2 * 12 / 100;
+	const int32 Missing = TargetBytes - AudioWave->GetAvailableAudioByteCount();
+	if (Missing <= 0)
+	{
+		return;
+	}
+	const int32 Frames = Missing / 2;
+	AudioScratch.SetNumUninitialized(Frames);
+	a320_audio_render(Sim, AudioScratch.GetData(), Frames);
+	AudioWave->QueueAudio(reinterpret_cast<const uint8*>(AudioScratch.GetData()), Frames * 2);
+}
+
+void AA320Aircraft::AdjustFcu(double DSpd, double DHdg, double DAlt, double DVs)
+{
+	if (Sim)
+	{
+		a320_fcu_set_targets(Sim, State.fcuSpdKt + DSpd, State.fcuHdgMagDeg + DHdg, State.fcuAltFt + DAlt, State.fcuVsFpm + DVs);
+		a320_get_state(Sim, &State);
 	}
 }
 
@@ -161,10 +223,51 @@ void AA320Aircraft::SetFlightInputs(const FA320FlightInputs& Inputs, float Delta
 	}
 }
 
-void AA320Aircraft::ExecuteCommand(EA320Command Command)
+void AA320Aircraft::ExecuteCommand(EA320Command Command, bool bLarge)
 {
+	if (Command != EA320Command::None && Sim)
+	{
+		a320_audio_event(Sim, A320_SOUND_CLICK);
+	}
+	const double Step = bLarge ? 10.0 : 1.0;
+	auto Fcu = [this](A320FcuCommand Cmd)
+	{
+		if (Sim)
+		{
+			a320_fcu_command(Sim, Cmd);
+			a320_get_state(Sim, &State);
+		}
+	};
 	switch (Command)
 	{
+	case EA320Command::FcuAp: Fcu(A320_FCU_AP1); break;
+	case EA320Command::FcuAthr: Fcu(A320_FCU_ATHR); break;
+	case EA320Command::FcuHdgPull: Fcu(A320_FCU_HDG_PULL); break;
+	case EA320Command::FcuLoc: Fcu(A320_FCU_LOC); break;
+	case EA320Command::FcuAppr: Fcu(A320_FCU_APPR); bLsOn = true; break;
+	case EA320Command::FcuAltPull: Fcu(A320_FCU_ALT_PULL); break;
+	case EA320Command::FcuVsPull: Fcu(A320_FCU_VS_PULL); break;
+	case EA320Command::SpdDec: AdjustFcu(-Step, 0.0, 0.0, 0.0); break;
+	case EA320Command::SpdInc: AdjustFcu(Step, 0.0, 0.0, 0.0); break;
+	case EA320Command::HdgDec: AdjustFcu(0.0, -Step, 0.0, 0.0); break;
+	case EA320Command::HdgInc: AdjustFcu(0.0, Step, 0.0, 0.0); break;
+	case EA320Command::AltDec: AdjustFcu(0.0, 0.0, -100.0 * Step, 0.0); break;
+	case EA320Command::AltInc: AdjustFcu(0.0, 0.0, 100.0 * Step, 0.0); break;
+	case EA320Command::VsDec: AdjustFcu(0.0, 0.0, 0.0, bLarge ? -500.0 : -100.0); break;
+	case EA320Command::VsInc: AdjustFcu(0.0, 0.0, 0.0, bLarge ? 500.0 : 100.0); break;
+	case EA320Command::MasterWarnAck:
+		if (Sim)
+		{
+			a320_audio_event(Sim, A320_SOUND_ACK_WARNING);
+		}
+		break;
+	case EA320Command::SoundToggle:
+		bSoundOn = !bSoundOn;
+		if (Sim)
+		{
+			a320_audio_set_volume(Sim, bSoundOn ? 0.8 : 0.0);
+		}
+		break;
 	case EA320Command::GearToggle: Controls.gearDown = Controls.gearDown ? 0 : 1; break;
 	case EA320Command::FlapsUp: Controls.flapsLever = FMath::Max(Controls.flapsLever - 1, 0); break;
 	case EA320Command::FlapsDown: Controls.flapsLever = FMath::Min(Controls.flapsLever + 1, 4); break;

@@ -21,13 +21,45 @@
 extern "C" {
 #endif
 
-#define A320_API_VERSION 1
+#define A320_API_VERSION 2
 
 typedef enum A320Scenario {
   A320_SCENARIO_RUNWAY = 0,     /* lined up, engines idle, CONF 1+F, park brake set */
   A320_SCENARIO_FINAL_10NM = 1, /* established on the ILS, gear down, CONF 3 */
   A320_SCENARIO_FINAL_4NM = 2   /* established on the ILS, gear down, CONF FULL */
 } A320Scenario;
+
+/* Autoflight (FCU) modes, as shown on the PFD's flight mode annunciator. */
+typedef enum A320LatMode {
+  A320_LAT_NONE = 0, A320_LAT_HDG, A320_LAT_LOC_STAR, A320_LAT_LOC, A320_LAT_ROLLOUT
+} A320LatMode;
+typedef enum A320VertMode {
+  A320_VERT_NONE = 0, A320_VERT_ALT, A320_VERT_ALT_STAR, A320_VERT_VS, A320_VERT_OP_CLB, A320_VERT_OP_DES,
+  A320_VERT_GS, A320_VERT_LAND, A320_VERT_FLARE
+} A320VertMode;
+typedef enum A320AthrMode {
+  A320_ATHR_OFF = 0, A320_ATHR_SPEED, A320_ATHR_THR_CLB, A320_ATHR_THR_IDLE, A320_ATHR_RETARD
+} A320AthrMode;
+#define A320_ARMED_ALT 1
+#define A320_ARMED_LOC 2
+#define A320_ARMED_GS 4
+
+/* FCU pushbuttons and knob pushes/pulls. */
+typedef enum A320FcuCommand {
+  A320_FCU_AP1 = 0,   /* engage / disengage the autopilot */
+  A320_FCU_ATHR,      /* engage / disengage autothrust */
+  A320_FCU_HDG_PULL,  /* fly the selected heading */
+  A320_FCU_LOC,       /* arm (or disarm) localizer capture */
+  A320_FCU_APPR,      /* arm (or disarm) localizer + glideslope capture, autoland */
+  A320_FCU_ALT_PULL,  /* open climb / descent to the selected altitude */
+  A320_FCU_VS_PULL    /* hold the selected vertical speed */
+} A320FcuCommand;
+
+/* Sounds the front end can trigger in addition to the ones the core raises itself. */
+typedef enum A320SoundEvent {
+  A320_SOUND_CLICK = 0,       /* cockpit button */
+  A320_SOUND_ACK_WARNING      /* master warning pushed: silence the repetitive chime */
+} A320SoundEvent;
 
 typedef enum A320PitchLaw { A320_LAW_GROUND = 0, A320_LAW_FLIGHT = 1, A320_LAW_FLARE = 2 } A320PitchLaw;
 
@@ -101,6 +133,12 @@ typedef struct A320State {
   /* Last touchdown, for landing feedback. */
   uint32_t touchdownSeq;
   double touchdownFpm, touchdownDistanceM, touchdownCenterlineM;
+
+  /* Autoflight. FCU heading is magnetic. */
+  int apEngaged, athrEngaged, athrActive;
+  int latMode, vertMode, athrMode, armed; /* A320LatMode, A320VertMode, A320AthrMode, A320_ARMED_* bits */
+  double fcuSpdKt, fcuHdgMagDeg, fcuAltFt, fcuVsFpm;
+  uint32_t apDisconnectSeq; /* increments on every autopilot disconnect (cavalry charge) */
 } A320State;
 
 typedef struct A320RunwayInfo {
@@ -136,6 +174,20 @@ A320_API double a320_field_elevation_ft(const A320Sim* sim);
 A320_API double a320_magnetic_variation_deg(const A320Sim* sim); /* east positive */
 A320_API int a320_runway_count(const A320Sim* sim);
 A320_API int a320_get_runway(const A320Sim* sim, int index, A320RunwayInfo* info);
+
+A320_API void a320_fcu_command(A320Sim* sim, A320FcuCommand command);
+/* Selected targets; the FCU rounds them like the real knobs (1 kt, 1 deg, 100 ft, 100 fpm). */
+A320_API void a320_fcu_set_targets(A320Sim* sim, double spdKt, double hdgMagDeg, double altFt, double vsFpm);
+A320_API const char* a320_lat_mode_name(int latMode);
+A320_API const char* a320_vert_mode_name(int vertMode);
+A320_API const char* a320_athr_mode_name(int athrMode);
+
+/* Audio: one mono stream with engines, airflow, rumble, chimes and callouts. soundsDir holds
+ * the callout WAVs (missing files are skipped). Render from the same thread as a320_update. */
+A320_API int a320_audio_init(A320Sim* sim, int sampleRate, const char* soundsDir);
+A320_API void a320_audio_render(A320Sim* sim, int16_t* out, int frames);
+A320_API void a320_audio_event(A320Sim* sim, A320SoundEvent event);
+A320_API void a320_audio_set_volume(A320Sim* sim, double volume);
 
 A320_API const char* a320_warning_text(uint32_t warningBit);
 A320_API const char* a320_flap_config_name(int flapsLever, int onePlusF);

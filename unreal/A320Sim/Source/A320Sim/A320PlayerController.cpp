@@ -72,6 +72,23 @@ void AA320PlayerController::PlayerTick(float DeltaTime)
 		{EKeys::F6, EA320Command::ResetFinal10},
 		{EKeys::F7, EA320Command::ResetFinal4},
 		{EKeys::F9, EA320Command::RunwaySwap},  // F8 is the editor's eject key in PIE
+		{EKeys::A, EA320Command::FcuAp},
+		{EKeys::T, EA320Command::FcuAthr},
+		{EKeys::U, EA320Command::FcuHdgPull},
+		{EKeys::J, EA320Command::FcuLoc},
+		{EKeys::K, EA320Command::FcuAppr},
+		{EKeys::Nine, EA320Command::FcuAltPull},
+		{EKeys::Zero, EA320Command::FcuVsPull},
+		{EKeys::One, EA320Command::SpdDec},
+		{EKeys::Two, EA320Command::SpdInc},
+		{EKeys::Three, EA320Command::HdgDec},
+		{EKeys::Four, EA320Command::HdgInc},
+		{EKeys::Five, EA320Command::AltDec},
+		{EKeys::Six, EA320Command::AltInc},
+		{EKeys::Seven, EA320Command::VsDec},
+		{EKeys::Eight, EA320Command::VsInc},
+		{EKeys::M, EA320Command::MasterWarnAck},
+		{EKeys::Hyphen, EA320Command::SoundToggle},
 		{EKeys::Gamepad_FaceButton_Bottom, EA320Command::GearToggle},
 		{EKeys::Gamepad_LeftShoulder, EA320Command::FlapsUp},
 		{EKeys::Gamepad_RightShoulder, EA320Command::FlapsDown},
@@ -80,11 +97,12 @@ void AA320PlayerController::PlayerTick(float DeltaTime)
 		{EKeys::Gamepad_Special_Right, EA320Command::PauseToggle},
 		{EKeys::Gamepad_Special_Left, EA320Command::ViewToggle},
 	};
+	const bool bShift = IsInputKeyDown(EKeys::LeftShift) || IsInputKeyDown(EKeys::RightShift);
 	for (const FKeyCommand& Binding : Bindings)
 	{
 		if (WasInputKeyJustPressed(Binding.Key))
 		{
-			Aircraft->ExecuteCommand(Binding.Command);
+			Aircraft->ExecuteCommand(Binding.Command, bShift);
 		}
 	}
 
@@ -101,7 +119,7 @@ void AA320PlayerController::PlayerTick(float DeltaTime)
 		const bool Neg = IsInputKeyDown(Negative) || IsInputKeyDown(AltNegative);
 		return (Pos ? 1.0 : 0.0) - (Neg ? 1.0 : 0.0);
 	};
-	const double Gain = (IsInputKeyDown(EKeys::LeftShift) || IsInputKeyDown(EKeys::RightShift)) ? 1.0 : 0.5;
+	const double Gain = bShift ? 1.0 : 0.5;
 	// Up arrow pushes the stick forward (nose down), as in every flight sim.
 	const double PitchTarget = Gain * KeyAxis(EKeys::Up, EKeys::Down, EKeys::NumPadEight, EKeys::NumPadTwo);
 	const double RollTarget = Gain * KeyAxis(EKeys::Left, EKeys::Right, EKeys::NumPadFour, EKeys::NumPadSix);
@@ -129,7 +147,7 @@ void AA320PlayerController::PlayerTick(float DeltaTime)
 	{
 		if (const AA320Hud* Hud = Cast<AA320Hud>(GetHUD()))
 		{
-			Aircraft->ExecuteCommand(Hud->CommandAt(Mouse));
+			Aircraft->ExecuteCommand(Hud->CommandAt(Mouse), bShift);
 		}
 	}
 	if (bHasMouse && IsInputKeyDown(EKeys::RightMouseButton))

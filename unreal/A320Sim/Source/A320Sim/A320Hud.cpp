@@ -147,15 +147,22 @@ void AA320Hud::DrawHUD()
 	const double W = Canvas->ClipX, H = Canvas->ClipY;
 	// The panel fills the lower 38% of the screen; the cockpit camera is pitched down so
 	// the runway stays visible above it on approach.
-	const double PanelTop = H * 0.62;
-	const double PanelH = H - PanelTop;
+	// The FCU sits on the glareshield, above the displays.
+	const double PanelTop = H * 0.58;
+	const double FcuH = H * 0.055;
+	const double DisplayTop = PanelTop + FcuH;
+	const double PanelH = H - DisplayTop;
 	const double S = FMath::Min(PanelH * 0.92, W * 0.22);
 	const double Margin = (PanelH - S) / 2.0;
 	Scale = S / 420.0;
 
-	Fill(0.0, PanelTop, W, PanelH, Glareshield);
+	Fill(0.0, PanelTop, W, H - PanelTop, Glareshield);
 	Line(0.0, PanelTop, W, PanelTop, FLinearColor(0.2f, 0.2f, 0.22f), 3.0);
-	const double Y = PanelTop + Margin;
+	if (Aircraft->IsSimReady())
+	{
+		DrawFcu(*Aircraft, Margin, PanelTop + FcuH * 0.1, W - 2.0 * Margin, FcuH * 0.8);
+	}
+	const double Y = DisplayTop + Margin;
 	double X = Margin;
 	if (Aircraft->IsSimReady())
 	{
@@ -277,6 +284,16 @@ void AA320Hud::DrawPfd(const AA320Aircraft& Aircraft, double X, double Y, double
 		const double TipY = FMath::Clamp(SpeedY(St.iasKt + SpeedTrendKtS * 10.0), TapeTop, TapeBottom);
 		Line(SX + SW + 0.01 * S, CY, SX + SW + 0.01 * S, TipY, Yellow, 2.0);
 	}
+	// Selected speed (FCU): cyan triangle, or its value at the tape end when off scale.
+	const double BugY = SpeedY(St.fcuSpdKt);
+	if (BugY > TapeTop && BugY < TapeBottom)
+	{
+		Triangle(FVector2D(SX + SW, BugY), FVector2D(SX + SW + 0.02 * S, BugY - 0.012 * S), FVector2D(SX + SW + 0.02 * S, BugY + 0.012 * S), Cyan);
+	}
+	else
+	{
+		Text(FString::Printf(TEXT("%d"), FMath::RoundToInt(St.fcuSpdKt)), SX + SW / 2.0, BugY < TapeTop ? TapeTop - 0.02 * S : TapeBottom + 0.02 * S, Cyan, 0, 1);
+	}
 	Line(SX, CY, SX + SW + 0.02 * S, CY, Yellow, 3.0);
 	Fill(SX, CY - 0.03 * S, 0.085 * S, 0.06 * S, Screen);
 	Text(FString::Printf(TEXT("%d"), FMath::RoundToInt(St.iasKt)), SX + 0.08 * S, CY, Green, 1, 2);
@@ -304,6 +321,12 @@ void AA320Hud::DrawPfd(const AA320Aircraft& Aircraft, double X, double Y, double
 	{
 		Fill(AX, FMath::Max(GroundY, TapeTop), 0.015 * S, TapeBottom - FMath::Max(GroundY, TapeTop), Red);
 	}
+	const double AltBugY = AltY(St.fcuAltFt);
+	if (AltBugY > TapeTop && AltBugY < TapeBottom)
+	{
+		Frame(AX, AltBugY - 0.012 * S, 0.02 * S, 0.024 * S, Cyan, 2.0);
+	}
+	Text(FString::Printf(TEXT("%d"), FMath::RoundToInt(St.fcuAltFt)), AX + AW / 2.0, TapeTop - 0.025 * S, Cyan, 0, 1);
 	Line(AX - 0.02 * S, CY, AX + AW, CY, Yellow, 3.0);
 	Fill(AX, CY - 0.03 * S, AW, 0.06 * S, Screen);
 	Text(FString::Printf(TEXT("%d"), FMath::RoundToInt(St.altitudeFt / 10.0) * 10), AX + AW - 0.005 * S, CY, Green, 1, 2);
@@ -337,6 +360,11 @@ void AA320Hud::DrawPfd(const AA320Aircraft& Aircraft, double X, double Y, double
 		{
 			Text(HeadingLabel(D), DX, HY + 0.05 * S, White, 0, 1);
 		}
+	}
+	const double HdgBugX = HX0 + HW / 2.0 + Wrap180(St.fcuHdgMagDeg - Hdg) * Ppdh;
+	if (HdgBugX > HX0 && HdgBugX < HX0 + HW)
+	{
+		Triangle(FVector2D(HdgBugX, HY), FVector2D(HdgBugX - 0.01 * S, HY - 0.018 * S), FVector2D(HdgBugX + 0.01 * S, HY - 0.018 * S), Cyan);
 	}
 	Line(HX0 + HW / 2.0, HY - 0.02 * S, HX0 + HW / 2.0, HY + 0.02 * S, Yellow, 3.0);
 	const double TrkX = HX0 + HW / 2.0 + Wrap180(St.trackTrueDeg - St.headingTrueDeg) * Ppdh;
@@ -392,21 +420,7 @@ void AA320Hud::DrawPfd(const AA320Aircraft& Aircraft, double X, double Y, double
 		Text(FString::Printf(TEXT("%d"), Ra), CX, CY + 0.25 * S, St.radioAltFt < 400.0 ? Amber : Green, 2, 1);
 	}
 
-	// FMA: thrust column only (no autothrust or autopilot in this version).
-	Line(X + 0.2 * S, Y + 0.01 * S, X + 0.2 * S, Y + 0.10 * S, Grey, 1.0);
-	Line(X + 0.4 * S, Y + 0.01 * S, X + 0.4 * S, Y + 0.10 * S, Grey, 1.0);
-	Line(X + 0.6 * S, Y + 0.01 * S, X + 0.6 * S, Y + 0.10 * S, Grey, 1.0);
-	Line(X + 0.8 * S, Y + 0.01 * S, X + 0.8 * S, Y + 0.10 * S, Grey, 1.0);
-	FString Thrust;
-	if (St.reverse) Thrust = TEXT("REV");
-	else if (St.thrustDetent == 3) Thrust = TEXT("MAN TOGA");
-	else if (St.thrustDetent == 2) Thrust = St.onGround ? TEXT("MAN FLX") : TEXT("MAN MCT");
-	if (!Thrust.IsEmpty())
-	{
-		Text(Thrust, X + 0.1 * S, Y + 0.035 * S, White, 0, 1);
-	}
-	Text(St.pitchLaw == A320_LAW_FLARE ? TEXT("FLARE") : TEXT(""), X + 0.5 * S, Y + 0.035 * S, Green, 0, 1);
-	Text(TEXT("AP OFF"), X + 0.9 * S, Y + 0.035 * S, Grey, 0, 1);
+	DrawFma(St, X, Y, S);
 	Frame(X, Y, S, S, Grey, 1.0);
 }
 
@@ -479,6 +493,14 @@ void AA320Hud::DrawNd(const AA320Aircraft& Aircraft, double X, double Y, double 
 		}
 	}
 	Line(AcX, AcY - R - 0.045 * S, AcX, AcY - R + 0.01 * S, Yellow, 3.0);
+	const double BugA = Wrap180(St.fcuHdgMagDeg - MagHdg);
+	if (FMath::Abs(BugA) < 50.0)
+	{
+		const FVector2D B0 = Polar(AcX, AcY, R + 0.005 * S, BugA - 2.5);
+		const FVector2D B1 = Polar(AcX, AcY, R + 0.005 * S, BugA + 2.5);
+		const FVector2D B2 = Polar(AcX, AcY, R + 0.035 * S, BugA);
+		Triangle(B0, B1, B2, Cyan);
+	}
 	if (St.groundSpeedKt > 30.0)
 	{
 		const FVector2D T = Polar(AcX, AcY, R - 0.01 * S, Wrap180(St.trackTrueDeg - Hdg));
@@ -693,6 +715,11 @@ void AA320Hud::DrawOverlays(const AA320Aircraft& Aircraft)
 		Frame(20.0 * Scale, 20.0 * Scale, BW, BH, C, 2.0);
 		Text(WarningBits ? TEXT("MASTER WARN") : TEXT("MASTER CAUT"), 20.0 * Scale + BW / 2.0, 20.0 * Scale + BH / 2.0, C, 1, 1);
 	}
+	if (WarningBits || CautionBits)
+	{
+		// Clicking the master warning light silences the repetitive chime, as on the aircraft.
+		Buttons.Add({FBox2D(FVector2D(20.0 * Scale, 20.0 * Scale), FVector2D(210.0 * Scale, 66.0 * Scale)), EA320Command::MasterWarnAck});
+	}
 	if (St.paused)
 	{
 		Text(TEXT("PAUSED  -  press P to continue"), W / 2.0, H * 0.32, Yellow, 2, 1);
@@ -721,6 +748,9 @@ void AA320Hud::DrawHelp()
 		TEXT("Pause          P                         Sim rate  ="),
 		TEXT("View           C cockpit / outside,  right mouse drag to look, middle click to reset"),
 		TEXT("Scenarios      F5 lined up 26,  F6 10 NM final,  F7 4 NM final,  F9 swap runway"),
+		TEXT("Autopilot      A AP1,  T A/THR (thrust levers in CL: Ins),  K APPR (autoland),  J LOC"),
+		TEXT("FCU            1/2 SPD,  3/4 HDG,  5/6 ALT,  7/8 V/S  (Shift = x10);  U fly HDG,  9 climb/descend to ALT,  0 hold V/S"),
+		TEXT("Sound          - (minus) on/off,  M silence master warning"),
 		TEXT("Takeoff        N (release brake), Home (TOGA), rotate ~150 kt with Down arrow, G at positive climb"),
 		TEXT("Landing        Vapp = VLS + 5 (amber strip), keep diamonds centred, flare ~30 ft, End at RETARD"),
 		TEXT("Quit           Esc (standalone game)"),
@@ -733,5 +763,114 @@ void AA320Hud::DrawHelp()
 	for (int32 i = 0; i < NumLines; ++i)
 	{
 		Text(Lines[i], X + 14.0 * Scale, Y + LineH * (i + 1), i == 0 ? Cyan : White, 0, 0);
+	}
+}
+
+void AA320Hud::AddButton(double X, double Y, double W, double H, const FString& Label, EA320Command Command, bool bLit)
+{
+	Fill(X, Y, W, H, ButtonFace);
+	Frame(X, Y, W, H, bLit ? Green : FLinearColor(0.3f, 0.3f, 0.33f), bLit ? 2.0 : 1.0);
+	if (bLit)
+	{
+		Fill(X + W * 0.25, Y + H - 4.0 * Scale, W * 0.5, 2.5 * Scale, Green);
+	}
+	Text(Label, X + W / 2.0, Y + H / 2.0, bLit ? Green : White, 0, 1);
+	Buttons.Add({FBox2D(FVector2D(X, Y), FVector2D(X + W, Y + H)), Command});
+}
+
+void AA320Hud::DrawFcu(const AA320Aircraft& Aircraft, double X, double Y, double W, double H)
+{
+	const A320State& St = Aircraft.GetSimState();
+	// Airbus FCU order: SPD | HDG | LOC | AP1 A/THR | ALT | APPR | V/S. Each window has -/+ and
+	// a "pull" button (fly the selected value).
+	struct FWindow
+	{
+		const TCHAR* Label;
+		FString Value;
+		EA320Command Dec, Inc, Pull;
+		const TCHAR* PullLabel;
+		bool bPullLit;
+	};
+	const bool bVs = St.vertMode == A320_VERT_VS;
+	const FWindow Windows[] = {
+		{TEXT("SPD"), FString::Printf(TEXT("%03d"), FMath::RoundToInt(St.fcuSpdKt)), EA320Command::SpdDec, EA320Command::SpdInc, EA320Command::None, TEXT(""), false},
+		{TEXT("HDG"), FString::Printf(TEXT("%03d"), FMath::RoundToInt(St.fcuHdgMagDeg) % 360), EA320Command::HdgDec, EA320Command::HdgInc, EA320Command::FcuHdgPull, TEXT("HDG"), St.latMode == A320_LAT_HDG},
+		{TEXT("ALT"), FString::Printf(TEXT("%05d"), FMath::RoundToInt(St.fcuAltFt)), EA320Command::AltDec, EA320Command::AltInc, EA320Command::FcuAltPull, TEXT("LVL/CH"), St.vertMode == A320_VERT_OP_CLB || St.vertMode == A320_VERT_OP_DES},
+		{TEXT("V/S"), bVs ? FString::Printf(TEXT("%+05d"), FMath::RoundToInt(St.fcuVsFpm)) : FString(TEXT("-----")), EA320Command::VsDec, EA320Command::VsInc, EA320Command::FcuVsPull, TEXT("V/S"), bVs},
+	};
+	Fill(X, Y, W, H, FLinearColor(0.09f, 0.095f, 0.1f));
+	const double Gap = 6.0 * Scale;
+	const double WindowW = W * 0.16, ButtonW = W * 0.065;
+	double CX = X + Gap;
+	auto DrawWindow = [&](const FWindow& Win)
+	{
+		const double BoxW = WindowW * 0.5;
+		Text(Win.Label, CX + 2.0 * Scale, Y + H * 0.22, White, 0, 0);
+		Fill(CX, Y + H * 0.42, BoxW, H * 0.5, Screen);
+		Text(Win.Value, CX + BoxW / 2.0, Y + H * 0.67, Amber, 1, 1);
+		const double SmallW = WindowW * 0.15;
+		AddButton(CX + BoxW + 2.0, Y + H * 0.42, SmallW, H * 0.5, TEXT("-"), Win.Dec, false);
+		AddButton(CX + BoxW + SmallW + 4.0, Y + H * 0.42, SmallW, H * 0.5, TEXT("+"), Win.Inc, false);
+		if (Win.Pull != EA320Command::None)
+		{
+			AddButton(CX + BoxW + 2.0 * SmallW + 6.0, Y + H * 0.42, WindowW - BoxW - 2.0 * SmallW - 8.0, H * 0.5, Win.PullLabel, Win.Pull, Win.bPullLit);
+		}
+		CX += WindowW + Gap;
+	};
+	auto DrawButton = [&](const TCHAR* Label, EA320Command Command, bool bLit)
+	{
+		AddButton(CX, Y + H * 0.15, ButtonW, H * 0.75, Label, Command, bLit);
+		CX += ButtonW + Gap;
+	};
+	const bool bLocLit = St.latMode == A320_LAT_LOC || St.latMode == A320_LAT_LOC_STAR || (St.armed & A320_ARMED_LOC);
+	const bool bApprLit = (St.armed & A320_ARMED_GS) || St.vertMode == A320_VERT_GS || St.vertMode == A320_VERT_LAND || St.vertMode == A320_VERT_FLARE;
+	DrawWindow(Windows[0]);
+	DrawWindow(Windows[1]);
+	DrawButton(TEXT("LOC"), EA320Command::FcuLoc, bLocLit && !bApprLit);
+	DrawButton(TEXT("AP1"), EA320Command::FcuAp, St.apEngaged != 0);
+	DrawButton(TEXT("A/THR"), EA320Command::FcuAthr, St.athrEngaged != 0);
+	DrawWindow(Windows[2]);
+	DrawButton(TEXT("APPR"), EA320Command::FcuAppr, bApprLit);
+	DrawWindow(Windows[3]);
+}
+
+void AA320Hud::DrawFma(const A320State& St, double X, double Y, double S)
+{
+	for (int32 i = 1; i < 5; ++i)
+	{
+		Line(X + 0.2 * S * i, Y + 0.01 * S, X + 0.2 * S * i, Y + 0.11 * S, Grey, 1.0);
+	}
+	const double Row1 = Y + 0.03 * S, Row2 = Y + 0.075 * S;
+	// Column 1: thrust.
+	FString Thrust;
+	FLinearColor ThrustColor = Green;
+	if (St.reverse) Thrust = TEXT("REV");
+	else if (St.athrEngaged && St.athrActive) Thrust = UTF8_TO_TCHAR(a320_athr_mode_name(St.athrMode));
+	else if (St.thrustDetent == 3) { Thrust = TEXT("MAN TOGA"); ThrustColor = White; }
+	else if (St.thrustDetent == 2) { Thrust = St.onGround ? TEXT("MAN FLX") : TEXT("MAN MCT"); ThrustColor = White; }
+	else if (St.athrEngaged && !St.onGround && FMath::Fmod(GetWorld()->GetRealTimeSeconds(), 1.0) < 0.6) { Thrust = TEXT("LVR CLB"); ThrustColor = White; }
+	Text(Thrust, X + 0.1 * S, Row1, ThrustColor, 0, 1);
+
+	// Columns 2-3: vertical and lateral (LAND, FLARE and ROLL OUT span both), armed modes in cyan.
+	const bool bCombined = St.vertMode == A320_VERT_LAND || St.vertMode == A320_VERT_FLARE || St.latMode == A320_LAT_ROLLOUT;
+	if (bCombined)
+	{
+		Text(St.latMode == A320_LAT_ROLLOUT ? TEXT("ROLL OUT") : UTF8_TO_TCHAR(a320_vert_mode_name(St.vertMode)), X + 0.4 * S, Row1, Green, 0, 1);
+	}
+	else
+	{
+		Text(UTF8_TO_TCHAR(a320_vert_mode_name(St.vertMode)), X + 0.3 * S, Row1, Green, 0, 1);
+		Text(UTF8_TO_TCHAR(a320_lat_mode_name(St.latMode)), X + 0.5 * S, Row1, Green, 0, 1);
+		FString ArmedV;
+		if (St.armed & A320_ARMED_GS) ArmedV += TEXT("G/S ");
+		else if (St.armed & A320_ARMED_ALT) ArmedV += TEXT("ALT");
+		Text(ArmedV, X + 0.3 * S, Row2, Cyan, 0, 1);
+		Text((St.armed & A320_ARMED_LOC) ? TEXT("LOC") : TEXT(""), X + 0.5 * S, Row2, Cyan, 0, 1);
+	}
+	// Column 5: engagement status.
+	Text(St.apEngaged ? TEXT("AP1") : TEXT(""), X + 0.9 * S, Row1, White, 0, 1);
+	if (St.athrEngaged)
+	{
+		Text(TEXT("A/THR"), X + 0.9 * S, Row2, St.athrActive ? White : Cyan, 0, 1);
 	}
 }

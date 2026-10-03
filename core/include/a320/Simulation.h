@@ -4,6 +4,8 @@
 #include <string>
 
 #include "a320/Airport.h"
+#include "a320/Audio.h"
+#include "a320/Autopilot.h"
 #include "a320/FlyByWire.h"
 #include "a320/Geo.h"
 #include "a320/Ils.h"
@@ -29,6 +31,9 @@ class Simulation {
 
   bool reset(A320Scenario scenario, int runwayIndex);
   void setControls(const A320Controls& c);
+  void fcuCommand(A320FcuCommand cmd);
+  void setFcuTargets(double spdKt, double hdgMagDeg, double altFt, double vsFpm);
+  AudioEngine& audio() { return audio_; }
   void update(double realDtS);
   // One fixed step regardless of pause; used by update() and by tests.
   void step();
@@ -43,6 +48,7 @@ class Simulation {
 
  private:
   double trimAirborne();
+  ApInput apInput() const;
   void applyControls();
   void refreshState();
   double prop(const char* name) const;
@@ -56,6 +62,10 @@ class Simulation {
   SimClock clock_;
   FlyByWire fbw_;
   FlapsSystem flaps_;
+  Autopilot ap_;
+  AudioEngine audio_;
+  double throttle_ = 0.0;
+  bool athrActive_ = false;
   Callouts callouts_;
   A320Controls controls_{};
   A320State state_{};

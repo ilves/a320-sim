@@ -139,6 +139,14 @@ bool Simulation::reset(A320Scenario scenario, int runwayIndex) {
   }
 
   controls_.thrustLever = onRunway ? 0.0 : clamp(prop("fcs/throttle-cmd-norm[0]"), 0.0, 1.0);
+  throttle_ = controls_.thrustLever;
+  {
+    const double magVar = airport_.magneticVariationDeg;
+    const double courseMag = rw.trueCourseDeg - magVar;
+    // FCU preset: climb to 5000 ft at 200 kt after takeoff; on final, approach speed and a
+    // 3000 ft missed-approach altitude.
+    ap_.reset(onRunway ? 200.0 : speedKt, courseMag, onRunway ? 5000.0 : 3000.0);
+  }
   fbw_.reset(onRunway ? PitchLaw::Ground : PitchLaw::Flight, 0.0, thsDeg);
   clock_.resetTime();
   refreshState();
@@ -180,6 +188,47 @@ double Simulation::trimAirborne() {
 
 void Simulation::setControls(const A320Controls& c) { controls_ = c; }
 
+ApInput Simulation::apInput() const {
+  ApInput in;
+  const A320State& s = state_;
+  in.iasKt = s.iasKt;
+  in.tasKt = s.tasKt;
+  in.groundSpeedKt = s.groundSpeedKt;
+  in.altitudeFt = s.altitudeFt;
+  in.radioAltFt = s.radioAltFt;
+  in.verticalSpeedFpm = s.verticalSpeedFpm;
+  in.flightPathDeg = s.flightPathDeg;
+  in.headingTrueDeg = s.headingTrueDeg;
+  in.trackTrueDeg = s.trackTrueDeg;
+  in.bankDeg = s.bankDeg;
+  in.onGround = s.onGround != 0;
+  in.locValid = s.locValid != 0;
+  in.gsValid = s.gsValid != 0;
+  in.locDots = s.locDots;
+  in.gsDots = s.gsDots;
+  in.dmeNm = s.dmeNm;
+  in.ilsCourseTrueDeg = s.ilsCourseDeg;
+  in.glideslopeDeg = ils_ ? ils_->glideslopeDeg() : 3.0;
+  in.locDegPerDot = ils_ ? ils_->locHalfSectorDeg() / 2.0 : 0.8;
+  in.magneticVariationDeg = airport_.magneticVariationDeg;
+  in.pilotStickPitch = controls_.stickPitch;
+  in.pilotStickRoll = controls_.stickRoll;
+  in.thrustLever = clamp(controls_.thrustLever, 0.0, 1.0);
+  in.currentThrottle = throttle_;
+  in.dtS = clock_.stepS();
+  return in;
+}
+
+void Simulation::fcuCommand(A320FcuCommand cmd) {
+  ap_.command(cmd, apInput());
+  refreshState();
+}
+
+void Simulation::setFcuTargets(double spdKt, double hdgMagDeg, double altFt, double vsFpm) {
+  ap_.setTargets(spdKt, hdgMagDeg, altFt, vsFpm);
+  refreshState();
+}
+
 void Simulation::update(double realDtS) {
   if (!fdm_) return;
   const int steps = clock_.advance(realDtS);
@@ -200,9 +249,14 @@ void Simulation::applyControls() {
   const A320Controls& c = controls_;
   const bool onGround = state_.onGround != 0;
 
+  const ApOutput ap = ap_.update(apInput());
+  const double stickPitch = ap.apActive ? ap.stickPitch : c.stickPitch;
+  const double stickRoll = ap.apActive ? ap.stickRoll : c.stickRoll;
+  const double pedals = clamp(c.pedals + (ap.apActive ? ap.pedals : 0.0), -1.0, 1.0);
+
   FbwInput in;
-  in.stickPitch = clamp(c.stickPitch, -1.0, 1.0);
-  in.stickRoll = clamp(c.stickRoll, -1.0, 1.0);
+  in.stickPitch = clamp(stickPitch, -1.0, 1.0);
+  in.stickRoll = clamp(stickRoll, -1.0, 1.0);
   in.pitchDeg = state_.pitchDeg;
   in.flightPathDeg = state_.flightPathDeg;
   in.alphaDeg = state_.alphaDeg;
@@ -220,11 +274,13 @@ void Simulation::applyControls() {
   setProp("fcs/aileron-cmd-norm", out.aileronCmd);
   // The model's rudder is positive trailing-edge left (nose left, CmDr < 0) while nosewheel
   // steering is positive right, so the pedal command is negated for the rudder only.
-  setProp("fcs/rudder-cmd-norm", -clamp(c.pedals, -1.0, 1.0));
-  setProp("fcs/steer-cmd-norm", clamp(c.pedals, -1.0, 1.0) * steeringAuthority(state_.groundSpeedKt));
+  setProp("fcs/rudder-cmd-norm", -pedals);
+  setProp("fcs/steer-cmd-norm", pedals * steeringAuthority(state_.groundSpeedKt));
 
   const bool reverse = c.reverse && onGround;
-  const double lever = clamp(c.thrustLever, 0.0, 1.0);
+  const double lever = ap.athrActive && !reverse ? ap.throttle : clamp(c.thrustLever, 0.0, 1.0);
+  throttle_ = lever;
+  athrActive_ = ap.athrActive && !reverse;
   for (int i = 0; i < 2; ++i) {
     char name[64];
     std::snprintf(name, sizeof(name), "fcs/throttle-cmd-norm[%d]", i);
@@ -310,6 +366,19 @@ void Simulation::refreshState() {
   s.aileronNorm = prop("fcs/left-aileron-pos-norm");
   s.rudderNorm = prop("fcs/rudder-pos-norm");
   s.thsDeg = prop("fcs/ths-pos-rad") * kRadToDeg;
+
+  s.apEngaged = ap_.apEngaged() ? 1 : 0;
+  s.athrEngaged = ap_.athrEngaged() ? 1 : 0;
+  s.athrActive = athrActive_ ? 1 : 0;
+  s.latMode = ap_.lateral();
+  s.vertMode = ap_.vertical();
+  s.athrMode = ap_.athrMode();
+  s.armed = ap_.armed();
+  s.fcuSpdKt = ap_.spdKt();
+  s.fcuHdgMagDeg = ap_.hdgMagDeg();
+  s.fcuAltFt = ap_.altFt();
+  s.fcuVsFpm = ap_.vsFpm();
+  s.apDisconnectSeq = ap_.disconnectSeq();
 
   const bool takeoffPhase = s.onGround || (s.radioAltFt < 1500.0 && s.thrustLever > kLeverClimb + 0.05);
   const SpeedLimits lim = computeSpeedLimits(s.flapsLever, s.onePlusF != 0, s.flapDeg, weightLbs,
