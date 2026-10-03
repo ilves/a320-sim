@@ -35,6 +35,19 @@ ThrustDetent thrustDetent(double lever) {
   return ThrustDetent::Manual;
 }
 
+ThrustLevers thrustLevers(const A320Controls& c) {
+  ThrustLevers t;
+  t.lever[0] = clamp(c.thrustLever, 0.0, 1.0);
+  t.reverse[0] = c.reverse != 0;
+  t.lever[1] = c.splitThrust ? clamp(c.thrustLever2, 0.0, 1.0) : t.lever[0];
+  t.reverse[1] = c.splitThrust ? c.reverse2 != 0 : t.reverse[0];
+  return t;
+}
+
+double ThrustLevers::forward() const {
+  return std::fmax(reverse[0] ? 0.0 : lever[0], reverse[1] ? 0.0 : lever[1]);
+}
+
 const char* thrustDetentName(ThrustDetent d) {
   switch (d) {
     case ThrustDetent::Idle: return "IDLE";

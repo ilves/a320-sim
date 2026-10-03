@@ -103,7 +103,36 @@ void FA320Joystick::Rescan()
 	}
 #endif
 	Axes.assign(static_cast<size_t>(Devices.Num()), AxisValues{});
-	LastThrottle = 2.0;
+	ButtonsNow.Init(0, Devices.Num());
+	ButtonsBefore.Init(0, Devices.Num());
+	LastThrottle[0] = LastThrottle[1] = 2.0;
+	bFirstPoll = true;
+
+	std::vector<std::string> Names;
+	std::vector<std::array<bool, kAxes>> HasAxes;
+	for (const FA320JoystickDevice& Device : Devices)
+	{
+		Names.emplace_back(TCHAR_TO_UTF8(*Device.Name));
+		std::array<bool, kAxes> Present{};
+		for (int32 A = 0; A < kAxes; ++A)
+		{
+			Present[static_cast<size_t>(A)] = Device.HasAxis[A];
+		}
+		HasAxes.push_back(Present);
+	}
+	const bool bResolved = resolveDevices(JoyConfig, Names);
+	if (autoAssignThrottle(JoyConfig, Names, HasAxes))
+	{
+		const int32 Quadrant = JoyConfig.bind[kThrottle].device;
+		Message = FString::Printf(TEXT("Throttle found: %s. Press CALIBRATE THRUST to teach it the detents."),
+			Devices.IsValidIndex(Quadrant) ? *Devices[Quadrant].Name : TEXT("?"));
+		UE_LOG(LogA320, Log, TEXT("%s"), *Message);
+		Save();
+	}
+	else if (bResolved)
+	{
+		Save();
+	}
 }
 
 void FA320Joystick::Poll(float DeltaSeconds)
@@ -121,9 +150,8 @@ void FA320Joystick::Poll(float DeltaSeconds)
 		return;
 	}
 	ButtonsBefore = ButtonsNow;
-	ButtonsNow = 0;
 	Pov = -1;
-	const int32 MainDevice = FMath::Clamp(JoyConfig.bind[kPitch].device, 0, Devices.Num() - 1);
+	const int32 StickDevice = GetStickDevice();
 #if PLATFORM_WINDOWS
 	for (int32 D = 0; D < Devices.Num(); ++D)
 	{
@@ -141,37 +169,86 @@ void FA320Joystick::Poll(float DeltaSeconds)
 			Axes[static_cast<size_t>(D)][static_cast<size_t>(A)] =
 				Devices[D].HasAxis[A] ? normalize(Raw[A], Devices[D].AxisMin[A], Devices[D].AxisMax[A]) : 0.0;
 		}
-		if (D == MainDevice)
+		ButtonsNow[D] = static_cast<uint32>(Info.dwButtons);
+		if (D == StickDevice)
 		{
-			ButtonsNow = static_cast<uint32>(Info.dwButtons);
 			// Hundredths of a degree; anything outside 0..35999 (e.g. 65535) means centred.
 			Pov = Devices[D].bHasPov && Info.dwPOV <= 35999 ? static_cast<int32>(Info.dwPOV) : -1;
 		}
 	}
 #endif
 
+	if (bFirstPoll)
+	{
+		// Buttons and switches already held when a device appears are not new presses.
+		ButtonsBefore = ButtonsNow;
+		bFirstPoll = false;
+	}
+
 	if (Learning >= 0)
 	{
 		int Device = -1, Axis = -1;
 		if (detectAxis(LearnBaseline, Axes, Device, Axis))
 		{
-			JoyConfig.bind[Learning].device = Device;
+			SetBindingDevice(JoyConfig.bind[Learning], Device);
 			JoyConfig.bind[Learning].axis = Axis;
+			ResetLeverCalibration(Learning);
 			Learning = -1;
 			Save();
 		}
 	}
 
+	// The first reading only sets the reference, so the levers' resting position does not
+	// override the scenario's thrust at start-up.
 	bThrottleMoved = false;
-	if (IsBound(kThrottle))
+	const Function Levers[2] = {kThrottle, kThrottle2};
+	for (int32 L = 0; L < 2; ++L)
 	{
-		const double Throttle = axisValue(JoyConfig.bind[kThrottle], Axes);
-		bThrottleMoved = LastThrottle <= 1.5 && FMath::Abs(Throttle - LastThrottle) > 0.01;
-		if (LastThrottle > 1.5 || bThrottleMoved)
+		if (!IsBound(Levers[L]))
 		{
-			LastThrottle = Throttle;
+			continue;
+		}
+		const double Throttle = axisValue(JoyConfig.bind[Levers[L]], Axes);
+		const bool bMoved = LastThrottle[L] <= 1.5 && FMath::Abs(Throttle - LastThrottle[L]) > 0.01;
+		if (LastThrottle[L] > 1.5 || bMoved)
+		{
+			LastThrottle[L] = Throttle;
+		}
+		bThrottleMoved = bThrottleMoved || bMoved;
+	}
+	if (CalStep >= 0)
+	{
+		bThrottleMoved = false;  // the levers travel through every detent while calibrating
+	}
+}
+
+LeverPosition FA320Joystick::Lever(int32 Index) const
+{
+	const int32 L = Index == 1 && HasSecondLever() ? 1 : 0;
+	return throttleFromAxis(Value(L == 1 ? kThrottle2 : kThrottle), JoyConfig.cal[L]);
+}
+
+int32 FA320Joystick::GetStickDevice() const
+{
+	if (IsBound(kPitch))
+	{
+		return JoyConfig.bind[kPitch].device;
+	}
+	// No stick bound: the first device that is not the throttle.
+	for (int32 D = 0; D < Devices.Num(); ++D)
+	{
+		if (!IsBound(kThrottle) || JoyConfig.bind[kThrottle].device != D)
+		{
+			return D;
 		}
 	}
+	return -1;
+}
+
+int32 FA320Joystick::GetThrottleDevice() const
+{
+	const int32 D = IsBound(kThrottle) ? JoyConfig.bind[kThrottle].device : -1;
+	return D != GetStickDevice() ? D : -1;
 }
 
 bool FA320Joystick::IsBound(Function F) const
@@ -190,23 +267,55 @@ double FA320Joystick::Value(Function F) const
 	return F == kPitch || F == kRoll || F == kRudder ? applyDeadzone(V, JoyConfig.deadzone) : V;
 }
 
-bool FA320Joystick::IsButtonDown(int32 Button) const
+bool FA320Joystick::IsButtonDown(int32 Device, int32 Button) const
 {
-	return Button >= 0 && Button < kButtons && (ButtonsNow & (1u << Button)) != 0;
+	return ButtonsNow.IsValidIndex(Device) && Button >= 0 && Button < kButtons && (ButtonsNow[Device] & (1u << Button)) != 0;
 }
 
-bool FA320Joystick::WasButtonPressed(int32 Button) const
+bool FA320Joystick::WasButtonPressed(int32 Device, int32 Button) const
 {
-	return IsButtonDown(Button) && (ButtonsBefore & (1u << Button)) == 0;
+	return IsButtonDown(Device, Button) && ButtonsBefore.IsValidIndex(Device) && (ButtonsBefore[Device] & (1u << Button)) == 0;
 }
 
-FString FA320Joystick::ButtonCommand(int32 Button) const
+bool FA320Joystick::WasButtonReleased(int32 Device, int32 Button) const
 {
-	return Button >= 0 && Button < kButtons ? FString(UTF8_TO_TCHAR(JoyConfig.buttons[Button].c_str())) : FString();
+	return !IsButtonDown(Device, Button) && ButtonsBefore.IsValidIndex(Device) && Button >= 0 && Button < kButtons &&
+		(ButtonsBefore[Device] & (1u << Button)) != 0;
+}
+
+FString FA320Joystick::ButtonCommand(int32 Device, int32 Button) const
+{
+	if (Button < 0 || Button >= kButtons || Device < 0)
+	{
+		return FString();
+	}
+	if (Device == GetStickDevice())
+	{
+		return FString(UTF8_TO_TCHAR(JoyConfig.buttons[Button].c_str()));
+	}
+	return Device == GetThrottleDevice() ? FString(UTF8_TO_TCHAR(JoyConfig.throttleButtons[Button].c_str())) : FString();
+}
+
+void FA320Joystick::SetBindingDevice(Binding& B, int32 Device) const
+{
+	B.device = Devices.IsValidIndex(Device) ? Device : -1;
+	B.deviceName = Devices.IsValidIndex(Device) ? std::string(TCHAR_TO_UTF8(*Devices[Device].Name)) : std::string();
+}
+
+void FA320Joystick::ResetLeverCalibration(int32 F)
+{
+	// Detents are recorded per axis and direction, so a new axis or invert starts linear again.
+	const int32 L = F == kThrottle ? 0 : (F == kThrottle2 ? 1 : -1);
+	if (L >= 0)
+	{
+		JoyConfig.cal[L] = ThrottleCal{};
+		Message = TEXT("Thrust lever changed: press CALIBRATE THRUST to teach it the detents.");
+	}
 }
 
 void FA320Joystick::StartLearn(int32 F)
 {
+	CalStep = -1;
 	Learning = F >= 0 && F < kFunctionCount ? F : -1;
 	LearnBaseline = Axes;
 }
@@ -234,17 +343,18 @@ void FA320Joystick::CycleAxis(int32 F)
 		}
 		if (Dev >= Devices.Num())
 		{
-			B.device = -1;
+			SetBindingDevice(B, -1);
 			B.axis = 0;
 			break;
 		}
 		if (Devices[Dev].HasAxis[Axis])
 		{
-			B.device = Dev;
+			SetBindingDevice(B, Dev);
 			B.axis = Axis;
 			break;
 		}
 	}
+	ResetLeverCalibration(F);
 	Save();
 }
 
@@ -253,6 +363,85 @@ void FA320Joystick::ToggleInvert(int32 F)
 	if (F >= 0 && F < kFunctionCount)
 	{
 		JoyConfig.bind[F].invert = !JoyConfig.bind[F].invert;
+		ResetLeverCalibration(F);
 		Save();
 	}
+}
+
+void FA320Joystick::StartCalibration()
+{
+	if (!IsBound(kThrottle))
+	{
+		Message = TEXT("Bind THRUST 1 to your throttle first (LEARN, then move the lever).");
+		return;
+	}
+	Learning = -1;
+	CalStep = kCalIdle;
+	Message.Reset();
+}
+
+void FA320Joystick::CalibrationSet()
+{
+	if (CalStep < 0)
+	{
+		return;
+	}
+	CalRaw[0][CalStep] = axisValue(JoyConfig.bind[kThrottle], Axes);
+	CalRaw[1][CalStep] = HasSecondLever() ? axisValue(JoyConfig.bind[kThrottle2], Axes) : CalRaw[0][CalStep];
+	if (CalStep == kCalReverse)
+	{
+		FinishCalibration(true);
+	}
+	else
+	{
+		++CalStep;
+	}
+}
+
+void FA320Joystick::CalibrationSkip()
+{
+	if (CalStep == kCalReverse)
+	{
+		FinishCalibration(false);
+	}
+}
+
+void FA320Joystick::CancelCalibration()
+{
+	CalStep = -1;
+	Message.Reset();
+}
+
+void FA320Joystick::FinishCalibration(bool bWithReverse)
+{
+	const int32 Count = HasSecondLever() ? 2 : 1;
+	ThrottleCal Cal[2];
+	bool bFlip[2] = {false, false};
+	for (int32 L = 0; L < Count; ++L)
+	{
+		std::string Error;
+		if (!buildCalibration(CalRaw[L], bWithReverse, Cal[L], bFlip[L], Error))
+		{
+			Message = FString::Printf(TEXT("Lever %d: %s"), L + 1, UTF8_TO_TCHAR(Error.c_str()));
+			CalStep = kCalIdle;
+			return;
+		}
+	}
+	const Function Levers[2] = {kThrottle, kThrottle2};
+	for (int32 L = 0; L < Count; ++L)
+	{
+		JoyConfig.cal[L] = Cal[L];
+		if (bFlip[L])
+		{
+			JoyConfig.bind[Levers[L]].invert = !JoyConfig.bind[Levers[L]].invert;
+		}
+	}
+	if (Count == 1)
+	{
+		JoyConfig.cal[1] = Cal[0];
+	}
+	CalStep = -1;
+	LastThrottle[0] = LastThrottle[1] = 2.0;
+	Message = bWithReverse ? TEXT("Thrust levers calibrated, with reverse.") : TEXT("Thrust levers calibrated (no reverse range: use the REVERSE key or a button).");
+	Save();
 }

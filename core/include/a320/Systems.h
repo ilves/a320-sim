@@ -28,6 +28,16 @@ enum class ThrustDetent { Idle, Climb, FlexMct, Toga, Manual };
 // Thrust lever position 0..1 with the A320 detents; between detents is manual thrust.
 ThrustDetent thrustDetent(double lever);
 const char* thrustDetentName(ThrustDetent d);
+
+// Per-engine levers from the controls: engine 2 follows lever 1 unless splitThrust is set.
+struct ThrustLevers {
+  double lever[2] = {0.0, 0.0};  // 0..1; the reverse amount where reverse is selected
+  bool reverse[2] = {false, false};
+  // The most advanced forward lever (a lever in reverse counts as idle): drives A/THR, the
+  // detent shown on the FMA, warnings and callouts.
+  double forward() const;
+};
+ThrustLevers thrustLevers(const A320Controls& c);
 constexpr double kLeverClimb = 0.75;
 constexpr double kLeverFlexMct = 0.88;
 

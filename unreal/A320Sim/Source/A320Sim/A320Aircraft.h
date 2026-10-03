@@ -44,8 +44,9 @@ public:
 	// bLarge: Shift held, for 10x FCU steps.
 	void ExecuteCommand(EA320Command Command, bool bLarge = false);
 	void SetLever(EA320Lever Lever, double Position);
-	// Thrust lever from a hardware throttle (0..1); in reverse it sets the reverse amount.
-	void SetThrustLever(double Lever);
+	// Thrust levers from a hardware throttle (0..1; with reverse the reverse amount). Without
+	// bSplit engine 2 follows lever 1; keyboard, mouse and commands move both together again.
+	void SetThrustLevers(double Lever1, bool bReverse1, double Lever2, bool bReverse2, bool bSplit);
 	void AddLook(double YawDeg, double PitchDeg);
 	void ResetLook();
 

@@ -246,7 +246,7 @@ ApInput Simulation::apInput() const {
   in.magneticVariationDeg = airport_.magneticVariationDeg;
   in.pilotStickPitch = controls_.stickPitch;
   in.pilotStickRoll = controls_.stickRoll;
-  in.thrustLever = clamp(controls_.thrustLever, 0.0, 1.0);
+  in.thrustLever = thrustLevers(controls_).forward();
   in.currentThrottle = throttle_;
   in.dtS = clock_.stepS();
   return in;
@@ -315,23 +315,28 @@ void Simulation::applyControls() {
   setProp("fcs/rudder-cmd-norm", -pedals);
   setProp("fcs/steer-cmd-norm", pedals * steeringAuthority(state_.groundSpeedKt));
 
-  const bool reverse = c.reverse && onGround;
-  const double lever = ap.athrActive && !reverse ? ap.throttle : clamp(c.thrustLever, 0.0, 1.0);
-  throttle_ = lever;
+  // Reversers deploy on the ground only; a lever in reverse in flight gives idle thrust.
+  const ThrustLevers levers = thrustLevers(c);
+  const bool reverse = (levers.reverse[0] || levers.reverse[1]) && onGround;
   athrActive_ = ap.athrActive && !reverse;
+  throttle_ = athrActive_ ? ap.throttle : levers.forward();
   for (int i = 0; i < 2; ++i) {
+    const bool engReverse = levers.reverse[i] && onGround;
+    double cmd = levers.reverse[i] ? (engReverse ? levers.lever[i] : 0.0) : levers.lever[i];
+    // A/THR works below each engine's own lever, so a retarded lever keeps its engine back.
+    if (athrActive_ && !levers.reverse[i]) cmd = std::fmin(ap.throttle, levers.lever[i]);
     char name[64];
     std::snprintf(name, sizeof(name), "fcs/throttle-cmd-norm[%d]", i);
-    setProp(name, lever);
+    setProp(name, cmd);
     std::snprintf(name, sizeof(name), "propulsion/engine[%d]/reverser-angle-rad", i);
-    setProp(name, reverse ? kReverserAngleRad : 0.0);
+    setProp(name, engReverse ? kReverserAngleRad : 0.0);
   }
 
   GroundDecelInput gd;
   gd.onGround = onGround;
   gd.armed = c.spoilersArmed != 0;
   gd.autobrake = c.autobrake;
-  gd.thrustLever = clamp(c.thrustLever, 0.0, 1.0);
+  gd.thrustLever = levers.forward();
   gd.reverse = reverse;
   gd.groundSpeedKt = state_.groundSpeedKt;
   gd.pilotBrake = std::fmax(c.brakeLeft, c.brakeRight);
@@ -399,9 +404,21 @@ void Simulation::refreshState() {
   s.fuelKg = prop("propulsion/total-fuel-lbs") * kLbsToKg;
   const double weightLbs = prop("inertia/weight-lbs");
   s.grossWeightKg = weightLbs * kLbsToKg;
-  s.thrustLever = clamp(controls_.thrustLever, 0.0, 1.0);
-  s.thrustDetent = static_cast<int>(thrustDetent(s.thrustLever));
-  s.reverse = controls_.reverse && s.onGround ? 1 : 0;
+  const ThrustLevers levers = thrustLevers(controls_);
+  const double forwardLever = levers.forward();
+  double reverseAmount = 0.0;
+  s.reverse = 0;
+  for (int i = 0; i < 2; ++i) {
+    // A lever in reverse in flight gives idle, so it is shown at idle.
+    s.thrustLeverEng[i] = levers.reverse[i] && !s.onGround ? 0.0 : levers.lever[i];
+    s.reverseEng[i] = levers.reverse[i] && s.onGround ? 1 : 0;
+    if (s.reverseEng[i]) {
+      s.reverse = 1;
+      reverseAmount = std::fmax(reverseAmount, levers.lever[i]);
+    }
+  }
+  s.thrustLever = s.reverse ? reverseAmount : forwardLever;
+  s.thrustDetent = static_cast<int>(thrustDetent(forwardLever));
 
   s.flapsLever = flaps_.lever();
   s.onePlusF = flaps_.onePlusF() ? 1 : 0;
@@ -449,7 +466,7 @@ void Simulation::refreshState() {
   s.lights = controls_.lights;
   s.signs = controls_.signs;
 
-  const bool takeoffPhase = s.onGround || (s.radioAltFt < 1500.0 && s.thrustLever > kLeverClimb + 0.05);
+  const bool takeoffPhase = s.onGround || (s.radioAltFt < 1500.0 && forwardLever > kLeverClimb + 0.05);
   const SpeedLimits lim = computeSpeedLimits(s.flapsLever, s.onePlusF != 0, s.flapDeg, weightLbs,
                                              s.gearPos > 0.05, takeoffPhase);
   s.vlsKt = lim.vlsKt;
@@ -470,7 +487,7 @@ void Simulation::refreshState() {
 
   WarningInput w;
   w.onGround = s.onGround != 0;
-  w.thrustLever = s.thrustLever;
+  w.thrustLever = forwardLever;
   w.flapsLever = s.flapsLever;
   w.speedbrake = s.speedbrakePos;
   w.parkBrake = s.parkBrake != 0;
@@ -484,7 +501,7 @@ void Simulation::refreshState() {
   w.gsDots = s.gsDots;
   s.warnings = computeWarnings(w);
 
-  if (const char* text = callouts_.update(s.radioAltFt, s.onGround != 0, s.thrustLever)) {
+  if (const char* text = callouts_.update(s.radioAltFt, s.onGround != 0, forwardLever)) {
     std::snprintf(s.callout, sizeof(s.callout), "%s", text);
     ++s.calloutSeq;
   }

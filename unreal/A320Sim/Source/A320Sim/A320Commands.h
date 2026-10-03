@@ -73,9 +73,14 @@ enum class EA320Command : uint8
 	// contiguous: function index = command - first.
 	JoystickPanel,
 	JoyRescan,
-	JoyLearn0, JoyLearn1, JoyLearn2, JoyLearn3, JoyLearn4, JoyLearn5,
-	JoyAxis0, JoyAxis1, JoyAxis2, JoyAxis3, JoyAxis4, JoyAxis5,
-	JoyInvert0, JoyInvert1, JoyInvert2, JoyInvert3, JoyInvert4, JoyInvert5,
+	JoyLearn0, JoyLearn1, JoyLearn2, JoyLearn3, JoyLearn4, JoyLearn5, JoyLearn6,
+	JoyAxis0, JoyAxis1, JoyAxis2, JoyAxis3, JoyAxis4, JoyAxis5, JoyAxis6,
+	JoyInvert0, JoyInvert1, JoyInvert2, JoyInvert3, JoyInvert4, JoyInvert5, JoyInvert6,
+	// Thrust lever detent calibration wizard.
+	JoyCalStart,
+	JoyCalSet,
+	JoyCalSkip,
+	JoyCalCancel,
 	ApDisconnect,
 };
 

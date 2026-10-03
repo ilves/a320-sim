@@ -271,6 +271,7 @@ void AA320Aircraft::SetFlightInputs(const FA320FlightInputs& Inputs, float Delta
 	if (Inputs.ThrustRate != 0.0 && !State.paused)
 	{
 		Controls.thrustLever = FMath::Clamp(Controls.thrustLever + Inputs.ThrustRate * DeltaSeconds, 0.0, 1.0);
+		Controls.splitThrust = 0;
 	}
 }
 
@@ -388,12 +389,13 @@ void AA320Aircraft::ExecuteCommand(EA320Command Command, bool bLarge)
 		{
 			Controls.reverse = Controls.reverse ? 0 : 1;
 			Controls.thrustLever = 0.0;
+			Controls.splitThrust = 0;
 		}
 		break;
-	case EA320Command::ThrustIdle: Controls.thrustLever = 0.0; break;
-	case EA320Command::ThrustClimb: Controls.thrustLever = 0.75; break;
-	case EA320Command::ThrustFlex: Controls.thrustLever = 0.88; break;
-	case EA320Command::ThrustToga: Controls.thrustLever = 1.0; break;
+	case EA320Command::ThrustIdle: Controls.thrustLever = 0.0; Controls.splitThrust = 0; break;
+	case EA320Command::ThrustClimb: Controls.thrustLever = 0.75; Controls.splitThrust = 0; break;
+	case EA320Command::ThrustFlex: Controls.thrustLever = 0.88; Controls.splitThrust = 0; break;
+	case EA320Command::ThrustToga: Controls.thrustLever = 1.0; Controls.splitThrust = 0; break;
 	case EA320Command::LsToggle: bLsOn = !bLsOn; break;
 	case EA320Command::NdRangeDown: NdRangeNm = FMath::Max(NdRangeNm / 2, 5); break;
 	case EA320Command::NdRangeUp: NdRangeNm = FMath::Min(NdRangeNm * 2, 80); break;
@@ -460,9 +462,13 @@ void AA320Aircraft::UpdateExteriorLights()
 	NoseLight->SetIntensity((L & A320_LT_TAKEOFF) ? 100000.0f : 40000.0f);
 }
 
-void AA320Aircraft::SetThrustLever(double Lever)
+void AA320Aircraft::SetThrustLevers(double Lever1, bool bReverse1, double Lever2, bool bReverse2, bool bSplit)
 {
-	Controls.thrustLever = FMath::Clamp(Lever, 0.0, 1.0);
+	Controls.thrustLever = FMath::Clamp(Lever1, 0.0, 1.0);
+	Controls.reverse = bReverse1 ? 1 : 0;
+	Controls.splitThrust = bSplit ? 1 : 0;
+	Controls.thrustLever2 = FMath::Clamp(Lever2, 0.0, 1.0);
+	Controls.reverse2 = bReverse2 ? 1 : 0;
 }
 
 void AA320Aircraft::SetLever(EA320Lever Lever, double Position)
@@ -472,6 +478,7 @@ void AA320Aircraft::SetLever(EA320Lever Lever, double Position)
 	{
 	case EA320Lever::Thrust:
 	{
+		Controls.splitThrust = 0;
 		// Top 72 % of the slot is forward thrust (TOGA at the top), the rest reverse.
 		constexpr double ForwardSpan = 0.72;
 		if (Position <= ForwardSpan || !State.onGround)

@@ -139,6 +139,29 @@ before or while the sim runs; it's picked up within 5 seconds.
   buttons. Available commands: `AP_DISCONNECT`, `BRAKES`, `FLAPS_UP`, `FLAPS_DOWN`, `GEAR`,
   `REVERSE`, `SPEEDBRAKE`, `VIEW`, `PAUSE`, `TOGA`, `IDLE`, `AP1`, `ATHR`.
 
+**USB throttle quadrant** (e.g. Thrustmaster TCA Quadrant Airbus Edition, Saitek/Logitech
+Throttle Quadrant, or any separate throttle):
+- **Automatic set-up:** the first time the sim sees a device named like a throttle or
+  quadrant, it binds **THRUST 1** to it. On a two-lever quadrant it also binds **THRUST 2**,
+  so each lever drives its own engine. Stick functions that were on it move to your stick.
+  Devices are remembered by name, so plugging them in a different order doesn't matter.
+- **Calibrate the detents:** open the setup panel (**F2**), press **CALIBRATE THRUST** and
+  follow the steps. Put the levers in IDLE, CL, FLX/MCT and TOGA, pressing **SET** each
+  time, then in full reverse (or press **NO REVERSE** if your throttle has no reverse range).
+  - After that the levers click into the sim's detents exactly where your hardware's are.
+  - On the ground, pulling the levers behind IDLE deploys the reversers. In flight that
+    gives idle thrust, as in the real aircraft.
+  - A lever that runs backwards is detected and inverted automatically.
+- **Two levers:** the pedestal and E/WD show both levers. A/THR works below each engine's own
+  lever, so a retarded lever keeps its engine back. With one lever, or THRUST 2 unbound, it
+  moves both.
+- **Quadrant buttons:** the setup panel shows the numbers of the throttle's buttons as you
+  press them. Map them with `throttleButtonN=` lines in the settings file (`buttonN=` is for
+  the stick). Besides the commands above there are:
+  - `ATHR_DISCONNECT`, the instinctive disconnect on the levers;
+  - switches that are on while held: `ENG1_MASTER`, `ENG2_MASTER`, and `ENG_MODE_CRANK` /
+    `ENG_MODE_IGN` (released = NORM).
+
 **Cold and dark start (Shift + F5).**
 1. Press **O** to open the overhead panel. Press APU **MASTER SW**, then **START**.
 2. After about 30 s **AVAIL** lights up. Press **APU BLEED**.
@@ -241,9 +264,13 @@ The flight tests fly the real JSBSim A320 with a scripted pilot:
   master warning and its acknowledgment;
 - joystick mapping: axis scaling, deadzone, throttle detents, learn mode and the settings
   file;
+- throttle quadrants: detent calibration (including a backwards axis and reverse), devices
+  kept by name, and automatic quadrant set-up;
 - cockpit systems: a cold-and-dark start (APU, starter, light-off, crossbleed, shutdown),
   ground spoilers, autobrake LO/MED deceleration and stopping distance, and the autobrake
-  disarming when the pilot brakes.
+  disarming when the pilot brakes;
+- split thrust levers: each engine follows its own lever, reverse on one engine, and a lever
+  in reverse in flight giving idle.
 
 CI runs these tests on Linux and Windows, and runs `Setup.ps1 -CoreOnly` on Windows.
 

@@ -21,7 +21,7 @@
 extern "C" {
 #endif
 
-#define A320_API_VERSION 3
+#define A320_API_VERSION 4
 
 typedef enum A320Scenario {
   A320_SCENARIO_RUNWAY = 0,     /* lined up, engines idle, CONF 1+F, park brake set */
@@ -122,6 +122,11 @@ typedef struct A320Controls {
   int apuBleed;       /* APU BLEED */
   int lights;         /* A320_LT_* bits */
   int signs;          /* A320_SIGN_* bits */
+  /* Two-lever hardware quadrant: with splitThrust set, engine 2 follows thrustLever2/reverse2
+   * instead of thrustLever/reverse. */
+  int splitThrust;
+  double thrustLever2;
+  int reverse2;
 } A320Controls;
 
 typedef struct A320State {
@@ -142,9 +147,9 @@ typedef struct A320State {
 
   double n1[2], n2[2], fuelFlowKgH[2];
   double fuelKg, grossWeightKg;
-  double thrustLever;
-  int thrustDetent; /* 0 IDLE, 1 CL, 2 FLX/MCT, 3 TOGA, 4 MAN */
-  int reverse;
+  double thrustLever; /* most advanced forward lever (A/THR and detents), or the reverse amount */
+  int thrustDetent;   /* 0 IDLE, 1 CL, 2 FLX/MCT, 3 TOGA, 4 MAN */
+  int reverse;        /* any engine in reverse */
 
   int flapsLever, onePlusF;
   double flapDeg, gearPos, speedbrakePos;
@@ -180,6 +185,11 @@ typedef struct A320State {
   int autobrake, autobrakeActive, autobrakeDecel; /* DECEL light: target deceleration reached */
   int spoilersArmed, groundSpoilers;              /* ground spoilers extended */
   int lights, signs;
+
+  /* Per-engine thrust levers (equal unless the controls split them); with reverseEng the
+   * lever is the reverse amount. */
+  double thrustLeverEng[2];
+  int reverseEng[2];
 } A320State;
 
 typedef struct A320RunwayInfo {

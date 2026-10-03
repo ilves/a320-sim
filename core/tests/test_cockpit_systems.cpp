@@ -188,3 +188,49 @@ TEST(autobrake_disarms_on_pilot_braking) {
   d.update(in);
   CHECK(!d.spoilersOut());
 }
+
+TEST(thrust_levers_unit) {
+  A320Controls c{};
+  c.thrustLever = 0.75;
+  c.thrustLever2 = 0.2;
+  a320::ThrustLevers t = a320::thrustLevers(c);
+  CHECK(t.lever[1] == 0.75);  // not split: engine 2 follows lever 1
+  c.splitThrust = 1;
+  t = a320::thrustLevers(c);
+  CHECK(t.lever[0] == 0.75 && t.lever[1] == 0.2);
+  CHECK_NEAR(t.forward(), 0.75, 1e-9);
+  c.reverse = 1;
+  t = a320::thrustLevers(c);
+  CHECK_NEAR(t.forward(), 0.2, 1e-9);  // a lever in reverse counts as idle
+}
+
+TEST(split_thrust_levers) {
+  Sys f(A320_SCENARIO_RUNWAY);
+  if (!f.sim) { CHECK(false); return; }
+  f.c.splitThrust = 1;
+  f.c.thrustLever = 0.75;
+  f.c.thrustLever2 = 0.0;
+  f.fly(15.0);
+  CHECK(f.s.n1[0] > f.s.n1[1] + 20.0);
+  CHECK(f.s.thrustLeverEng[0] == 0.75 && f.s.thrustLeverEng[1] == 0.0);
+  CHECK(f.s.thrustDetent == 1);  // CL, from the most advanced lever
+
+  // Reverse on engine 2 only, on the ground.
+  f.c.thrustLever = 0.0;
+  f.c.reverse2 = 1;
+  f.c.thrustLever2 = 1.0;
+  f.fly(10.0);
+  CHECK(f.s.reverseEng[0] == 0 && f.s.reverseEng[1] == 1 && f.s.reverse == 1);
+  CHECK(f.s.n1[1] > f.s.n1[0] + 20.0);
+}
+
+TEST(reverse_selected_in_flight_gives_idle) {
+  Sys f(A320_SCENARIO_FINAL_10NM);
+  if (!f.sim) { CHECK(false); return; }
+  f.c.reverse = 1;
+  f.c.thrustLever = 1.0;
+  f.fly(10.0);
+  CHECK(f.s.reverse == 0);
+  CHECK(f.s.thrustLeverEng[0] == 0.0 && f.s.thrustDetent == 0);
+  CHECK(f.s.n1[0] < 40.0 && f.s.n1[1] < 40.0);
+}

@@ -37,19 +37,34 @@ public:
 	// Processed value of a function (-1..1, deadzone applied to the flight controls).
 	double Value(a320::joy::Function Function) const;
 	bool IsBound(a320::joy::Function Function) const;
-	// True for one poll after the throttle axis moved, so it does not fight the keyboard.
+	// True for one poll after a thrust lever axis moved, so it does not fight the keyboard.
 	bool ThrottleMoved() const { return bThrottleMoved; }
+	// Thrust lever 0 or 1 through its detent calibration; lever 1 is lever 0 unless THRUST 2 is bound.
+	a320::joy::LeverPosition Lever(int32 Index) const;
+	bool HasSecondLever() const { return IsBound(a320::joy::kThrottle2); }
 
-	// Buttons and hat of the device bound to PITCH (the main stick).
-	bool IsButtonDown(int32 Button) const;
-	bool WasButtonPressed(int32 Button) const;
-	int32 GetPov() const { return Pov; }  // hundredths of degrees, -1 = centred
-	FString ButtonCommand(int32 Button) const;
+	// The stick (the PITCH device) and the throttle (the THRUST 1 device, -1 if the same or none).
+	int32 GetStickDevice() const;
+	int32 GetThrottleDevice() const;
+	bool IsButtonDown(int32 Device, int32 Button) const;
+	bool WasButtonPressed(int32 Device, int32 Button) const;
+	bool WasButtonReleased(int32 Device, int32 Button) const;
+	int32 GetPov() const { return Pov; }  // hat of the stick, hundredths of degrees, -1 = centred
+	// Command name per button: buttonN for the stick, throttleButtonN for the throttle.
+	FString ButtonCommand(int32 Device, int32 Button) const;
 
 	void StartLearn(int32 Function);
 	int32 GetLearning() const { return Learning; }
 	void CycleAxis(int32 Function);
 	void ToggleInvert(int32 Function);
+
+	// Detent calibration: the levers are put in IDLE, CL, FLX/MCT, TOGA and full reverse in turn.
+	void StartCalibration();
+	void CalibrationSet();
+	void CalibrationSkip();  // no reverse range
+	void CancelCalibration();
+	int32 GetCalibrationStep() const { return CalStep; }  // a320::joy::CalStep, -1 = not calibrating
+	const FString& GetMessage() const { return Message; }
 
 private:
 	FString ConfigPath;
@@ -57,11 +72,19 @@ private:
 	TArray<FA320JoystickDevice> Devices;
 	std::vector<a320::joy::AxisValues> Axes;
 	std::vector<a320::joy::AxisValues> LearnBaseline;
-	uint32 ButtonsNow = 0;
-	uint32 ButtonsBefore = 0;
+	TArray<uint32> ButtonsNow;
+	TArray<uint32> ButtonsBefore;
 	int32 Pov = -1;
 	int32 Learning = -1;
-	double LastThrottle = 2.0;
+	double LastThrottle[2] = {2.0, 2.0};
 	bool bThrottleMoved = false;
+	bool bFirstPoll = true;
+	int32 CalStep = -1;
+	double CalRaw[2][a320::joy::kCalSteps] = {};
+	FString Message;
+
+	void FinishCalibration(bool bWithReverse);
+	void ResetLeverCalibration(int32 Function);
+	void SetBindingDevice(a320::joy::Binding& B, int32 Device) const;
 	float RescanTimer = 0.0f;
 };
