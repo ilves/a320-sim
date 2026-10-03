@@ -502,7 +502,7 @@ void AA320Hud::DrawNd(const AA320Aircraft& Aircraft, double X, double Y, double 
 	Arc(AcX, AcY, R, -ArcHalf, ArcHalf, White, 1.5);
 	Arc(AcX, AcY, R / 2.0, -ArcHalf, ArcHalf, Grey, 1.0);
 	Text(FString::Printf(TEXT("%d"), Aircraft.GetNdRangeNm() / 2), AcX - R / 2.0 * 0.7 - 0.03 * S, AcY - R / 2.0 * 0.7, Cyan, 0, 1);
-	for (int32 D = FMath::CeilToInt((MagHdg - ArcHalf) / 5.0) * 5; D <= MagHdg + ArcHalf - (bRose ? 1.0 : 0.0); D += 5)
+	for (int32 D = static_cast<int32>(FMath::CeilToInt((MagHdg - ArcHalf) / 5.0)) * 5; D <= MagHdg + ArcHalf - (bRose ? 1.0 : 0.0); D += 5)
 	{
 		const double A = D - MagHdg;
 		const FVector2D P0 = Polar(AcX, AcY, R, A);
@@ -715,7 +715,7 @@ void AA320Hud::DrawOverlays(const AA320Aircraft& Aircraft)
 	}
 	if (St.simRate > 1.0)
 	{
-		Text(FString::Printf(TEXT("SIM RATE x%d"), FMath::RoundToInt(St.simRate)), W - 20.0 * Scale, 30.0 * Scale, Yellow, 1, 2);
+		Text(FString::Printf(TEXT("SIM RATE x%d"), static_cast<int32>(FMath::RoundToInt(St.simRate))), W - 20.0 * Scale, 56.0 * Scale, Yellow, 1, 2);
 	}
 	if (Aircraft.IsHelpVisible() && !Aircraft.IsOverheadVisible())
 	{
@@ -994,7 +994,7 @@ void AA320Hud::DrawPedestal(const AA320Aircraft& Aircraft, double X, double Y, d
 		Text(TEXT("FULL"), SX, TopY + SlotH - 0.02 * H, Grey, 0, 0);
 		const double HY = TopY + Ctl.speedbrake * SlotH;
 		Fill(SX + SW * 0.15, HY - 0.025 * H, SW * 0.7, 0.05 * H, Ctl.spoilersArmed ? Cyan : Handle);
-		Pushbutton(SX, TopY + SlotH + 0.06 * H, SW, 0.1 * H, TEXT(""), TEXT(""), Green, Ctl.spoilersArmed ? TEXT("ARMED") : TEXT("ARM"),
+		Pushbutton(SX, TopY + SlotH + 0.025 * H, SW, 0.09 * H, TEXT(""), TEXT(""), Green, Ctl.spoilersArmed ? TEXT("ARMED") : TEXT("ARM"),
 			Ctl.spoilersArmed ? Cyan : White, EA320Command::SpoilerArm);
 	}
 

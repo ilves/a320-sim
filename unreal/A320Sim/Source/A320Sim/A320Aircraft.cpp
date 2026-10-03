@@ -183,13 +183,18 @@ void AA320Aircraft::Tick(float DeltaSeconds)
 	{
 		return;
 	}
+	const double SimTimeBefore = State.simTimeS;
 	a320_set_controls(Sim, &Controls);
 	a320_update(Sim, DeltaSeconds);
 	a320_get_state(Sim, &State);
-	// APU START is a momentary pushbutton (the core reacts to the press), and the autobrake
-	// selector follows the core, which disarms it when the pilot brakes.
-	Controls.apuStart = 0;
-	Controls.autobrake = State.autobrake;
+	// Only once the core has actually stepped (not when paused, or on a frame shorter than its
+	// 120 Hz step): release the momentary APU START, and let the autobrake selector follow the
+	// core, which disarms it when the pilot brakes.
+	if (State.simTimeS > SimTimeBefore)
+	{
+		Controls.apuStart = 0;
+		Controls.autobrake = State.autobrake;
+	}
 	UpdateTransform();
 	UpdateExteriorLights();
 	if (World)
@@ -490,7 +495,7 @@ void AA320Aircraft::SetLever(EA320Lever Lever, double Position)
 		break;
 	}
 	case EA320Lever::Flaps:
-		Controls.flapsLever = FMath::Clamp(FMath::RoundToInt(Position * 4.0), 0, 4);
+		Controls.flapsLever = FMath::Clamp(static_cast<int32>(FMath::RoundToInt(Position * 4.0)), 0, 4);
 		break;
 	case EA320Lever::Speedbrake:
 	{
