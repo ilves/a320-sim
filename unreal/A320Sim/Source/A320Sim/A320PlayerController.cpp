@@ -47,36 +47,34 @@ static_assert(static_cast<int32>(EA320Command::JoyAxis0) - static_cast<int32>(EA
 	static_cast<int32>(EA320Command::JoyCalStart) - static_cast<int32>(EA320Command::JoyInvert0) == a320::joy::kFunctionCount,
 	"EA320Command joystick blocks must match kFunctionCount");
 
-bool AA320PlayerController::HandleJoystickCommand(EA320Command Command)
+bool AA320PlayerController::HandleJoystickCommand(EA320Command Command, int32 Param)
 {
 	const int32 Learn = static_cast<int32>(Command) - static_cast<int32>(EA320Command::JoyLearn0);
 	const int32 Axis = static_cast<int32>(Command) - static_cast<int32>(EA320Command::JoyAxis0);
 	const int32 Invert = static_cast<int32>(Command) - static_cast<int32>(EA320Command::JoyInvert0);
-	if (Command == EA320Command::JoystickPanel)
+	switch (Command)
 	{
+	case EA320Command::JoystickPanel:
+		if (bJoystickPanel)
+		{
+			Joystick.StartLearn(-1);  // closing cancels LEARN, SET and CAL
+		}
 		bJoystickPanel = !bJoystickPanel;
+		return true;
+	case EA320Command::JoyRescan: Joystick.Rescan(); return true;
+	case EA320Command::JoyCalStart: Joystick.StartCalibration(a320::joy::kCalThrust); return true;
+	case EA320Command::JoyCalFlaps: Joystick.StartCalibration(a320::joy::kCalFlaps); return true;
+	case EA320Command::JoyCalSpeedbrake: Joystick.StartCalibration(a320::joy::kCalSpeedbrake); return true;
+	case EA320Command::JoyCalSet: Joystick.CalibrationSet(); return true;
+	case EA320Command::JoyCalSkip: Joystick.CalibrationSkip(); return true;
+	case EA320Command::JoyCalCancel: Joystick.CancelCalibration(); return true;
+	case EA320Command::JoyPageAxes: bJoystickButtonsPage = false; return true;
+	case EA320Command::JoyPageButtons: bJoystickButtonsPage = true; return true;
+	case EA320Command::JoyBindSet: Joystick.StartButtonLearn(Param); return true;
+	case EA320Command::JoyBindClear: Joystick.ClearCommand(Param); return true;
+	default: break;
 	}
-	else if (Command == EA320Command::JoyRescan)
-	{
-		Joystick.Rescan();
-	}
-	else if (Command == EA320Command::JoyCalStart)
-	{
-		Joystick.StartCalibration();
-	}
-	else if (Command == EA320Command::JoyCalSet)
-	{
-		Joystick.CalibrationSet();
-	}
-	else if (Command == EA320Command::JoyCalSkip)
-	{
-		Joystick.CalibrationSkip();
-	}
-	else if (Command == EA320Command::JoyCalCancel)
-	{
-		Joystick.CancelCalibration();
-	}
-	else if (Learn >= 0 && Learn < a320::joy::kFunctionCount)
+	if (Learn >= 0 && Learn < a320::joy::kFunctionCount)
 	{
 		Joystick.StartLearn(Learn);
 	}
@@ -93,6 +91,154 @@ bool AA320PlayerController::HandleJoystickCommand(EA320Command Command)
 		return false;
 	}
 	return true;
+}
+
+void AA320PlayerController::ApplyHardwareCommand(AA320Aircraft* Aircraft, FA320FlightInputs& Inputs, const FString& Name,
+	int32 Presses, bool bReleased, bool bDown)
+{
+	using a320::joy::Action;
+	const a320::joy::CommandInfo* Info = a320::joy::findCommand(TCHAR_TO_UTF8(*Name));
+	if (!Info)
+	{
+		return;
+	}
+	if (Info->action == Action::Held)
+	{
+		// Switches: only a change is applied, so the cockpit switches still work in between.
+		if (Name == TEXT("BRAKES"))
+		{
+			if (bDown)
+			{
+				Inputs.Brakes = 1.0;
+			}
+			return;
+		}
+		if (Name == TEXT("ALT_1000"))
+		{
+			bAltStep1000 = bDown;
+			return;
+		}
+		if (Presses == 0 && !bReleased)
+		{
+			return;
+		}
+		if (Name == TEXT("ENG1_MASTER")) Aircraft->SetSwitch(EA320Switch::EngMaster1, bDown);
+		else if (Name == TEXT("ENG2_MASTER")) Aircraft->SetSwitch(EA320Switch::EngMaster2, bDown);
+		else if (Name == TEXT("ENG_MODE_CRANK") || Name == TEXT("ENG_MODE_IGN"))
+		{
+			// Released: back to NORM, unless the selector already went to the other position.
+			const int32 Mode = Name == TEXT("ENG_MODE_CRANK") ? A320_ENG_MODE_CRANK : A320_ENG_MODE_IGN_START;
+			if (bDown || Aircraft->GetSimControls().engMode == Mode)
+			{
+				Aircraft->SetSwitch(EA320Switch::EngMode, bDown ? Mode : A320_ENG_MODE_NORM);
+			}
+		}
+		else if (Name == TEXT("PARK_BRAKE")) Aircraft->SetSwitch(EA320Switch::ParkBrake, bDown);
+		else if (Name == TEXT("SPOILERS_ARM")) Aircraft->SetSwitch(EA320Switch::SpoilersArm, bDown);
+		return;
+	}
+	if (Presses == 0)
+	{
+		return;
+	}
+	if (Info->action == Action::Select)
+	{
+		struct FSelect
+		{
+			const TCHAR* Name;
+			EA320Switch Switch;
+			int32 Value;
+		};
+		static const FSelect Selects[] = {
+			{TEXT("ND_ARC"), EA320Switch::NdMode, A320_ND_ARC},
+			{TEXT("ND_NAV"), EA320Switch::NdMode, A320_ND_ROSE_NAV},
+			{TEXT("ND_LS"), EA320Switch::NdMode, A320_ND_ROSE_LS},
+			{TEXT("ND_RANGE_10"), EA320Switch::NdRange, 10},
+			{TEXT("ND_RANGE_20"), EA320Switch::NdRange, 20},
+			{TEXT("ND_RANGE_40"), EA320Switch::NdRange, 40},
+			{TEXT("ND_RANGE_80"), EA320Switch::NdRange, 80},
+			{TEXT("ND_RANGE_160"), EA320Switch::NdRange, 160},
+			{TEXT("ND_RANGE_320"), EA320Switch::NdRange, 320},
+			{TEXT("GEAR_UP"), EA320Switch::Gear, 0},
+			{TEXT("GEAR_DOWN"), EA320Switch::Gear, 1},
+			{TEXT("AUTOBRK_OFF"), EA320Switch::Autobrake, A320_AUTOBRAKE_OFF},
+			{TEXT("AUTOBRK_LO"), EA320Switch::Autobrake, A320_AUTOBRAKE_LO},
+			{TEXT("AUTOBRK_MED"), EA320Switch::Autobrake, A320_AUTOBRAKE_MED},
+			{TEXT("AUTOBRK_MAX"), EA320Switch::Autobrake, A320_AUTOBRAKE_MAX},
+		};
+		for (const FSelect& Select : Selects)
+		{
+			if (Name == Select.Name)
+			{
+				Aircraft->SetSwitch(Select.Switch, Select.Value);
+			}
+		}
+		return;
+	}
+	if (Name == TEXT("ATHR_DISCONNECT"))
+	{
+		// The instinctive disconnect on the thrust levers: off only, never on.
+		if (Aircraft->GetSimState().athrEngaged)
+		{
+			Aircraft->ExecuteCommand(EA320Command::FcuAthr);
+		}
+		return;
+	}
+	struct FPress
+	{
+		const TCHAR* Name;
+		EA320Command Command;
+	};
+	static const FPress PressCommands[] = {
+		{TEXT("AP1"), EA320Command::FcuAp},
+		{TEXT("AP2"), EA320Command::FcuAp2},
+		{TEXT("ATHR"), EA320Command::FcuAthr},
+		{TEXT("LOC"), EA320Command::FcuLoc},
+		{TEXT("APPR"), EA320Command::FcuAppr},
+		{TEXT("SPD_INC"), EA320Command::SpdInc},
+		{TEXT("SPD_DEC"), EA320Command::SpdDec},
+		{TEXT("HDG_INC"), EA320Command::HdgInc},
+		{TEXT("HDG_DEC"), EA320Command::HdgDec},
+		{TEXT("HDG_PULL"), EA320Command::FcuHdgPull},
+		{TEXT("ALT_INC"), EA320Command::AltInc},
+		{TEXT("ALT_DEC"), EA320Command::AltDec},
+		{TEXT("ALT_PULL"), EA320Command::FcuAltPull},
+		{TEXT("VS_INC"), EA320Command::VsInc},
+		{TEXT("VS_DEC"), EA320Command::VsDec},
+		{TEXT("VS_PULL"), EA320Command::FcuVsPull},
+		{TEXT("VS_PUSH"), EA320Command::FcuVsPush},
+		{TEXT("LS"), EA320Command::LsToggle},
+		{TEXT("ND_MODE"), EA320Command::NdModeToggle},
+		{TEXT("ND_RANGE_INC"), EA320Command::NdRangeUp},
+		{TEXT("ND_RANGE_DEC"), EA320Command::NdRangeDown},
+		{TEXT("AP_DISCONNECT"), EA320Command::ApDisconnect},
+		{TEXT("TOGA"), EA320Command::ThrustToga},
+		{TEXT("IDLE"), EA320Command::ThrustIdle},
+		{TEXT("REVERSE"), EA320Command::ReverseToggle},
+		{TEXT("FLAPS_UP"), EA320Command::FlapsUp},
+		{TEXT("FLAPS_DOWN"), EA320Command::FlapsDown},
+		{TEXT("SPEEDBRAKE"), EA320Command::SpeedbrakeToggle},
+		{TEXT("GEAR"), EA320Command::GearToggle},
+		{TEXT("APU_MASTER"), EA320Command::ApuMaster},
+		{TEXT("APU_START"), EA320Command::ApuStart},
+		{TEXT("MASTER_WARN"), EA320Command::MasterWarnAck},
+		{TEXT("VIEW"), EA320Command::ViewToggle},
+		{TEXT("PAUSE"), EA320Command::PauseToggle},
+	};
+	for (const FPress& Press : PressCommands)
+	{
+		if (Name != Press.Name)
+		{
+			continue;
+		}
+		// Every encoder click counts, also several in one frame. The ALT knob steps 100 or
+		// 1000 ft with the 100/1000 switch, as on the FCU.
+		const bool bLarge = (Press.Command == EA320Command::AltInc || Press.Command == EA320Command::AltDec) && bAltStep1000;
+		for (int32 i = 0; i < Presses; ++i)
+		{
+			Aircraft->ExecuteCommand(Press.Command, bLarge);
+		}
+	}
 }
 
 void AA320PlayerController::ApplyJoystickButtons(AA320Aircraft* Aircraft, FA320FlightInputs& Inputs, float DeltaTime)
@@ -112,87 +258,32 @@ void AA320PlayerController::ApplyJoystickButtons(AA320Aircraft* Aircraft, FA320F
 		const bool bRev2 = Joystick.GetConfig().cal[1].hasReverse ? L2.reverse : bRev1;
 		Aircraft->SetThrustLevers(L1.lever, bRev1, L2.lever, Joystick.HasSecondLever() ? bRev2 : bRev1, Joystick.HasSecondLever());
 	}
-
-	// Buttons of the stick and of the throttle, by the command names in Saved/A320Joystick.ini.
-	const A320State& St = Aircraft->GetSimState();
-	for (const int32 Device : {Joystick.GetStickDevice(), Joystick.GetThrottleDevice()})
+	if (Joystick.AxisMoved(kFlaps))
 	{
-		for (int32 B = 0; Device >= 0 && B < kButtons; ++B)
+		Aircraft->SetSwitch(EA320Switch::Flaps, Joystick.FlapsLever());
+	}
+	if (Joystick.AxisMoved(kSpeedbrake))
+	{
+		const SpeedbrakePosition Lever = Joystick.Speedbrake();
+		Aircraft->SetSpeedbrake(Lever.amount);
+		if (Joystick.GetConfig().speedbrakeCal.hasArm)
 		{
-			const FString CommandName = Joystick.ButtonCommand(Device, B);
-			if (CommandName.IsEmpty())
+			Aircraft->SetSwitch(EA320Switch::SpoilersArm, Lever.armed);
+		}
+	}
+
+	// Buttons and switches of every device, by the assignments in Saved/A320Joystick.ini.
+	if (!Joystick.ButtonsSuppressed() && Joystick.GetButtonLearning() < 0)
+	{
+		for (const ButtonBind& Bind : Joystick.GetConfig().binds)
+		{
+			const int32 Device = Joystick.BindDevice(Bind);
+			if (Device < 0)
 			{
 				continue;
 			}
-			const bool bPressed = Joystick.WasButtonPressed(Device, B);
-			const bool bReleased = Joystick.WasButtonReleased(Device, B);
-			if (CommandName == TEXT("BRAKES"))
-			{
-				if (Joystick.IsButtonDown(Device, B))
-				{
-					Inputs.Brakes = 1.0;
-				}
-				continue;
-			}
-			// Hardware switches (a quadrant's ENG MASTER and ENG MODE): on while held. Only a
-			// change is applied, so the cockpit switches still work in between.
-			if (CommandName == TEXT("ENG1_MASTER") || CommandName == TEXT("ENG2_MASTER"))
-			{
-				const int32 Engine = CommandName == TEXT("ENG1_MASTER") ? 0 : 1;
-				const bool bOn = Aircraft->GetSimControls().engMaster[Engine] != 0;
-				if ((bPressed && !bOn) || (bReleased && bOn))
-				{
-					Aircraft->ExecuteCommand(Engine == 0 ? EA320Command::EngMaster1 : EA320Command::EngMaster2);
-				}
-				continue;
-			}
-			if (CommandName == TEXT("ENG_MODE_CRANK") || CommandName == TEXT("ENG_MODE_IGN"))
-			{
-				if (bPressed)
-				{
-					Aircraft->ExecuteCommand(CommandName == TEXT("ENG_MODE_CRANK") ? EA320Command::EngModeCrank : EA320Command::EngModeIgnStart);
-				}
-				else if (bReleased)
-				{
-					Aircraft->ExecuteCommand(EA320Command::EngModeNorm);
-				}
-				continue;
-			}
-			if (!bPressed)
-			{
-				continue;
-			}
-			if (CommandName == TEXT("ATHR_DISCONNECT"))
-			{
-				// The instinctive disconnect on the thrust levers: off only, never on.
-				if (St.athrEngaged)
-				{
-					Aircraft->ExecuteCommand(EA320Command::FcuAthr);
-				}
-				continue;
-			}
-			static const TPair<const TCHAR*, EA320Command> Map[] = {
-				TPair<const TCHAR*, EA320Command>(TEXT("AP_DISCONNECT"), EA320Command::ApDisconnect),
-				TPair<const TCHAR*, EA320Command>(TEXT("FLAPS_UP"), EA320Command::FlapsUp),
-				TPair<const TCHAR*, EA320Command>(TEXT("FLAPS_DOWN"), EA320Command::FlapsDown),
-				TPair<const TCHAR*, EA320Command>(TEXT("GEAR"), EA320Command::GearToggle),
-				TPair<const TCHAR*, EA320Command>(TEXT("REVERSE"), EA320Command::ReverseToggle),
-				TPair<const TCHAR*, EA320Command>(TEXT("SPEEDBRAKE"), EA320Command::SpeedbrakeToggle),
-				TPair<const TCHAR*, EA320Command>(TEXT("VIEW"), EA320Command::ViewToggle),
-				TPair<const TCHAR*, EA320Command>(TEXT("PAUSE"), EA320Command::PauseToggle),
-				TPair<const TCHAR*, EA320Command>(TEXT("TOGA"), EA320Command::ThrustToga),
-				TPair<const TCHAR*, EA320Command>(TEXT("IDLE"), EA320Command::ThrustIdle),
-				TPair<const TCHAR*, EA320Command>(TEXT("AP1"), EA320Command::FcuAp),
-				TPair<const TCHAR*, EA320Command>(TEXT("AP2"), EA320Command::FcuAp2),
-				TPair<const TCHAR*, EA320Command>(TEXT("ATHR"), EA320Command::FcuAthr),
-			};
-			for (const TPair<const TCHAR*, EA320Command>& Entry : Map)
-			{
-				if (CommandName == Entry.Key)
-				{
-					Aircraft->ExecuteCommand(Entry.Value);
-				}
-			}
+			ApplyHardwareCommand(Aircraft, Inputs, UTF8_TO_TCHAR(Bind.command.c_str()), Joystick.ButtonPresses(Device, Bind.button),
+				Joystick.WasButtonReleased(Device, Bind.button), Joystick.IsButtonDown(Device, Bind.button));
 		}
 	}
 
@@ -324,7 +415,7 @@ void AA320PlayerController::PlayerTick(float DeltaTime)
 		// Pushbuttons and switches first (pop-up panels sit on top), then levers to drag.
 		const EA320Command Clicked = Hud->CommandAt(Mouse);
 		DraggedLever = Clicked == EA320Command::None ? Hud->LeverAt(Mouse) : EA320Lever::None;
-		if (Clicked != EA320Command::None && !HandleJoystickCommand(Clicked))
+		if (Clicked != EA320Command::None && !HandleJoystickCommand(Clicked, Hud->ParamAt(Mouse)))
 		{
 			Aircraft->ExecuteCommand(Clicked, bShift);
 		}

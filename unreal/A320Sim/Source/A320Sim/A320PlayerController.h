@@ -22,6 +22,7 @@ public:
 
 	const FA320Joystick& GetJoystick() const { return Joystick; }
 	bool IsJoystickPanelVisible() const { return bJoystickPanel; }
+	bool IsJoystickButtonsPage() const { return bJoystickButtonsPage; }
 
 protected:
 	virtual void BeginPlay() override;
@@ -34,9 +35,15 @@ private:
 	EA320Lever DraggedLever = EA320Lever::None;
 	FA320Joystick Joystick;
 	bool bJoystickPanel = false;
+	bool bJoystickButtonsPage = false;
+	bool bAltStep1000 = false;  // FCU ALT knob step, from a hardware 100/1000 switch
 
 	// Joystick setup commands are handled here; everything else goes to the aircraft.
-	bool HandleJoystickCommand(EA320Command Command);
+	// Param: the command index for JoyBindSet / JoyBindClear.
+	bool HandleJoystickCommand(EA320Command Command, int32 Param = 0);
+	// One hardware button's command (see a320::joy::commandCatalog) for this frame.
+	void ApplyHardwareCommand(class AA320Aircraft* Aircraft, struct FA320FlightInputs& Inputs, const FString& Name,
+		int32 Presses, bool bReleased, bool bDown);
 	void ApplyJoystickButtons(class AA320Aircraft* Aircraft, struct FA320FlightInputs& Inputs, float DeltaTime);
 	bool bLooking = false;
 };

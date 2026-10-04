@@ -15,9 +15,10 @@ namespace a320 {
 namespace joy {
 
 // kThrottle is thrust lever 1, or both levers while kThrottle2 is unbound.
-enum Function { kPitch = 0, kRoll, kRudder, kThrottle, kBrakeLeft, kBrakeRight, kThrottle2, kFunctionCount };
-constexpr int kAxes = 6;      // X Y Z R U V, as Windows reports them
-constexpr int kButtons = 32;
+enum Function { kPitch = 0, kRoll, kRudder, kThrottle, kBrakeLeft, kBrakeRight, kThrottle2, kFlaps, kSpeedbrake, kFunctionCount };
+// DirectInput axes, ordered so 0-3 match the old Windows joystick API (X Y Z R).
+constexpr int kAxes = 8;      // X Y Z RZ RX RY SL0 SL1
+constexpr int kButtons = 128;
 using AxisValues = std::array<double, kAxes>;  // -1..1 per axis of one device
 
 struct Binding {
@@ -37,22 +38,137 @@ struct ThrottleCal {
   double reverseMax = -1.0;  // full reverse, behind IDLE
 };
 
+// Flaps lever detents 0, 1, 2, 3, FULL (axis after invert); the lever snaps to the nearest.
+struct FlapsCal {
+  double pos[5] = {-1.0, -0.5, 0.0, 0.5, 1.0};
+};
+
+// Speedbrake lever: RET to FULL, and optionally an ARM position beyond RET (lever pulled up).
+struct SpeedbrakeCal {
+  double ret = -1.0, full = 1.0;
+  bool hasArm = false;
+  double arm = -1.0;
+};
+
+// A hardware button or switch and the cockpit command it drives. device is a product name, or
+// "@stick" / "@throttle" for whatever device has PITCH / THRUST 1 (the older settings files).
+struct ButtonBind {
+  std::string device;
+  int button = 0;  // 0-based
+  std::string command;
+};
+
 struct Config {
   Binding bind[kFunctionCount];
   double deadzone = 0.06;
-  std::string buttons[kButtons];          // main stick (the PITCH device): command per button
-  std::string throttleButtons[kButtons];  // the THRUST 1 device, when it is a separate one
-  ThrottleCal cal[2];                     // thrust levers 1 and 2
-  bool autoThrottle = true;               // bind a throttle quadrant the first time one is seen
+  std::vector<ButtonBind> binds;
+  ThrottleCal cal[2];          // thrust levers 1 and 2
+  FlapsCal flapsCal;
+  SpeedbrakeCal speedbrakeCal;
+  bool autoThrottle = true;    // bind a throttle quadrant the first time one is seen
 };
 
+// What a command does with its button: once per press (encoder clicks count), on while held
+// (a switch), or set on press (one position of a rotary selector).
+enum class Action { Press, Held, Select };
+
+struct CommandInfo {
+  const char* name;   // in the settings file
+  const char* label;  // in the setup panel
+  Action action;
+};
+
+inline const std::vector<CommandInfo>& commandCatalog() {
+  static const std::vector<CommandInfo> kCommands = {
+      {"AP1", "FCU AP1", Action::Press},
+      {"AP2", "FCU AP2", Action::Press},
+      {"ATHR", "FCU A/THR", Action::Press},
+      {"LOC", "FCU LOC", Action::Press},
+      {"APPR", "FCU APPR", Action::Press},
+      {"SPD_INC", "SPD knob +", Action::Press},
+      {"SPD_DEC", "SPD knob -", Action::Press},
+      {"HDG_INC", "HDG knob +", Action::Press},
+      {"HDG_DEC", "HDG knob -", Action::Press},
+      {"HDG_PULL", "HDG knob pull", Action::Press},
+      {"ALT_INC", "ALT knob +", Action::Press},
+      {"ALT_DEC", "ALT knob -", Action::Press},
+      {"ALT_PULL", "ALT knob pull", Action::Press},
+      {"ALT_1000", "ALT 100/1000 at 1000", Action::Held},
+      {"VS_INC", "V/S knob +", Action::Press},
+      {"VS_DEC", "V/S knob -", Action::Press},
+      {"VS_PULL", "V/S knob pull", Action::Press},
+      {"VS_PUSH", "V/S knob push (0)", Action::Press},
+      {"LS", "EFIS LS", Action::Press},
+      {"ND_MODE", "ND mode (next)", Action::Press},
+      {"ND_ARC", "ND mode ARC", Action::Select},
+      {"ND_NAV", "ND mode NAV", Action::Select},
+      {"ND_LS", "ND mode LS", Action::Select},
+      {"ND_RANGE_INC", "ND range +", Action::Press},
+      {"ND_RANGE_DEC", "ND range -", Action::Press},
+      {"ND_RANGE_10", "ND range 10", Action::Select},
+      {"ND_RANGE_20", "ND range 20", Action::Select},
+      {"ND_RANGE_40", "ND range 40", Action::Select},
+      {"ND_RANGE_80", "ND range 80", Action::Select},
+      {"ND_RANGE_160", "ND range 160", Action::Select},
+      {"ND_RANGE_320", "ND range 320", Action::Select},
+      {"AP_DISCONNECT", "AP disconnect", Action::Press},
+      {"ATHR_DISCONNECT", "A/THR disconnect", Action::Press},
+      {"TOGA", "Thrust TOGA", Action::Press},
+      {"IDLE", "Thrust IDLE", Action::Press},
+      {"REVERSE", "Reverse on/off", Action::Press},
+      {"FLAPS_UP", "Flaps up one", Action::Press},
+      {"FLAPS_DOWN", "Flaps down one", Action::Press},
+      {"SPEEDBRAKE", "Speedbrake on/off", Action::Press},
+      {"SPOILERS_ARM", "Spoilers ARM switch", Action::Held},
+      {"GEAR", "Gear toggle", Action::Press},
+      {"GEAR_UP", "Gear lever UP", Action::Select},
+      {"GEAR_DOWN", "Gear lever DOWN", Action::Select},
+      {"BRAKES", "Brakes (hold)", Action::Held},
+      {"PARK_BRAKE", "Parking brake switch", Action::Held},
+      {"AUTOBRK_OFF", "Autobrake OFF/DISARM", Action::Select},
+      {"AUTOBRK_LO", "Autobrake LO", Action::Select},
+      {"AUTOBRK_MED", "Autobrake MED", Action::Select},
+      {"AUTOBRK_MAX", "Autobrake MAX/HI", Action::Select},
+      {"ENG1_MASTER", "ENG 1 master switch", Action::Held},
+      {"ENG2_MASTER", "ENG 2 master switch", Action::Held},
+      {"ENG_MODE_CRANK", "ENG MODE at CRANK", Action::Held},
+      {"ENG_MODE_IGN", "ENG MODE at IGN/START", Action::Held},
+      {"APU_MASTER", "APU MASTER", Action::Press},
+      {"APU_START", "APU START", Action::Press},
+      {"MASTER_WARN", "Master warning", Action::Press},
+      {"VIEW", "View", Action::Press},
+      {"PAUSE", "Pause", Action::Press},
+  };
+  return kCommands;
+}
+
+inline const CommandInfo* findCommand(const std::string& name) {
+  for (const CommandInfo& c : commandCatalog())
+    if (name == c.name) return &c;
+  return nullptr;
+}
+
+// One command per hardware button: assigning replaces what the button did before.
+inline void setBind(Config& c, const std::string& device, int button, const std::string& command) {
+  c.binds.erase(std::remove_if(c.binds.begin(), c.binds.end(),
+                               [&](const ButtonBind& b) { return b.device == device && b.button == button; }),
+                c.binds.end());
+  c.binds.push_back({device, button, command});
+}
+
+inline void clearBinds(Config& c, const std::string& command) {
+  c.binds.erase(std::remove_if(c.binds.begin(), c.binds.end(), [&](const ButtonBind& b) { return b.command == command; }),
+                c.binds.end());
+}
+
 inline const char* functionName(int f) {
-  static const char* kNames[kFunctionCount] = {"PITCH", "ROLL", "RUDDER", "THRUST 1", "BRAKE L", "BRAKE R", "THRUST 2"};
+  static const char* kNames[kFunctionCount] = {"PITCH", "ROLL", "RUDDER", "THRUST 1", "BRAKE L", "BRAKE R", "THRUST 2",
+                                               "FLAPS", "SPEEDBRAKE"};
   return f >= 0 && f < kFunctionCount ? kNames[f] : "";
 }
 
 inline const char* axisName(int a) {
-  static const char* kNames[kAxes] = {"X", "Y", "Z", "R", "U", "V"};
+  static const char* kNames[kAxes] = {"X", "Y", "Z", "RZ", "RX", "RY", "SL0", "SL1"};
   return a >= 0 && a < kAxes ? kNames[a] : "?";
 }
 
@@ -64,12 +180,8 @@ inline Config defaults() {
   c.bind[kRoll] = {0, 0, false, {}};
   c.bind[kRudder] = {0, 3, false, {}};
   c.bind[kThrottle] = {0, 2, true, {}};
-  c.buttons[0] = "AP_DISCONNECT";
-  c.buttons[1] = "BRAKES";
-  c.buttons[2] = "FLAPS_UP";
-  c.buttons[3] = "FLAPS_DOWN";
-  c.buttons[4] = "GEAR";
-  c.buttons[5] = "REVERSE";
+  const char* kStickButtons[] = {"AP_DISCONNECT", "BRAKES", "FLAPS_UP", "FLAPS_DOWN", "GEAR", "REVERSE"};
+  for (int b = 0; b < 6; ++b) c.binds.push_back({"@stick", b, kStickButtons[b]});
   return c;
 }
 
@@ -172,6 +284,79 @@ inline bool buildCalibration(const double raw[kCalSteps], bool withReverse, Thro
 // Toe brake axis (-1 released .. 1 pressed) to 0..1.
 inline double brakeAmount(double v) { return v <= -0.95 ? 0.0 : (v + 1.0) / 2.0; }
 
+// Flaps axis to the nearest lever position 0..4 (0, 1, 2, 3, FULL).
+inline int flapsFromAxis(double v, const FlapsCal& c) {
+  int best = 0;
+  for (int i = 1; i < 5; ++i)
+    if (std::fabs(v - c.pos[i]) < std::fabs(v - c.pos[best])) best = i;
+  return best;
+}
+
+struct SpeedbrakePosition {
+  double amount = 0.0;  // 0 = RET .. 1 = FULL
+  bool armed = false;   // lever in the ARM position
+};
+
+inline SpeedbrakePosition speedbrakeFromAxis(double v, const SpeedbrakeCal& c) {
+  SpeedbrakePosition out;
+  const double span = c.full - c.ret;
+  if (std::fabs(span) < 1e-6) return out;
+  const double t = (v - c.ret) / span;  // 0 at RET, 1 at FULL, negative towards ARM
+  if (c.hasArm && t < 0.0) {
+    const double armT = (c.arm - c.ret) / span;
+    out.armed = armT < 0.0 && t < armT / 2.0;
+    return out;
+  }
+  out.amount = t < 0.05 ? 0.0 : (t > 0.95 ? 1.0 : t);
+  return out;
+}
+
+// Calibration wizards: thrust levers, flaps lever and speedbrake lever, one detent per step.
+enum CalTarget { kCalThrust = 0, kCalFlaps, kCalSpeedbrake, kCalTargets };
+
+inline int calStepCount(int target) { return target == kCalSpeedbrake ? 3 : 5; }
+
+inline const char* calStepLabel(int target, int step) {
+  static const char* kThrust[5] = {"IDLE", "CL", "FLX/MCT", "TOGA", "REV MAX (full reverse)"};
+  static const char* kFlaps[5] = {"0", "1", "2", "3", "FULL"};
+  static const char* kSpeedbrake[3] = {"RET (retracted)", "FULL", "ARM (lever pulled up at RET)"};
+  if (step < 0 || step >= calStepCount(target)) return "";
+  return target == kCalThrust ? kThrust[step] : (target == kCalFlaps ? kFlaps[step] : kSpeedbrake[step]);
+}
+
+// The last step of the thrust (reverse) and speedbrake (ARM) wizards is optional.
+inline bool calStepOptional(int target, int step) { return target != kCalFlaps && step == calStepCount(target) - 1; }
+
+inline bool buildFlapsCal(const double raw[5], FlapsCal& cal, bool& flip, std::string& error) {
+  flip = raw[4] < raw[0];
+  double v[5];
+  for (int i = 0; i < 5; ++i) v[i] = flip ? -raw[i] : raw[i];
+  for (int i = 0; i < 4; ++i) {
+    if (!(v[i + 1] > v[i] + 0.04)) {
+      error = "The flaps positions must come in the order 0, 1, 2, 3, FULL along the lever. Try again.";
+      return false;
+    }
+  }
+  for (int i = 0; i < 5; ++i) cal.pos[i] = v[i];
+  return true;
+}
+
+inline bool buildSpeedbrakeCal(double ret, double full, bool withArm, double arm, SpeedbrakeCal& cal, bool& flip,
+                               std::string& error) {
+  flip = full < ret;
+  const double r = flip ? -ret : ret, f = flip ? -full : full, a = flip ? -arm : arm;
+  if (f - r < 0.3) {
+    error = "FULL must be well away from RET along the lever. Try again.";
+    return false;
+  }
+  if (withArm && !(a < r - 0.05)) {
+    error = "ARM must be on the other side of RET from FULL. Try again, or press NO ARM.";
+    return false;
+  }
+  cal = SpeedbrakeCal{r, f, withArm, withArm ? a : r};
+  return true;
+}
+
 // Learn mode: the axis that moved furthest from where it was when learning started.
 inline bool detectAxis(const std::vector<AxisValues>& baseline, const std::vector<AxisValues>& now, int& device, int& axis) {
   double best = 0.5;
@@ -241,8 +426,10 @@ inline bool autoAssignThrottle(Config& c, const std::vector<std::string>& names,
   if (!c.autoThrottle) return false;
   int quadrant = -1, stick = -1;
   for (int d = 0; d < static_cast<int>(names.size()); ++d) {
-    if (isThrottleDevice(names[static_cast<size_t>(d)])) {
-      if (quadrant < 0) quadrant = d;
+    const std::string& name = names[static_cast<size_t>(d)];
+    if (isThrottleDevice(name)) {
+      // A quadrant with add-on modules shows up as several devices; the levers are on "1&2".
+      if (quadrant < 0 || name.find("1&2") != std::string::npos) quadrant = d;
     } else if (stick < 0) {
       stick = d;
     }
@@ -294,34 +481,56 @@ inline bool parseCal(const std::string& value, ThrottleCal& cal) {
   return true;
 }
 
-inline constexpr const char* kFunctionKeys[kFunctionCount] = {"pitch", "roll", "rudder", "throttle", "brakeLeft", "brakeRight", "throttle2"};
+inline constexpr const char* kFunctionKeys[kFunctionCount] = {"pitch", "roll", "rudder", "throttle", "brakeLeft",
+                                                              "brakeRight", "throttle2", "flaps", "speedbrake"};
+
+inline std::string flapsCalText(const FlapsCal& cal) {
+  std::ostringstream out;
+  for (int i = 0; i < 5; ++i) out << (i ? ":" : "") << cal.pos[i];
+  return out.str();
+}
+
+inline bool parseNumbers(const std::string& value, double* out, int count) {
+  const char* p = value.c_str();
+  for (int i = 0; i < count; ++i) {
+    char* end = nullptr;
+    out[i] = std::strtod(p, &end);
+    if (end == p || (i + 1 < count && *end != ':')) return false;
+    p = end + 1;
+  }
+  return true;
+}
 
 inline std::string toText(const Config& c) {
   std::ostringstream out;
-  out << "# A320 Sim joystick settings: <function>=<device>:<axis 0-5 = X Y Z R U V>:<invert 0/1>:<device name>\n";
+  out << "# A320 Sim joystick settings: <function>=<device>:<axis 0-7 = X Y Z RZ RX RY SL0 SL1>:<invert 0/1>:<device name>\n";
   for (int f = 0; f < kFunctionCount; ++f) {
     out << kFunctionKeys[f] << "=" << c.bind[f].device << ":" << c.bind[f].axis << ":" << (c.bind[f].invert ? 1 : 0);
     if (!c.bind[f].deviceName.empty()) out << ":" << c.bind[f].deviceName;
     out << "\n";
   }
   out << "deadzone=" << c.deadzone << "\n";
-  out << "# Thrust lever detents (set by CALIBRATE THRUST): <idle>:<cl>:<flx/mct>:<toga>:<full reverse or none>\n";
+  out << "# Detents, set by the CAL buttons in the setup panel (F2).\n";
+  out << "# thrust: <idle>:<cl>:<flx/mct>:<toga>:<full reverse or none>; flaps: 0:1:2:3:FULL; speedbrake: RET:FULL:<ARM or none>\n";
   out << "throttle1Detents=" << calText(c.cal[0]) << "\n";
   out << "throttle2Detents=" << calText(c.cal[1]) << "\n";
+  out << "flapsDetents=" << flapsCalText(c.flapsCal) << "\n";
+  out << "speedbrakeDetents=" << c.speedbrakeCal.ret << ":" << c.speedbrakeCal.full << ":";
+  if (c.speedbrakeCal.hasArm) out << c.speedbrakeCal.arm; else out << "none";
+  out << "\n";
   out << "autoThrottle=" << (c.autoThrottle ? 1 : 0) << "\n";
-  out << "# Buttons: AP_DISCONNECT ATHR_DISCONNECT BRAKES FLAPS_UP FLAPS_DOWN GEAR REVERSE SPEEDBRAKE VIEW PAUSE\n";
-  out << "#   TOGA IDLE AP1 ATHR; switches (on while held): ENG1_MASTER ENG2_MASTER ENG_MODE_CRANK ENG_MODE_IGN\n";
-  out << "# buttonN: the stick (PITCH device); throttleButtonN: the throttle (THRUST 1 device), if separate.\n";
-  for (int b = 0; b < kButtons; ++b)
-    if (!c.buttons[b].empty()) out << "button" << (b + 1) << "=" << c.buttons[b] << "\n";
-  for (int b = 0; b < kButtons; ++b)
-    if (!c.throttleButtons[b].empty()) out << "throttleButton" << (b + 1) << "=" << c.throttleButtons[b] << "\n";
+  out << "# Buttons (easiest set with SET on the BUTTONS page of the setup panel):\n";
+  out << "#   bind=<button number, from 1>|<command>|<device name, or @stick / @throttle>\n";
+  out << "# Commands:";
+  int n = 0;
+  for (const CommandInfo& cmd : commandCatalog()) out << (n++ % 8 == 0 ? "\n#  " : "") << " " << cmd.name;
+  out << "\n";
+  for (const ButtonBind& b : c.binds) out << "bind=" << (b.button + 1) << "|" << b.command << "|" << b.device << "\n";
   return out.str();
 }
 
 inline bool fromText(const std::string& text, Config& c) {
   Config parsed;
-  for (std::string& b : parsed.buttons) b.clear();
   bool any = false;
   std::istringstream in(text);
   std::string line;
@@ -352,15 +561,38 @@ inline bool fromText(const std::string& text, Config& c) {
     }
     if (key == "throttle1Detents") parseCal(value, parsed.cal[0]);
     if (key == "throttle2Detents") parseCal(value, parsed.cal[1]);
-    if (key == "autoThrottle") parsed.autoThrottle = std::strtol(value.c_str(), nullptr, 10) != 0;
-    if (key.compare(0, 14, "throttleButton") == 0) {
-      const long button = std::strtol(key.c_str() + 14, nullptr, 10);
-      if (button >= 1 && button <= kButtons) parsed.throttleButtons[button - 1] = value;
+    if (key == "flapsDetents") {
+      double v[5];
+      if (parseNumbers(value, v, 5) && v[0] < v[1] && v[1] < v[2] && v[2] < v[3] && v[3] < v[4])
+        for (int i = 0; i < 5; ++i) parsed.flapsCal.pos[i] = v[i];
     }
+    if (key == "speedbrakeDetents") {
+      double v[2];
+      if (parseNumbers(value + ":", v, 2) && v[1] > v[0]) {
+        const size_t armAt = value.rfind(':');
+        char* end = nullptr;
+        const char* armText = value.c_str() + armAt + 1;
+        const double arm = std::strtod(armText, &end);
+        const bool hasArm = end != armText && arm < v[0];
+        parsed.speedbrakeCal = SpeedbrakeCal{v[0], v[1], hasArm, hasArm ? arm : v[0]};
+      }
+    }
+    if (key == "autoThrottle") parsed.autoThrottle = std::strtol(value.c_str(), nullptr, 10) != 0;
     if (key == "deadzone") parsed.deadzone = std::fmin(std::fmax(std::strtod(value.c_str(), nullptr), 0.0), 0.5);
-    if (key.compare(0, 6, "button") == 0) {
-      const long button = std::strtol(key.c_str() + 6, nullptr, 10);
-      if (button >= 1 && button <= kButtons) parsed.buttons[button - 1] = value;
+    if (key == "bind") {
+      // "<button>|<command>|<device>"
+      const size_t a = value.find('|'), b = a == std::string::npos ? a : value.find('|', a + 1);
+      if (b == std::string::npos) continue;
+      const long button = std::strtol(value.substr(0, a).c_str(), nullptr, 10);
+      const std::string command = trim(value.substr(a + 1, b - a - 1)), device = trim(value.substr(b + 1));
+      if (button >= 1 && button <= kButtons && !command.empty() && !device.empty())
+        parsed.binds.push_back({device, static_cast<int>(button - 1), command});
+    }
+    // Older files: buttonN (the stick) and throttleButtonN (the throttle).
+    const bool stickKey = key.compare(0, 6, "button") == 0, throttleKey = key.compare(0, 14, "throttleButton") == 0;
+    if ((stickKey || throttleKey) && !value.empty()) {
+      const long button = std::strtol(key.c_str() + (stickKey ? 6 : 14), nullptr, 10);
+      if (button >= 1 && button <= kButtons) parsed.binds.push_back({stickKey ? "@stick" : "@throttle", static_cast<int>(button - 1), value});
     }
   }
   if (any) c = parsed;

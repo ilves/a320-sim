@@ -81,14 +81,22 @@ enum class EA320Command : uint8
 	// contiguous: function index = command - first.
 	JoystickPanel,
 	JoyRescan,
-	JoyLearn0, JoyLearn1, JoyLearn2, JoyLearn3, JoyLearn4, JoyLearn5, JoyLearn6,
-	JoyAxis0, JoyAxis1, JoyAxis2, JoyAxis3, JoyAxis4, JoyAxis5, JoyAxis6,
-	JoyInvert0, JoyInvert1, JoyInvert2, JoyInvert3, JoyInvert4, JoyInvert5, JoyInvert6,
-	// Thrust lever detent calibration wizard.
+	JoyLearn0, JoyLearn1, JoyLearn2, JoyLearn3, JoyLearn4, JoyLearn5, JoyLearn6, JoyLearn7, JoyLearn8,
+	JoyAxis0, JoyAxis1, JoyAxis2, JoyAxis3, JoyAxis4, JoyAxis5, JoyAxis6, JoyAxis7, JoyAxis8,
+	JoyInvert0, JoyInvert1, JoyInvert2, JoyInvert3, JoyInvert4, JoyInvert5, JoyInvert6, JoyInvert7, JoyInvert8,
+	// Detent calibration wizards (thrust levers, flaps lever, speedbrake lever).
 	JoyCalStart,
+	JoyCalFlaps,
+	JoyCalSpeedbrake,
 	JoyCalSet,
 	JoyCalSkip,
 	JoyCalCancel,
+	// Setup panel pages, and assigning hardware buttons (the button carries the command index).
+	JoyPageAxes,
+	JoyPageButtons,
+	JoyBindSet,
+	JoyBindClear,
+	FcuVsPush,
 	ApDisconnect,
 };
 
@@ -99,4 +107,20 @@ enum class EA320Lever : uint8
 	Thrust,
 	Flaps,
 	Speedbrake,
+};
+
+// Cockpit switches and levers set to a position (hardware switches and selectors), rather
+// than toggled like the panel's buttons.
+enum class EA320Switch : uint8
+{
+	Gear,         // 0 up, 1 down
+	ParkBrake,    // 0/1
+	SpoilersArm,  // 0/1
+	Autobrake,    // A320_AUTOBRAKE_*
+	EngMaster1,   // 0/1
+	EngMaster2,   // 0/1
+	EngMode,      // A320_ENG_MODE_*
+	Flaps,        // 0..4
+	NdMode,       // A320_ND_*
+	NdRange,      // NM
 };

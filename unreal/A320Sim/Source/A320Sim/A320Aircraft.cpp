@@ -305,9 +305,14 @@ void AA320Aircraft::ExecuteCommand(EA320Command Command, bool bLarge)
 		break;
 	case EA320Command::ResetColdDark: ResetScenario(A320_SCENARIO_COLD_DARK); break;
 	case EA320Command::ApDisconnect:
-		if (State.apEngaged)
+		// Both autopilots off (the pushbuttons toggle; Fcu refreshes State in between).
+		if (State.ap1Engaged)
 		{
 			Fcu(A320_FCU_AP1);
+		}
+		if (State.ap2Engaged)
+		{
+			Fcu(A320_FCU_AP2);
 		}
 		break;
 	case EA320Command::OverheadToggle: bOverheadVisible = !bOverheadVisible; break;
@@ -404,7 +409,17 @@ void AA320Aircraft::ExecuteCommand(EA320Command Command, bool bLarge)
 	case EA320Command::ThrustToga: Controls.thrustLever = 1.0; Controls.splitThrust = 0; break;
 	case EA320Command::LsToggle: bLsOn = !bLsOn; break;
 	case EA320Command::NdRangeDown: NdRangeNm = FMath::Max(NdRangeNm / 2, 5); break;
-	case EA320Command::NdRangeUp: NdRangeNm = FMath::Min(NdRangeNm * 2, 80); break;
+	case EA320Command::NdRangeUp: NdRangeNm = FMath::Min(NdRangeNm * 2, 320); break;
+	case EA320Command::FcuVsPush:
+		// Push the V/S knob: level off at V/S 0.
+		if (Sim)
+		{
+			// The pull takes the current V/S as its target, so 0 is set after it.
+			a320_fcu_command(Sim, A320_FCU_VS_PULL);
+			a320_fcu_set_targets(Sim, State.fcuSpdKt, State.fcuHdgMagDeg, State.fcuAltFt, 0.0);
+			a320_get_state(Sim, &State);
+		}
+		break;
 	case EA320Command::PauseToggle:
 		if (Sim)
 		{
@@ -540,6 +555,38 @@ void AA320Aircraft::SetThrustLevers(double Lever1, bool bReverse1, double Lever2
 	Controls.splitThrust = bSplit ? 1 : 0;
 	Controls.thrustLever2 = FMath::Clamp(Lever2, 0.0, 1.0);
 	Controls.reverse2 = bReverse2 ? 1 : 0;
+}
+
+void AA320Aircraft::SetSwitch(EA320Switch Switch, int32 Value)
+{
+	switch (Switch)
+	{
+	case EA320Switch::Gear: Controls.gearDown = Value ? 1 : 0; break;
+	case EA320Switch::ParkBrake: Controls.parkBrake = Value ? 1 : 0; break;
+	case EA320Switch::SpoilersArm:
+		Controls.spoilersArmed = Value ? 1 : 0;
+		if (Value)
+		{
+			Controls.speedbrake = 0.0;
+		}
+		break;
+	case EA320Switch::Autobrake: Controls.autobrake = FMath::Clamp(Value, A320_AUTOBRAKE_OFF, A320_AUTOBRAKE_MAX); break;
+	case EA320Switch::EngMaster1: Controls.engMaster[0] = Value ? 1 : 0; break;
+	case EA320Switch::EngMaster2: Controls.engMaster[1] = Value ? 1 : 0; break;
+	case EA320Switch::EngMode: Controls.engMode = FMath::Clamp(Value, A320_ENG_MODE_CRANK, A320_ENG_MODE_IGN_START); break;
+	case EA320Switch::Flaps: Controls.flapsLever = FMath::Clamp(Value, 0, 4); break;
+	case EA320Switch::NdMode: NdMode = FMath::Clamp(Value, A320_ND_ARC, A320_ND_ROSE_LS); break;
+	case EA320Switch::NdRange: NdRangeNm = FMath::Clamp(Value, 5, 320); break;
+	}
+}
+
+void AA320Aircraft::SetSpeedbrake(double Amount)
+{
+	Controls.speedbrake = FMath::Clamp(Amount, 0.0, 1.0);
+	if (Amount > 0.05)
+	{
+		Controls.spoilersArmed = 0;  // the lever left the ARM position
+	}
 }
 
 void AA320Aircraft::SetLever(EA320Lever Lever, double Position)

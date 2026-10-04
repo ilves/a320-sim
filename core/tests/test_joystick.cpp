@@ -45,18 +45,19 @@ TEST(joystick_config_roundtrip) {
   Config c = defaults();
   c.bind[kRudder] = {1, 4, true, {}};
   c.deadzone = 0.1;
-  c.buttons[7] = "VIEW";
+  setBind(c, "@stick", 7, "VIEW");
   Config back;
   CHECK(fromText(toText(c), back));
   CHECK(back.bind[kRudder].device == 1 && back.bind[kRudder].axis == 4 && back.bind[kRudder].invert);
   CHECK(back.bind[kPitch].axis == 1);
   CHECK_NEAR(back.deadzone, 0.1, 1e-9);
-  CHECK(back.buttons[0] == "AP_DISCONNECT");
-  CHECK(back.buttons[7] == "VIEW");
+  CHECK(back.binds.size() == 7);
+  CHECK(back.binds[0].device == "@stick" && back.binds[0].button == 0 && back.binds[0].command == "AP_DISCONNECT");
+  CHECK(back.binds[6].button == 7 && back.binds[6].command == "VIEW");
   Config spaced;
   CHECK(fromText("  rudder = 1:4:1 \r\nbutton1 = GEAR\n", spaced));
   CHECK(spaced.bind[kRudder].device == 1 && spaced.bind[kRudder].invert);
-  CHECK(spaced.buttons[0] == "GEAR");
+  CHECK(spaced.binds.size() == 1 && spaced.binds[0].device == "@stick" && spaced.binds[0].command == "GEAR");
   Config untouched = defaults();
   CHECK(!fromText("# nothing here\nfoo=bar\n", untouched));
   CHECK(untouched.bind[kPitch].axis == 1);
@@ -131,17 +132,82 @@ TEST(joystick_config_throttle_roundtrip) {
   Config c = defaults();
   c.bind[kThrottle2] = {1, 1, true, "TCA Q-Eng 1&2"};
   c.cal[1] = ThrottleCal{-0.8, 0.1, 0.4, 0.9, true, -1.0};
-  c.throttleButtons[2] = "ENG1_MASTER";
+  setBind(c, "TCA Q-Eng 1&2", 2, "ENG1_MASTER");
   c.autoThrottle = false;
   Config back;
   CHECK(fromText(toText(c), back));
   CHECK(back.bind[kThrottle2].device == 1 && back.bind[kThrottle2].invert && back.bind[kThrottle2].deviceName == "TCA Q-Eng 1&2");
   CHECK(back.cal[1].hasReverse && back.cal[1].climb == 0.1 && back.cal[1].reverseMax == -1.0);
   CHECK(!back.cal[0].hasReverse && back.cal[0].toga == 1.0);
-  CHECK(back.throttleButtons[2] == "ENG1_MASTER");
+  CHECK(back.binds.back().device == "TCA Q-Eng 1&2" && back.binds.back().button == 2 &&
+        back.binds.back().command == "ENG1_MASTER");
   CHECK(!back.autoThrottle);
   // A settings file from before THRUST 2 existed.
   Config old;
   CHECK(fromText("pitch=0:1:0\nthrottle=0:2:1\n", old));
   CHECK(old.bind[kThrottle2].device == -1 && old.autoThrottle);
+}
+
+TEST(joystick_older_settings_files) {
+  Config old;
+  CHECK(fromText("pitch=0:1:0\nbutton1=AP_DISCONNECT\nthrottleButton3=ENG1_MASTER\n", old));
+  CHECK(old.binds.size() == 2);
+  CHECK(old.binds[0].device == "@stick" && old.binds[0].button == 0);
+  CHECK(old.binds[1].device == "@throttle" && old.binds[1].button == 2 && old.binds[1].command == "ENG1_MASTER");
+}
+
+TEST(joystick_command_catalog) {
+  // Names are unique, and every default and legacy command exists.
+  for (size_t i = 0; i < commandCatalog().size(); ++i)
+    for (size_t j = i + 1; j < commandCatalog().size(); ++j)
+      CHECK(std::string(commandCatalog()[i].name) != commandCatalog()[j].name);
+  for (const char* name : {"AP_DISCONNECT", "ATHR_DISCONNECT", "BRAKES", "FLAPS_UP", "FLAPS_DOWN", "GEAR", "REVERSE",
+                           "SPEEDBRAKE", "VIEW", "PAUSE", "TOGA", "IDLE", "AP1", "AP2", "ATHR", "ENG1_MASTER",
+                           "ENG2_MASTER", "ENG_MODE_CRANK", "ENG_MODE_IGN"})
+    CHECK(findCommand(name) != nullptr);
+  CHECK(findCommand("NOPE") == nullptr);
+  CHECK(findCommand("PARK_BRAKE")->action == Action::Held);
+  CHECK(findCommand("ND_LS")->action == Action::Select);
+  // One command per hardware button; a command can have several buttons.
+  Config c;
+  setBind(c, "FCU", 4, "AP1");
+  setBind(c, "FCU", 4, "AP2");
+  setBind(c, "Stick", 0, "AP2");
+  CHECK(c.binds.size() == 2 && c.binds[0].command == "AP2");
+  clearBinds(c, "AP2");
+  CHECK(c.binds.empty());
+}
+
+TEST(flaps_and_speedbrake_levers) {
+  FlapsCal linear;
+  CHECK(flapsFromAxis(-1.0, linear) == 0 && flapsFromAxis(0.1, linear) == 2 && flapsFromAxis(0.9, linear) == 4);
+  // A lever that runs backwards, recorded at each detent.
+  const double raw[5] = {0.9, 0.5, 0.1, -0.3, -0.9};
+  FlapsCal cal;
+  bool flip = false;
+  std::string error;
+  CHECK(buildFlapsCal(raw, cal, flip, error) && flip);
+  CHECK(flapsFromAxis(-0.5, cal) == 1 && flapsFromAxis(0.85, cal) == 4);
+  const double bad[5] = {-1.0, 0.0, -0.5, 0.5, 1.0};
+  CHECK(!buildFlapsCal(bad, cal, flip, error) && !error.empty());
+
+  SpeedbrakeCal sb;
+  CHECK(speedbrakeFromAxis(-1.0, sb).amount == 0.0 && speedbrakeFromAxis(1.0, sb).amount == 1.0);
+  CHECK(std::fabs(speedbrakeFromAxis(0.0, sb).amount - 0.5) < 1e-9);
+  SpeedbrakeCal armed;
+  CHECK(buildSpeedbrakeCal(-0.8, 0.9, true, -1.0, armed, flip, error) && !flip && armed.hasArm);
+  CHECK(speedbrakeFromAxis(-0.98, armed).armed && speedbrakeFromAxis(-0.98, armed).amount == 0.0);
+  CHECK(!speedbrakeFromAxis(-0.82, armed).armed);
+  CHECK(!buildSpeedbrakeCal(-0.8, -0.7, false, 0.0, armed, flip, error));
+
+  Config c;
+  c.flapsCal = cal;
+  c.speedbrakeCal = SpeedbrakeCal{-0.8, 0.9, true, -1.0};
+  Config back;
+  c.bind[kFlaps] = {1, 2, true, "TCA Q-Eng Add-On"};
+  CHECK(fromText(toText(c), back));
+  CHECK(back.bind[kFlaps].deviceName == "TCA Q-Eng Add-On" && back.bind[kFlaps].invert);
+  CHECK(std::fabs(back.flapsCal.pos[1] - cal.pos[1]) < 1e-6);
+  CHECK(back.speedbrakeCal.hasArm && back.speedbrakeCal.arm == -1.0 && back.speedbrakeCal.full == 0.9);
+  CHECK(calStepCount(kCalSpeedbrake) == 3 && calStepOptional(kCalSpeedbrake, 2) && !calStepOptional(kCalFlaps, 4));
 }

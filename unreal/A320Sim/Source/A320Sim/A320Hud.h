@@ -23,6 +23,8 @@ public:
 
 	// The panel button under a screen position (from the last drawn frame).
 	EA320Command CommandAt(const FVector2D& ScreenPos) const;
+	// The extra value of that button (e.g. which command a SET button assigns), 0 if none.
+	int32 ParamAt(const FVector2D& ScreenPos) const;
 	// The lever slot under a screen position, and the handle position (0 = top) for a drag.
 	EA320Lever LeverAt(const FVector2D& ScreenPos) const;
 	double LeverPosition(EA320Lever Lever, const FVector2D& ScreenPos) const;
@@ -32,6 +34,7 @@ private:
 	{
 		FBox2D Box;
 		EA320Command Command;
+		int32 Param = 0;
 	};
 
 	void DrawPfd(const AA320Aircraft& Aircraft, double X, double Y, double S);
@@ -59,7 +62,7 @@ private:
 	void LeverSlot(double X, double Y, double W, double H, EA320Lever Lever);
 	void DrawFcu(const AA320Aircraft& Aircraft, double X, double Y, double W, double H);
 	void DrawFma(const A320State& St, double X, double Y, double S);
-	void AddButton(double X, double Y, double W, double H, const FString& Label, EA320Command Command, bool bLit);
+	void AddButton(double X, double Y, double W, double H, const FString& Label, EA320Command Command, bool bLit, int32 Param = 0);
 	void DrawOverlays(const AA320Aircraft& Aircraft);
 	void DrawHelp();
 	// Lessons: the picker, and the step panel with the current step's controls highlighted.

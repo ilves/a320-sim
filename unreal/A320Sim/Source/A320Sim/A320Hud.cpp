@@ -127,6 +127,18 @@ void AA320Hud::Text(const FString& Str, double X, double Y, const FLinearColor& 
 	DrawText(Str, Color, (float)Left, (float)(Y - H / 2.0), Font, TextScale);
 }
 
+int32 AA320Hud::ParamAt(const FVector2D& ScreenPos) const
+{
+	for (int32 i = Buttons.Num() - 1; i >= 0; --i)
+	{
+		if (Buttons[i].Box.IsInside(ScreenPos))
+		{
+			return Buttons[i].Param;
+		}
+	}
+	return 0;
+}
+
 EA320Command AA320Hud::CommandAt(const FVector2D& ScreenPos) const
 {
 	// Last drawn is on top (pop-up panels are drawn after the cockpit).
@@ -890,7 +902,7 @@ void AA320Hud::DrawHelp()
 	}
 }
 
-void AA320Hud::AddButton(double X, double Y, double W, double H, const FString& Label, EA320Command Command, bool bLit)
+void AA320Hud::AddButton(double X, double Y, double W, double H, const FString& Label, EA320Command Command, bool bLit, int32 Param)
 {
 	Fill(X, Y, W, H, ButtonFace);
 	Frame(X, Y, W, H, bLit ? Green : FLinearColor(0.3f, 0.3f, 0.33f), bLit ? 2.0 : 1.0);
@@ -899,7 +911,7 @@ void AA320Hud::AddButton(double X, double Y, double W, double H, const FString& 
 		Fill(X + W * 0.25, Y + H - 4.0 * Scale, W * 0.5, 2.5 * Scale, Green);
 	}
 	Text(Label, X + W / 2.0, Y + H / 2.0, bLit ? Green : White, 0, 1);
-	Buttons.Add({FBox2D(FVector2D(X, Y), FVector2D(X + W, Y + H)), Command});
+	Buttons.Add({FBox2D(FVector2D(X, Y), FVector2D(X + W, Y + H)), Command, Param});
 }
 
 void AA320Hud::DrawFcu(const AA320Aircraft& Aircraft, double X, double Y, double W, double H)
@@ -1370,20 +1382,57 @@ void AA320Hud::DrawJoystickPanel(const AA320PlayerController& Controller)
 {
 	using namespace a320::joy;
 	const FA320Joystick& Joy = Controller.GetJoystick();
+	const bool bButtonsPage = Controller.IsJoystickButtonsPage();
 	const double W = Canvas->ClipX, H = Canvas->ClipY;
-	// Over the top of the cockpit panel; the pedestal's thrust levers stay visible below it.
+	// Over the top of the cockpit panel; the pedestal's levers stay visible below it.
 	const double PX = W * 0.2, PY = H * 0.025, PW = W * 0.6, PH = H * 0.645;
 	Fill(PX, PY, PW, PH, FLinearColor(0.08f, 0.09f, 0.1f, 0.97f));
 	Buttons.Add({FBox2D(FVector2D(PX, PY), FVector2D(PX + PW, PY + PH)), EA320Command::None});  // swallows clicks
 	Frame(PX, PY, PW, PH, FLinearColor(0.5f, 0.52f, 0.55f), 2.0);
-	Text(TEXT("JOYSTICK AND THROTTLE SETUP"), PX + PW / 2.0, PY + 0.025 * H, White, 1, 1);
+	const double LeftX = PX + 0.02 * W, LineH = 0.022 * H;
+	Text(TEXT("JOYSTICK, THROTTLE AND PANEL SETUP"), LeftX, PY + 0.025 * H, White, 1, 0);
 	AddButton(PX + PW - 0.04 * W, PY + 0.008 * H, 0.032 * W, 0.034 * H, TEXT("X"), EA320Command::JoystickPanel, false);
 	AddButton(PX + PW - 0.12 * W, PY + 0.008 * H, 0.07 * W, 0.034 * H, TEXT("RESCAN"), EA320Command::JoyRescan, false);
-	const double LeftX = PX + 0.02 * W, LineH = 0.026 * H;
-
-	// Devices, and which one is the stick and the throttle (their buttons are mapped).
-	double RowY = PY + 0.065 * H;
+	AddButton(PX + PW - 0.27 * W, PY + 0.008 * H, 0.07 * W, 0.034 * H, TEXT("AXES"), EA320Command::JoyPageAxes, !bButtonsPage);
+	AddButton(PX + PW - 0.195 * W, PY + 0.008 * H, 0.07 * W, 0.034 * H, TEXT("BUTTONS"), EA320Command::JoyPageButtons, bButtonsPage);
+	double RowY = PY + 0.06 * H;
 	const TArray<FA320JoystickDevice>& Devices = Joy.GetDevices();
+
+	if (bButtonsPage)
+	{
+		// Every cockpit command a hardware button, switch position or knob click can drive.
+		const int32 Learning = Joy.GetButtonLearning();
+		Text(TEXT("Click SET, then press the button, flip the switch or turn the knob one click on your hardware. X clears it."),
+			LeftX, RowY, Grey, 0, 0);
+		RowY += LineH;
+		Text(FString::Printf(TEXT("Last pressed: %s"), Joy.GetLastPressed().IsEmpty() ? TEXT("-") : *Joy.GetLastPressed()), LeftX, RowY, Cyan, 0, 0);
+		if (!Joy.GetMessage().IsEmpty())
+		{
+			Text(Joy.GetMessage(), PX + PW * 0.45, RowY, Amber, 0, 0);
+		}
+		RowY += LineH * 1.3;
+		const std::vector<CommandInfo>& Catalog = commandCatalog();
+		const int32 PerColumn = (static_cast<int32>(Catalog.size()) + 2) / 3;
+		const double ColW = (PW - 0.04 * W) / 3.0, RowH = 0.0215 * H;
+		for (int32 i = 0; i < static_cast<int32>(Catalog.size()); ++i)
+		{
+			const double CX = LeftX + (i / PerColumn) * ColW, CY = RowY + (i % PerColumn) * RowH;
+			const CommandInfo& Info = Catalog[static_cast<size_t>(i)];
+			Text(UTF8_TO_TCHAR(Info.label), CX, CY + RowH / 2.0, White, 0, 0);
+			FString Bound = Joy.BindText(Info.name);
+			if (Bound.Len() > 18)
+			{
+				Bound = Bound.Left(17) + TEXT("~");
+			}
+			Text(Bound.IsEmpty() ? FString(TEXT("-")) : Bound, CX + ColW * 0.42, CY + RowH / 2.0, Bound.IsEmpty() ? Grey : Green, 0, 0);
+			AddButton(CX + ColW * 0.79, CY + 1.0, ColW * 0.12, RowH - 2.0, Learning == i ? TEXT("PRESS") : TEXT("SET"), EA320Command::JoyBindSet, Learning == i, i);
+			AddButton(CX + ColW * 0.92, CY + 1.0, ColW * 0.06, RowH - 2.0, TEXT("X"), EA320Command::JoyBindClear, false, i);
+		}
+		Text(FString::Printf(TEXT("Saved to %s"), *Joy.GetConfigPath()), LeftX, PY + PH - 0.02 * H, Grey, 0, 0);
+		return;
+	}
+
+	// Devices, and which one is the stick and the throttle.
 	const int32 StickDevice = Joy.GetStickDevice(), ThrottleDevice = Joy.GetThrottleDevice();
 	if (Devices.Num() == 0)
 	{
@@ -1398,15 +1447,16 @@ void AA320Hud::DrawJoystickPanel(const AA320PlayerController& Controller)
 		RowY += LineH;
 	}
 
-	// One row per function: binding (click to cycle), INV, LEARN and the live value.
-	RowY += 0.01 * H;
-	const double ColAxis = PX + 0.14 * W, ColInv = PX + 0.25 * W, ColLearn = PX + 0.31 * W, ColBar = PX + 0.4 * W;
-	const double BtnH = 0.026 * H, BarW = 0.17 * W;
+	// One row per function: binding (click to cycle), INV, LEARN, CAL for levers with detents,
+	// and the live value.
+	RowY += 0.008 * H;
+	const double ColAxis = PX + 0.12 * W, ColInv = PX + 0.225 * W, ColLearn = PX + 0.28 * W, ColCal = PX + 0.355 * W, ColBar = PX + 0.4 * W;
+	const double BtnH = 0.022 * H, BarW = 0.14 * W;
 	Text(TEXT("FUNCTION"), LeftX, RowY, Grey, 0, 0);
 	Text(TEXT("AXIS (click)"), ColAxis, RowY, Grey, 0, 0);
 	Text(TEXT("VALUE"), ColBar, RowY, Grey, 0, 0);
-	RowY += 0.03 * H;
-	const int32 Order[kFunctionCount] = {kPitch, kRoll, kRudder, kThrottle, kThrottle2, kBrakeLeft, kBrakeRight};
+	RowY += 0.025 * H;
+	const int32 Order[kFunctionCount] = {kPitch, kRoll, kRudder, kThrottle, kThrottle2, kFlaps, kSpeedbrake, kBrakeLeft, kBrakeRight};
 	for (const int32 F : Order)
 	{
 		const Binding& B = Joy.GetConfig().bind[F];
@@ -1417,9 +1467,15 @@ void AA320Hud::DrawJoystickPanel(const AA320PlayerController& Controller)
 		AddButton(ColAxis, RowY, 0.1 * W, BtnH, AxisText, static_cast<EA320Command>(static_cast<int32>(EA320Command::JoyAxis0) + F), bBound);
 		AddButton(ColInv, RowY, 0.05 * W, BtnH, TEXT("INV"), static_cast<EA320Command>(static_cast<int32>(EA320Command::JoyInvert0) + F), B.invert);
 		const bool bLearning = Joy.GetLearning() == F;
-		AddButton(ColLearn, RowY, 0.08 * W, BtnH, bLearning ? TEXT("MOVE IT...") : TEXT("LEARN"),
+		AddButton(ColLearn, RowY, 0.07 * W, BtnH, bLearning ? TEXT("MOVE IT") : TEXT("LEARN"),
 			static_cast<EA320Command>(static_cast<int32>(EA320Command::JoyLearn0) + F), bLearning);
-		// Live value: -1..1 bar; the thrust levers also show the lever position it gives.
+		const EA320Command Cal = F == kThrottle ? EA320Command::JoyCalStart
+			: (F == kFlaps ? EA320Command::JoyCalFlaps : (F == kSpeedbrake ? EA320Command::JoyCalSpeedbrake : EA320Command::None));
+		if (Cal != EA320Command::None)
+		{
+			AddButton(ColCal, RowY, 0.04 * W, BtnH, TEXT("CAL"), Cal, false);
+		}
+		// Live value: -1..1 bar, and what the lever gives in the cockpit.
 		Fill(ColBar, RowY + BtnH * 0.3, BarW, BtnH * 0.4, Screen);
 		if (bBound)
 		{
@@ -1432,8 +1488,17 @@ void AA320Hud::DrawJoystickPanel(const AA320PlayerController& Controller)
 			{
 				const a320::joy::LeverPosition L = Joy.Lever(F == kThrottle ? 0 : 1);
 				ValueText += L.reverse ? FString::Printf(TEXT("   REV %d%%"), FMath::RoundToInt(L.lever * 100.0))
-					: FString::Printf(TEXT("   %s %d%%"), UTF8_TO_TCHAR(leverDetentName(L.lever)),
-						FMath::RoundToInt(L.lever * 100.0));
+					: FString::Printf(TEXT("   %s %d%%"), UTF8_TO_TCHAR(leverDetentName(L.lever)), FMath::RoundToInt(L.lever * 100.0));
+			}
+			else if (F == kFlaps)
+			{
+				static const TCHAR* FlapNames[5] = {TEXT("0"), TEXT("1"), TEXT("2"), TEXT("3"), TEXT("FULL")};
+				ValueText += FString::Printf(TEXT("   FLAPS %s"), FlapNames[Joy.FlapsLever()]);
+			}
+			else if (F == kSpeedbrake)
+			{
+				const SpeedbrakePosition P = Joy.Speedbrake();
+				ValueText += P.armed ? FString(TEXT("   ARM")) : FString::Printf(TEXT("   %d%%"), FMath::RoundToInt(P.amount * 100.0));
 			}
 			Text(ValueText, ColBar + BarW + 0.01 * W, RowY + BtnH / 2.0, Cyan, 0, 0);
 		}
@@ -1442,34 +1507,32 @@ void AA320Hud::DrawJoystickPanel(const AA320PlayerController& Controller)
 			Text(TEXT("unbound: THRUST 1 moves both levers"), ColBar + BarW + 0.01 * W, RowY + BtnH / 2.0, Grey, 0, 0);
 		}
 		Line(ColBar + BarW / 2.0, RowY, ColBar + BarW / 2.0, RowY + BtnH, Grey, 1.0);
-		RowY += BtnH + 0.006 * H;
+		RowY += BtnH + 0.004 * H;
 	}
 
-	// Thrust lever detent calibration.
+	// Detent calibration wizard.
 	RowY += 0.01 * H;
-	const int32 Step = Joy.GetCalibrationStep();
-	if (Step < 0)
+	const int32 Target = Joy.GetCalibrationTarget(), Step = Joy.GetCalibrationStep();
+	if (Step >= 0)
 	{
-		AddButton(LeftX, RowY, 0.13 * W, BtnH, TEXT("CALIBRATE THRUST"), EA320Command::JoyCalStart, false);
-		const ThrottleCal& Cal = Joy.GetConfig().cal[0];
-		const bool bDefault = Cal.idle == ThrottleCal{}.idle && Cal.toga == ThrottleCal{}.toga && Cal.climb == ThrottleCal{}.climb;
-		Text(bDefault ? TEXT("Teaches the game where your throttle's IDLE, CL, FLX/MCT, TOGA and reverse detents are.")
-			: (Cal.hasReverse ? TEXT("Calibrated, with reverse (pull the levers behind IDLE on the ground).") : TEXT("Calibrated, no reverse range.")),
-			LeftX + 0.14 * W, RowY + BtnH / 2.0, Grey, 0, 0);
-	}
-	else
-	{
-		Text(FString::Printf(TEXT("Step %d of 5: put the thrust lever%s in %s, then press SET."), Step + 1, Joy.HasSecondLever() ? TEXT("s") : TEXT(""),
-			UTF8_TO_TCHAR(calStepName(Step))), LeftX, RowY + BtnH / 2.0, Amber, 0, 0);
+		const TCHAR* What = Target == kCalFlaps ? TEXT("flaps lever") : (Target == kCalSpeedbrake ? TEXT("speedbrake lever")
+			: (Joy.HasSecondLever() ? TEXT("thrust levers") : TEXT("thrust lever")));
+		Text(FString::Printf(TEXT("Step %d of %d: put the %s in %s, then press SET."), Step + 1, calStepCount(Target), What,
+			UTF8_TO_TCHAR(calStepLabel(Target, Step))), LeftX, RowY + BtnH / 2.0, Amber, 0, 0);
 		double BX = PX + 0.4 * W;
 		AddButton(BX, RowY, 0.05 * W, BtnH, TEXT("SET"), EA320Command::JoyCalSet, true);
 		BX += 0.055 * W;
-		if (Step == kCalReverse)
+		if (calStepOptional(Target, Step))
 		{
-			AddButton(BX, RowY, 0.09 * W, BtnH, TEXT("NO REVERSE"), EA320Command::JoyCalSkip, false);
+			AddButton(BX, RowY, 0.09 * W, BtnH, Target == kCalSpeedbrake ? TEXT("NO ARM") : TEXT("NO REVERSE"), EA320Command::JoyCalSkip, false);
 			BX += 0.095 * W;
 		}
 		AddButton(BX, RowY, 0.06 * W, BtnH, TEXT("CANCEL"), EA320Command::JoyCalCancel, false);
+	}
+	else
+	{
+		Text(TEXT("CAL teaches the game where your levers' detents are (thrust: IDLE CL FLX TOGA REV; flaps: 0-FULL; speedbrake: RET FULL ARM)."),
+			LeftX, RowY + BtnH / 2.0, Grey, 0, 0);
 	}
 	RowY += BtnH + 0.006 * H;
 	if (!Joy.GetMessage().IsEmpty())
@@ -1477,38 +1540,9 @@ void AA320Hud::DrawJoystickPanel(const AA320PlayerController& Controller)
 		Text(Joy.GetMessage(), LeftX, RowY + LineH / 2.0, Amber, 0, 0);
 	}
 	RowY += LineH;
-
-	// Buttons currently pressed and what they do, for editing the mapping.
-	for (const int32 Device : {StickDevice, ThrottleDevice})
-	{
-		if (Device < 0)
-		{
-			continue;
-		}
-		const bool bThrottle = Device == ThrottleDevice;
-		FString Pressed, Mapping;
-		for (int32 Btn = 0; Btn < kButtons; ++Btn)
-		{
-			const FString Cmd = Joy.ButtonCommand(Device, Btn);
-			if (Joy.IsButtonDown(Device, Btn))
-			{
-				Pressed += FString::Printf(TEXT("%d%s  "), Btn + 1, Cmd.IsEmpty() ? TEXT("") : *FString::Printf(TEXT(" (%s)"), *Cmd));
-			}
-			if (!Cmd.IsEmpty() && Mapping.Len() < 110)
-			{
-				Mapping += FString::Printf(TEXT("%d=%s  "), Btn + 1, *Cmd);
-			}
-		}
-		Text(FString::Printf(TEXT("%s buttons pressed: %s"), bThrottle ? TEXT("Throttle") : TEXT("Stick"), Pressed.IsEmpty() ? TEXT("-") : *Pressed),
-			LeftX, RowY, White, 0, 0);
-		RowY += LineH;
-		Text(FString::Printf(TEXT("  %s: %s"), bThrottle ? TEXT("throttleButtonN") : TEXT("buttonN"), Mapping.IsEmpty() ? TEXT("(none)") : *Mapping),
-			LeftX, RowY, Grey, 0, 0);
-		RowY += LineH;
-	}
-	Text(FString::Printf(TEXT("Hat switch looks around. Settings: %s (edit it to map buttons)."), *Joy.GetConfigPath()), LeftX, RowY, Grey, 0, 0);
+	Text(TEXT("Buttons, switches and FCU/EFIS knobs: BUTTONS page. Hat switch looks around."), LeftX, RowY + LineH / 2.0, Grey, 0, 0);
 	Text(TEXT("Pitch: pull back = +. Thrust: forward = +1 (TOGA). Use INV if a bar moves the wrong way."),
-		LeftX, PY + PH - 0.022 * H, FLinearColor(0.8f, 0.85f, 0.9f), 0, 0);
+		LeftX, PY + PH - 0.02 * H, FLinearColor(0.8f, 0.85f, 0.9f), 0, 0);
 }
 
 void AA320Hud::DrawLoadingStatus(const AA320Aircraft* Aircraft)

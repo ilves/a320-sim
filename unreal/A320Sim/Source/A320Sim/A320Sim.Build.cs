@@ -11,7 +11,8 @@ public class A320Sim : ModuleRules
 		PrivateDependencyModuleNames.AddRange(new string[] { "RenderCore", "A320Core" });
 		if (Target.Platform == UnrealTargetPlatform.Win64)
 		{
-			PublicSystemLibraries.Add("winmm.lib");  // joyGetPosEx: USB joysticks, throttles, pedals
+			// DirectInput: USB joysticks, throttle quadrants, pedals and FCU panels (128 buttons each).
+			PublicSystemLibraries.AddRange(new string[] { "dinput8.lib", "dxguid.lib" });
 		}
 	}
 }

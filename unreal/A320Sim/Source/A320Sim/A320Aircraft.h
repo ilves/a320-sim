@@ -47,6 +47,8 @@ public:
 	// Thrust levers from a hardware throttle (0..1; with reverse the reverse amount). Without
 	// bSplit engine 2 follows lever 1; keyboard, mouse and commands move both together again.
 	void SetThrustLevers(double Lever1, bool bReverse1, double Lever2, bool bReverse2, bool bSplit);
+	void SetSwitch(EA320Switch Switch, int32 Value);
+	void SetSpeedbrake(double Amount);  // 0..1, from a hardware lever
 	void AddLook(double YawDeg, double PitchDeg);
 	void ResetLook();
 

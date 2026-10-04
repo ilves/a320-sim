@@ -134,24 +134,36 @@ Other scripts:
 Every action is also on the cockpit panels, where you click switches and drag levers. The
 simulator functions (pause, views, scenarios, sound) are in the bar at the top right.
 
-**USB joystick, throttle and rudder pedals.** Any Windows game controller works: the sim
-reads it through the Windows joystick API, so it needs no drivers or plugins. Plug it in
-before or while the sim runs; it's picked up within 5 seconds.
+**USB joystick, throttle, rudder pedals and cockpit panels.** Any Windows game controller
+works: the sim reads it through DirectInput (up to 8 axes and 128 buttons per device), so it
+needs no drivers or plugins. Plug it in before or while the sim runs; it's picked up within
+5 seconds.
 - **Defaults:**
   - stick X/Y for roll and pitch, twist (R) for rudder, and the slider (Z) for the thrust
     levers, which snap into the TOGA, FLX/MCT, CL and IDLE detents;
   - trigger for autopilot disconnect, button 2 for brakes, 3/4 for flaps up/down, 5 for
     gear and 6 for reverse;
   - the hat switch looks around.
-- **Setup panel:** open it with **F2** or **JOYSTICK** in the top bar. It shows each axis
-  live.
-  - Click **LEARN** next to a function, then move the axis you want for it.
+- **Setup panel, AXES page:** open it with **F2** or **JOYSTICK** in the top bar. It shows each
+  axis live.
+  - Click **LEARN** next to a function, then move the axis you want for it. The functions are
+    PITCH, ROLL, RUDDER, THRUST 1 and 2, FLAPS, SPEEDBRAKE and the toe brakes.
   - Use **INV** if an axis moves the wrong way.
-  - Rudder pedals with toe brakes work too: learn RUDDER, BRAKE L and BRAKE R on the pedals'
-    axes.
-- **Settings file:** `unreal\A320Sim\Saved\A320Joystick.ini`. Edit `buttonN=` lines to remap
-  buttons. Available commands: `AP_DISCONNECT`, `BRAKES`, `FLAPS_UP`, `FLAPS_DOWN`, `GEAR`,
-  `REVERSE`, `SPEEDBRAKE`, `VIEW`, `PAUSE`, `TOGA`, `IDLE`, `AP1`, `AP2`, `ATHR`.
+  - **CAL** next to THRUST 1, FLAPS and SPEEDBRAKE teaches the sim where your lever's detents
+    are (see below).
+- **Setup panel, BUTTONS page:** every cockpit command a button, switch position or knob
+  click can drive. Click **SET** next to one, then press the button, flip the switch or turn
+  the knob one click. **X** clears it. Each knob click counts, even fast ones, so FCU
+  encoders step one by one.
+  - Switches are on while held: ENG 1/2 MASTER, ENG MODE CRANK and IGN/START (released =
+    NORM), PARKING BRAKE, SPOILERS ARM, ALT 100/1000.
+  - Selector positions set on press: ND mode ARC/NAV/LS, ND range 10…320, gear UP/DOWN,
+    autobrake OFF/LO/MED/MAX.
+  - Knobs and buttons act once per click: AP1, AP2, A/THR, LOC, APPR, SPD/HDG/ALT/V/S +/−,
+    HDG/ALT/V/S pull, V/S push (level off), LS, ND range +/−, the A/THR instinctive disconnect
+    and more.
+- **Settings file:** `unreal\A320Sim\Saved\A320Joystick.ini` (`bind=` lines). Older
+  `buttonN=` / `throttleButtonN=` lines still work.
 
 **USB throttle quadrant** (e.g. Thrustmaster TCA Quadrant Airbus Edition, Saitek/Logitech
 Throttle Quadrant, or any separate throttle):
@@ -159,7 +171,7 @@ Throttle Quadrant, or any separate throttle):
   quadrant, it binds **THRUST 1** to it. On a two-lever quadrant it also binds **THRUST 2**,
   so each lever drives its own engine. Stick functions that were on it move to your stick.
   Devices are remembered by name, so plugging them in a different order doesn't matter.
-- **Calibrate the detents:** open the setup panel (**F2**), press **CALIBRATE THRUST** and
+- **Calibrate the detents:** open the setup panel (**F2**), press **CAL** next to THRUST 1 and
   follow the steps. Put the levers in IDLE, CL, FLX/MCT and TOGA, pressing **SET** each
   time, then in full reverse (or press **NO REVERSE** if your throttle has no reverse range).
   - After that the levers click into the sim's detents exactly where your hardware's are.
@@ -169,12 +181,33 @@ Throttle Quadrant, or any separate throttle):
 - **Two levers:** the pedestal and E/WD show both levers. A/THR works below each engine's own
   lever, so a retarded lever keeps its engine back. With one lever, or THRUST 2 unbound, it
   moves both.
-- **Quadrant buttons:** the setup panel shows the numbers of the throttle's buttons as you
-  press them. Map them with `throttleButtonN=` lines in the settings file (`buttonN=` is for
-  the stick). Besides the commands above there are:
-  - `ATHR_DISCONNECT`, the instinctive disconnect on the levers;
-  - switches that are on while held: `ENG1_MASTER`, `ENG2_MASTER`, and `ENG_MODE_CRANK` /
-    `ENG_MODE_IGN` (released = NORM).
+- **Quadrant buttons:** assign them on the BUTTONS page: the A/THR disconnect buttons on the
+  levers, the ENG 1/2 MASTER switches and the ENG MODE selector.
+
+**Quadrant add-on (flaps, speedbrake, gear, autobrake, parking brake),** e.g. the Thrustmaster
+TCA Quadrant Add-On Airbus Edition:
+1. On the AXES page, **LEARN** FLAPS and move the flaps lever, then **LEARN** SPEEDBRAKE and
+   move the speedbrake lever.
+2. Press **CAL** next to FLAPS and set the lever in 0, 1, 2, 3 and FULL.
+3. Press **CAL** next to SPEEDBRAKE and set it in RET, FULL and ARM (or **NO ARM** if your lever
+   has no ARM position: then assign SPOILERS ARM to its button).
+4. On the BUTTONS page, assign:
+   - the gear lever to GEAR UP / GEAR DOWN;
+   - each autobrake knob position to AUTOBRAKE OFF/LO/MED/MAX;
+   - the parking brake switch to PARKING BRAKE.
+
+The levers then move the sim's flaps and speedbrake levers with them. Rudder trim is not
+simulated yet.
+
+**FCU and EFIS panels** (e.g. WingFlex A320 FCU, Winwing FCU): their buttons and knobs are game
+controller buttons, so assign them on the BUTTONS page. That covers AP1, AP2, A/THR, LOC,
+APPR, the SPD/HDG/ALT/V/S knobs (turn, pull, V/S push) and the ALT 100/1000 switch. On the
+EFIS it covers LS, the ND mode and range selectors.
+- The panel's own displays and lights are driven by its maker's software (WingFlex Bridge,
+  SimAppPro) from MSFS or X-Plane, so they don't show this sim's values. The FCU strip on
+  screen shows them.
+- Leave the bridge software running if it needs to be: the sim reads the panel without
+  taking it over.
 
 **Cold and dark start (Shift + F5).**
 1. Press **O** to open the overhead panel. Press APU **MASTER SW**, then **START**.
@@ -301,7 +334,9 @@ The flight tests fly the real JSBSim A320 with a scripted pilot:
 - the audio engine: WAV loading, engine level following thrust, pause, callouts, and the
   master warning and its acknowledgment;
 - joystick mapping: axis scaling, deadzone, throttle detents, learn mode and the settings
-  file;
+  file (including older files);
+- flaps and speedbrake levers: detent calibration (a backwards lever, the ARM position), and
+  the button assignments and command list;
 - throttle quadrants: detent calibration (including a backwards axis and reverse), devices
   kept by name, and automatic quadrant set-up;
 - cockpit systems: a cold-and-dark start (APU, starter, light-off, crossbleed, shutdown),

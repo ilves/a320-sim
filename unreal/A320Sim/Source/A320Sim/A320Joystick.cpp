@@ -6,34 +6,69 @@
 #if PLATFORM_WINDOWS
 #include "Windows/WindowsHWrapper.h"
 #include "Windows/AllowWindowsPlatformTypes.h"
-#include <mmsystem.h>
-#include "Windows/HideWindowsPlatformTypes.h"
+#ifndef DIRECTINPUT_VERSION
+#define DIRECTINPUT_VERSION 0x0800
 #endif
+#include <dinput.h>
+#endif
+
+using namespace a320::joy;
 
 namespace
 {
 #if PLATFORM_WINDOWS
-	// The product name Windows shows in "Game Controllers": JOYCAPS only has a generic driver
-	// name, the real one is stored per VID/PID in the registry.
-	FString OemName(WORD Mid, WORD Pid)
+	IDirectInput8W* AsApi(void* P) { return static_cast<IDirectInput8W*>(P); }
+	IDirectInputDevice8W* AsDevice(void* P) { return static_cast<IDirectInputDevice8W*>(P); }
+
+	BOOL CALLBACK OnEnumDevice(LPCDIDEVICEINSTANCEW Instance, LPVOID Context)
 	{
-		const FString Key = FString::Printf(
-			TEXT("System\\CurrentControlSet\\Control\\MediaProperties\\PrivateProperties\\Joystick\\OEM\\VID_%04X&PID_%04X"), Mid, Pid);
-		for (HKEY Root : {HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE})
+		static_cast<TArray<DIDEVICEINSTANCEW>*>(Context)->Add(*Instance);
+		return DIENUM_CONTINUE;
+	}
+
+	// Which of our 8 axes (X Y Z RZ RX RY SL0 SL1) the device has.
+	struct FAxisPresence
+	{
+		bool Has[kAxes] = {};
+		int32 Sliders = 0;
+	};
+
+	BOOL CALLBACK OnEnumAxis(LPCDIDEVICEOBJECTINSTANCEW Object, LPVOID Context)
+	{
+		FAxisPresence* P = static_cast<FAxisPresence*>(Context);
+		const GUID& G = Object->guidType;
+		if (G == GUID_XAxis) P->Has[0] = true;
+		else if (G == GUID_YAxis) P->Has[1] = true;
+		else if (G == GUID_ZAxis) P->Has[2] = true;
+		else if (G == GUID_RzAxis) P->Has[3] = true;
+		else if (G == GUID_RxAxis) P->Has[4] = true;
+		else if (G == GUID_RyAxis) P->Has[5] = true;
+		else if (G == GUID_Slider)
 		{
-			WCHAR Buffer[256] = {};
-			DWORD Size = sizeof(Buffer);
-			if (RegGetValueW(Root, *Key, L"OEMName", RRF_RT_REG_SZ, nullptr, Buffer, &Size) == ERROR_SUCCESS)
+			if (P->Sliders < 2)
 			{
-				return FString(Buffer);
+				P->Has[6 + P->Sliders] = true;
 			}
+			++P->Sliders;
 		}
-		return FString();
+		return DIENUM_CONTINUE;
+	}
+#endif
+
+	uint8 AddCount(uint8 Count) { return Count < 255 ? static_cast<uint8>(Count + 1) : Count; }
+}
+
+FA320Joystick::~FA320Joystick()
+{
+	ReleaseDevices();
+#if PLATFORM_WINDOWS
+	if (DirectInput)
+	{
+		AsApi(DirectInput)->Release();
+		DirectInput = nullptr;
 	}
 #endif
 }
-
-using namespace a320::joy;
 
 void FA320Joystick::Init(const FString& InConfigPath)
 {
@@ -55,58 +90,99 @@ void FA320Joystick::Save() const
 	FFileHelper::SaveStringToFile(UTF8_TO_TCHAR(toText(JoyConfig).c_str()), *ConfigPath);
 }
 
+void FA320Joystick::ReleaseDevices()
+{
+#if PLATFORM_WINDOWS
+	for (FA320JoystickDevice& Device : Devices)
+	{
+		if (Device.Handle)
+		{
+			AsDevice(Device.Handle)->Unacquire();
+			AsDevice(Device.Handle)->Release();
+			Device.Handle = nullptr;
+		}
+	}
+#endif
+	Devices.Reset();
+}
+
 void FA320Joystick::Rescan()
 {
-	Devices.Reset();
+	ReleaseDevices();
 #if PLATFORM_WINDOWS
-	for (UINT Id = 0; Id < 16; ++Id)
+	if (!DirectInput)
 	{
-		JOYINFOEX Info = {};
-		Info.dwSize = sizeof(Info);
-		Info.dwFlags = JOY_RETURNALL;
-		if (joyGetPosEx(Id, &Info) != JOYERR_NOERROR)
+		IDirectInput8W* Created = nullptr;
+		if (SUCCEEDED(DirectInput8Create(GetModuleHandleW(nullptr), DIRECTINPUT_VERSION, IID_IDirectInput8W,
+				reinterpret_cast<void**>(&Created), nullptr)))
 		{
-			continue;
+			DirectInput = Created;
 		}
-		JOYCAPSW Caps = {};
-		if (joyGetDevCapsW(Id, &Caps, sizeof(Caps)) != JOYERR_NOERROR)
+		else
 		{
-			continue;
+			UE_LOG(LogA320, Warning, TEXT("DirectInput is not available: no joysticks"));
 		}
-		FA320JoystickDevice Device;
-		Device.SystemId = static_cast<int32>(Id);
-		const FString Oem = OemName(Caps.wMid, Caps.wPid);
-		Device.Name = Oem.IsEmpty() ? FString(Caps.szPname) : Oem;
-		// Xbox/XInput pads are already Unreal gamepads; reading them here too would double them.
-		constexpr WORD MicrosoftVid = 0x045E;
-		if (Device.Name.Contains(TEXT("xbox")) || Device.Name.Contains(TEXT("xinput")) ||
-			(Caps.wMid == MicrosoftVid && Device.Name.Contains(TEXT("controller"))))
+	}
+	if (DirectInput)
+	{
+		TArray<DIDEVICEINSTANCEW> Found;
+		AsApi(DirectInput)->EnumDevices(DI8DEVCLASS_GAMECTRL, OnEnumDevice, &Found, DIEDFL_ATTACHEDONLY);
+		for (const DIDEVICEINSTANCEW& Instance : Found)
 		{
-			UE_LOG(LogA320, Log, TEXT("Skipping %s: used as a gamepad"), *Device.Name);
-			continue;
+			FA320JoystickDevice Device;
+			Device.Name = FString(Instance.tszProductName).TrimStartAndEnd();
+			// Xbox/XInput pads are already Unreal gamepads; reading them here too would double them.
+			if (Device.Name.Contains(TEXT("xbox")) || Device.Name.Contains(TEXT("xinput")))
+			{
+				UE_LOG(LogA320, Log, TEXT("Skipping %s: used as a gamepad"), *Device.Name);
+				continue;
+			}
+			IDirectInputDevice8W* Handle = nullptr;
+			if (FAILED(AsApi(DirectInput)->CreateDevice(Instance.guidInstance, &Handle, nullptr)) || !Handle)
+			{
+				continue;
+			}
+			Handle->SetDataFormat(&c_dfDIJoystick2);
+			// Background and non-exclusive: read it even when another window has the focus, and
+			// share it with other programs (e.g. a panel's own bridge software).
+			if (FAILED(Handle->SetCooperativeLevel(nullptr, DISCL_BACKGROUND | DISCL_NONEXCLUSIVE)))
+			{
+				Handle->SetCooperativeLevel(GetActiveWindow(), DISCL_BACKGROUND | DISCL_NONEXCLUSIVE);
+			}
+			DIPROPRANGE Range = {};
+			Range.diph.dwSize = sizeof(DIPROPRANGE);
+			Range.diph.dwHeaderSize = sizeof(DIPROPHEADER);
+			Range.diph.dwHow = DIPH_DEVICE;
+			Range.lMin = 0;
+			Range.lMax = 65535;
+			Handle->SetProperty(DIPROP_RANGE, &Range.diph);
+			DIPROPDWORD BufferSize = {};
+			BufferSize.diph.dwSize = sizeof(DIPROPDWORD);
+			BufferSize.diph.dwHeaderSize = sizeof(DIPROPHEADER);
+			BufferSize.diph.dwHow = DIPH_DEVICE;
+			BufferSize.dwData = 256;
+			Handle->SetProperty(DIPROP_BUFFERSIZE, &BufferSize.diph);
+			FAxisPresence Presence;
+			Handle->EnumObjects(OnEnumAxis, &Presence, DIDFT_AXIS);
+			DIDEVCAPS Caps = {};
+			Caps.dwSize = sizeof(DIDEVCAPS);
+			Handle->GetCapabilities(&Caps);
+			Device.NumAxes = static_cast<int32>(Caps.dwAxes);
+			Device.NumButtons = FMath::Min(static_cast<int32>(Caps.dwButtons), kButtons);
+			Device.bHasPov = Caps.dwPOVs > 0;
+			for (int32 A = 0; A < kAxes; ++A)
+			{
+				Device.HasAxis[A] = Presence.Has[A];
+			}
+			Handle->Acquire();
+			Device.Handle = Handle;
+			UE_LOG(LogA320, Log, TEXT("Joystick %d: %s (%d axes, %d buttons)"), Devices.Num(), *Device.Name, Device.NumAxes, Device.NumButtons);
+			Devices.Add(Device);
 		}
-		Device.NumAxes = static_cast<int32>(Caps.wNumAxes);
-		Device.NumButtons = static_cast<int32>(Caps.wNumButtons);
-		const UINT Mins[kAxes] = {Caps.wXmin, Caps.wYmin, Caps.wZmin, Caps.wRmin, Caps.wUmin, Caps.wVmin};
-		const UINT Maxs[kAxes] = {Caps.wXmax, Caps.wYmax, Caps.wZmax, Caps.wRmax, Caps.wUmax, Caps.wVmax};
-		const bool Present[kAxes] = {true, true, (Caps.wCaps & JOYCAPS_HASZ) != 0, (Caps.wCaps & JOYCAPS_HASR) != 0,
-			(Caps.wCaps & JOYCAPS_HASU) != 0, (Caps.wCaps & JOYCAPS_HASV) != 0};
-		for (int32 A = 0; A < kAxes; ++A)
-		{
-			Device.AxisMin[A] = Mins[A];
-			Device.AxisMax[A] = Maxs[A];
-			Device.HasAxis[A] = Present[A];
-		}
-		Device.bHasPov = (Caps.wCaps & JOYCAPS_HASPOV) != 0;
-		UE_LOG(LogA320, Log, TEXT("Joystick %d: %s (%d axes, %d buttons)"), Devices.Num(), *Device.Name, Device.NumAxes, Device.NumButtons);
-		Devices.Add(Device);
 	}
 #endif
 	Axes.assign(static_cast<size_t>(Devices.Num()), AxisValues{});
-	ButtonsNow.Init(0, Devices.Num());
-	ButtonsBefore.Init(0, Devices.Num());
-	LastThrottle[0] = LastThrottle[1] = 2.0;
-	bFirstPoll = true;
+	bHaveLastValues = false;
 
 	std::vector<std::string> Names;
 	std::vector<std::array<bool, kAxes>> HasAxes;
@@ -124,7 +200,7 @@ void FA320Joystick::Rescan()
 	if (autoAssignThrottle(JoyConfig, Names, HasAxes))
 	{
 		const int32 Quadrant = JoyConfig.bind[kThrottle].device;
-		Message = FString::Printf(TEXT("Throttle found: %s. Press CALIBRATE THRUST to teach it the detents."),
+		Message = FString::Printf(TEXT("Throttle found: %s. Press CAL next to THRUST 1 to teach it the detents."),
 			Devices.IsValidIndex(Quadrant) ? *Devices[Quadrant].Name : TEXT("?"));
 		UE_LOG(LogA320, Log, TEXT("%s"), *Message);
 		Save();
@@ -137,52 +213,116 @@ void FA320Joystick::Rescan()
 
 void FA320Joystick::Poll(float DeltaSeconds)
 {
+	bSuppressButtons = false;
 	if (Devices.Num() == 0)
 	{
-		// Plugged in later? Scanning all ids is slow-ish, so only every few seconds.
+		// Plugged in later? Scanning is slow-ish, so only every few seconds.
 		RescanTimer -= DeltaSeconds;
 		if (RescanTimer <= 0.0f)
 		{
 			RescanTimer = 5.0f;
 			Rescan();
 		}
-		bThrottleMoved = false;
+		for (bool& M : Moved)
+		{
+			M = false;
+		}
 		return;
 	}
-	ButtonsBefore = ButtonsNow;
 	Pov = -1;
 	const int32 StickDevice = GetStickDevice();
-#if PLATFORM_WINDOWS
+	bool bLost = false;
 	for (int32 D = 0; D < Devices.Num(); ++D)
 	{
-		JOYINFOEX Info = {};
-		Info.dwSize = sizeof(Info);
-		Info.dwFlags = JOY_RETURNALL | JOY_RETURNPOVCTS;
-		if (joyGetPosEx(static_cast<UINT>(Devices[D].SystemId), &Info) != JOYERR_NOERROR)
+		FA320JoystickDevice& Device = Devices[D];
+		FMemory::Memcpy(Device.WasDown, Device.Down, sizeof(Device.Down));
+		FMemory::Memzero(Device.Presses, sizeof(Device.Presses));
+		FMemory::Memzero(Device.Releases, sizeof(Device.Releases));
+#if PLATFORM_WINDOWS
+		IDirectInputDevice8W* Handle = AsDevice(Device.Handle);
+		if (!Handle)
 		{
-			Rescan();  // unplugged
-			return;
+			continue;
 		}
-		const DWORD Raw[kAxes] = {Info.dwXpos, Info.dwYpos, Info.dwZpos, Info.dwRpos, Info.dwUpos, Info.dwVpos};
+		Handle->Poll();
+		DIJOYSTATE2 Js = {};
+		if (FAILED(Handle->GetDeviceState(sizeof(DIJOYSTATE2), &Js)))
+		{
+			// Focus changes and USB hiccups lose the device for a moment; unplugged stays lost.
+			Handle->Acquire();
+			if (++Device.FailedPolls > 120)
+			{
+				bLost = true;
+			}
+			continue;
+		}
+		Device.FailedPolls = 0;
+		const LONG Raw[kAxes] = {Js.lX, Js.lY, Js.lZ, Js.lRz, Js.lRx, Js.lRy, Js.rglSlider[0], Js.rglSlider[1]};
 		for (int32 A = 0; A < kAxes; ++A)
 		{
 			Axes[static_cast<size_t>(D)][static_cast<size_t>(A)] =
-				Devices[D].HasAxis[A] ? normalize(Raw[A], Devices[D].AxisMin[A], Devices[D].AxisMax[A]) : 0.0;
+				Device.HasAxis[A] ? normalize(static_cast<uint32_t>(FMath::Clamp<LONG>(Raw[A], 0, 65535)), 0, 65535) : 0.0;
 		}
-		ButtonsNow[D] = static_cast<uint32>(Info.dwButtons);
+		for (int32 B = 0; B < kButtons; ++B)
+		{
+			Device.Down[B] = (Js.rgbButtons[B] & 0x80) != 0 ? 1 : 0;
+		}
 		if (D == StickDevice)
 		{
-			// Hundredths of a degree; anything outside 0..35999 (e.g. 65535) means centred.
-			Pov = Devices[D].bHasPov && Info.dwPOV <= 35999 ? static_cast<int32>(Info.dwPOV) : -1;
+			// Hundredths of a degree; the low word 0xFFFF means centred.
+			Pov = Device.bHasPov && LOWORD(Js.rgdwPOV[0]) != 0xFFFF ? static_cast<int32>(Js.rgdwPOV[0]) : -1;
+		}
+		DIDEVICEOBJECTDATA Events[64];
+		for (;;)
+		{
+			DWORD Count = UE_ARRAY_COUNT(Events);
+			if (FAILED(Handle->GetDeviceData(sizeof(DIDEVICEOBJECTDATA), Events, &Count, 0)) || Count == 0)
+			{
+				break;
+			}
+			for (DWORD i = 0; i < Count; ++i)
+			{
+				const DWORD Offset = Events[i].dwOfs;
+				if (Offset >= DIJOFS_BUTTON0 && Offset < DIJOFS_BUTTON0 + kButtons)
+				{
+					const int32 B = static_cast<int32>(Offset - DIJOFS_BUTTON0);
+					if (Events[i].dwData & 0x80)
+					{
+						Device.Presses[B] = AddCount(Device.Presses[B]);
+					}
+					else
+					{
+						Device.Releases[B] = AddCount(Device.Releases[B]);
+					}
+				}
+			}
+			if (Count < UE_ARRAY_COUNT(Events))
+			{
+				break;
+			}
+		}
+#endif
+		// Devices without an event buffer: changes from the state alone.
+		for (int32 B = 0; B < kButtons; ++B)
+		{
+			if (Device.Down[B] && !Device.WasDown[B] && Device.Presses[B] == 0)
+			{
+				Device.Presses[B] = 1;
+			}
+			if (!Device.Down[B] && Device.WasDown[B] && Device.Releases[B] == 0)
+			{
+				Device.Releases[B] = 1;
+			}
+			if (Device.Presses[B] > 0)
+			{
+				LastPressed = FString::Printf(TEXT("%s: button %d"), *Device.Name, B + 1);
+			}
 		}
 	}
-#endif
-
-	if (bFirstPoll)
+	if (bLost)
 	{
-		// Buttons and switches already held when a device appears are not new presses.
-		ButtonsBefore = ButtonsNow;
-		bFirstPoll = false;
+		Rescan();  // unplugged
+		return;
 	}
 
 	if (Learning >= 0)
@@ -198,34 +338,60 @@ void FA320Joystick::Poll(float DeltaSeconds)
 		}
 	}
 
-	// The first reading only sets the reference, so the levers' resting position does not
-	// override the scenario's thrust at start-up.
-	bThrottleMoved = false;
-	const Function Levers[2] = {kThrottle, kThrottle2};
-	for (int32 L = 0; L < 2; ++L)
+	if (ButtonLearning >= 0)
 	{
-		if (!IsBound(Levers[L]))
+		for (int32 D = 0; D < Devices.Num() && ButtonLearning >= 0; ++D)
+		{
+			for (int32 B = 0; B < kButtons; ++B)
+			{
+				if (Devices[D].Presses[B] > 0)
+				{
+					const CommandInfo& Info = commandCatalog()[static_cast<size_t>(ButtonLearning)];
+					setBind(JoyConfig, TCHAR_TO_UTF8(*Devices[D].Name), B, Info.name);
+					Message = FString::Printf(TEXT("%s = %s button %d"), UTF8_TO_TCHAR(Info.label), *Devices[D].Name, B + 1);
+					ButtonLearning = -1;
+					bSuppressButtons = true;  // the press that assigned it does not also act
+					Save();
+					break;
+				}
+			}
+		}
+	}
+
+	// Levers: the first reading only sets the reference, so their resting position does not
+	// override the scenario at start-up. Calibrating moves them through every detent.
+	for (int32 F = 0; F < kFunctionCount; ++F)
+	{
+		Moved[F] = false;
+		if (!IsBound(static_cast<Function>(F)))
 		{
 			continue;
 		}
-		const double Throttle = axisValue(JoyConfig.bind[Levers[L]], Axes);
-		const bool bMoved = LastThrottle[L] <= 1.5 && FMath::Abs(Throttle - LastThrottle[L]) > 0.01;
-		if (LastThrottle[L] > 1.5 || bMoved)
+		const double V = axisValue(JoyConfig.bind[F], Axes);
+		const double Threshold = F == kFlaps ? 0.03 : 0.01;
+		if (!bHaveLastValues || FMath::Abs(V - LastValue[F]) > Threshold)
 		{
-			LastThrottle[L] = Throttle;
+			Moved[F] = bHaveLastValues && CalStep < 0;
+			LastValue[F] = V;
 		}
-		bThrottleMoved = bThrottleMoved || bMoved;
 	}
-	if (CalStep >= 0)
-	{
-		bThrottleMoved = false;  // the levers travel through every detent while calibrating
-	}
+	bHaveLastValues = true;
 }
 
 LeverPosition FA320Joystick::Lever(int32 Index) const
 {
 	const int32 L = Index == 1 && HasSecondLever() ? 1 : 0;
 	return throttleFromAxis(Value(L == 1 ? kThrottle2 : kThrottle), JoyConfig.cal[L]);
+}
+
+int32 FA320Joystick::FlapsLever() const
+{
+	return flapsFromAxis(Value(kFlaps), JoyConfig.flapsCal);
+}
+
+SpeedbrakePosition FA320Joystick::Speedbrake() const
+{
+	return speedbrakeFromAxis(Value(kSpeedbrake), JoyConfig.speedbrakeCal);
 }
 
 int32 FA320Joystick::GetStickDevice() const
@@ -251,6 +417,27 @@ int32 FA320Joystick::GetThrottleDevice() const
 	return D != GetStickDevice() ? D : -1;
 }
 
+int32 FA320Joystick::BindDevice(const ButtonBind& Bind) const
+{
+	if (Bind.device == "@stick")
+	{
+		return GetStickDevice();
+	}
+	if (Bind.device == "@throttle")
+	{
+		return GetThrottleDevice();
+	}
+	const FString Name = UTF8_TO_TCHAR(Bind.device.c_str());
+	for (int32 D = 0; D < Devices.Num(); ++D)
+	{
+		if (Devices[D].Name == Name)
+		{
+			return D;
+		}
+	}
+	return -1;
+}
+
 bool FA320Joystick::IsBound(Function F) const
 {
 	const Binding& B = JoyConfig.bind[F];
@@ -269,31 +456,32 @@ double FA320Joystick::Value(Function F) const
 
 bool FA320Joystick::IsButtonDown(int32 Device, int32 Button) const
 {
-	return ButtonsNow.IsValidIndex(Device) && Button >= 0 && Button < kButtons && (ButtonsNow[Device] & (1u << Button)) != 0;
+	return Devices.IsValidIndex(Device) && Button >= 0 && Button < kButtons && Devices[Device].Down[Button] != 0;
 }
 
-bool FA320Joystick::WasButtonPressed(int32 Device, int32 Button) const
+int32 FA320Joystick::ButtonPresses(int32 Device, int32 Button) const
 {
-	return IsButtonDown(Device, Button) && ButtonsBefore.IsValidIndex(Device) && (ButtonsBefore[Device] & (1u << Button)) == 0;
+	return Devices.IsValidIndex(Device) && Button >= 0 && Button < kButtons ? Devices[Device].Presses[Button] : 0;
 }
 
 bool FA320Joystick::WasButtonReleased(int32 Device, int32 Button) const
 {
-	return !IsButtonDown(Device, Button) && ButtonsBefore.IsValidIndex(Device) && Button >= 0 && Button < kButtons &&
-		(ButtonsBefore[Device] & (1u << Button)) != 0;
+	return Devices.IsValidIndex(Device) && Button >= 0 && Button < kButtons && Devices[Device].Releases[Button] > 0;
 }
 
-FString FA320Joystick::ButtonCommand(int32 Device, int32 Button) const
+FString FA320Joystick::BindText(const char* Command) const
 {
-	if (Button < 0 || Button >= kButtons || Device < 0)
+	FString Text;
+	for (const ButtonBind& B : JoyConfig.binds)
 	{
-		return FString();
+		if (B.command != Command)
+		{
+			continue;
+		}
+		const FString Device = B.device == "@stick" ? FString(TEXT("stick")) : (B.device == "@throttle" ? FString(TEXT("throttle")) : FString(UTF8_TO_TCHAR(B.device.c_str())));
+		Text += FString::Printf(TEXT("%s%s #%d"), Text.IsEmpty() ? TEXT("") : TEXT(", "), *Device.Left(14), B.button + 1);
 	}
-	if (Device == GetStickDevice())
-	{
-		return FString(UTF8_TO_TCHAR(JoyConfig.buttons[Button].c_str()));
-	}
-	return Device == GetThrottleDevice() ? FString(UTF8_TO_TCHAR(JoyConfig.throttleButtons[Button].c_str())) : FString();
+	return Text;
 }
 
 void FA320Joystick::SetBindingDevice(Binding& B, int32 Device) const
@@ -305,19 +493,51 @@ void FA320Joystick::SetBindingDevice(Binding& B, int32 Device) const
 void FA320Joystick::ResetLeverCalibration(int32 F)
 {
 	// Detents are recorded per axis and direction, so a new axis or invert starts linear again.
-	const int32 L = F == kThrottle ? 0 : (F == kThrottle2 ? 1 : -1);
-	if (L >= 0)
+	if (F == kThrottle || F == kThrottle2)
 	{
-		JoyConfig.cal[L] = ThrottleCal{};
-		Message = TEXT("Thrust lever changed: press CALIBRATE THRUST to teach it the detents.");
+		JoyConfig.cal[F == kThrottle ? 0 : 1] = ThrottleCal{};
 	}
+	else if (F == kFlaps)
+	{
+		JoyConfig.flapsCal = FlapsCal{};
+	}
+	else if (F == kSpeedbrake)
+	{
+		JoyConfig.speedbrakeCal = SpeedbrakeCal{};
+	}
+	else
+	{
+		return;
+	}
+	Message = FString::Printf(TEXT("%s changed: press CAL to teach it the detents."), UTF8_TO_TCHAR(functionName(F)));
 }
 
 void FA320Joystick::StartLearn(int32 F)
 {
 	CalStep = -1;
+	ButtonLearning = -1;
 	Learning = F >= 0 && F < kFunctionCount ? F : -1;
 	LearnBaseline = Axes;
+}
+
+void FA320Joystick::StartButtonLearn(int32 CommandIndex)
+{
+	Learning = -1;
+	ButtonLearning = CommandIndex >= 0 && CommandIndex < static_cast<int32>(commandCatalog().size()) ? CommandIndex : -1;
+	if (ButtonLearning >= 0)
+	{
+		Message = FString::Printf(TEXT("Press the button or move the switch for: %s"),
+			UTF8_TO_TCHAR(commandCatalog()[static_cast<size_t>(ButtonLearning)].label));
+	}
+}
+
+void FA320Joystick::ClearCommand(int32 CommandIndex)
+{
+	if (CommandIndex >= 0 && CommandIndex < static_cast<int32>(commandCatalog().size()))
+	{
+		clearBinds(JoyConfig, commandCatalog()[static_cast<size_t>(CommandIndex)].name);
+		Save();
+	}
 }
 
 void FA320Joystick::CycleAxis(int32 F)
@@ -368,15 +588,18 @@ void FA320Joystick::ToggleInvert(int32 F)
 	}
 }
 
-void FA320Joystick::StartCalibration()
+void FA320Joystick::StartCalibration(int32 Target)
 {
-	if (!IsBound(kThrottle))
+	const Function LeverFunction = Target == kCalFlaps ? kFlaps : (Target == kCalSpeedbrake ? kSpeedbrake : kThrottle);
+	if (!IsBound(LeverFunction))
 	{
-		Message = TEXT("Bind THRUST 1 to your throttle first (LEARN, then move the lever).");
+		Message = FString::Printf(TEXT("Bind %s to your lever first (LEARN, then move it)."), UTF8_TO_TCHAR(functionName(LeverFunction)));
 		return;
 	}
 	Learning = -1;
-	CalStep = kCalIdle;
+	ButtonLearning = -1;
+	CalTarget = Target;
+	CalStep = 0;
 	Message.Reset();
 }
 
@@ -386,9 +609,16 @@ void FA320Joystick::CalibrationSet()
 	{
 		return;
 	}
-	CalRaw[0][CalStep] = axisValue(JoyConfig.bind[kThrottle], Axes);
-	CalRaw[1][CalStep] = HasSecondLever() ? axisValue(JoyConfig.bind[kThrottle2], Axes) : CalRaw[0][CalStep];
-	if (CalStep == kCalReverse)
+	if (CalTarget == kCalThrust)
+	{
+		CalRaw[0][CalStep] = axisValue(JoyConfig.bind[kThrottle], Axes);
+		CalRaw[1][CalStep] = HasSecondLever() ? axisValue(JoyConfig.bind[kThrottle2], Axes) : CalRaw[0][CalStep];
+	}
+	else
+	{
+		CalRaw[0][CalStep] = axisValue(JoyConfig.bind[CalTarget == kCalFlaps ? kFlaps : kSpeedbrake], Axes);
+	}
+	if (CalStep == calStepCount(CalTarget) - 1)
 	{
 		FinishCalibration(true);
 	}
@@ -400,7 +630,7 @@ void FA320Joystick::CalibrationSet()
 
 void FA320Joystick::CalibrationSkip()
 {
-	if (CalStep == kCalReverse)
+	if (CalStep >= 0 && calStepOptional(CalTarget, CalStep))
 	{
 		FinishCalibration(false);
 	}
@@ -409,39 +639,73 @@ void FA320Joystick::CalibrationSkip()
 void FA320Joystick::CancelCalibration()
 {
 	CalStep = -1;
+	CalTarget = -1;
 	Message.Reset();
 }
 
-void FA320Joystick::FinishCalibration(bool bWithReverse)
+void FA320Joystick::FinishCalibration(bool bWithLastStep)
 {
-	const int32 Count = HasSecondLever() ? 2 : 1;
-	ThrottleCal Cal[2];
-	bool bFlip[2] = {false, false};
-	for (int32 L = 0; L < Count; ++L)
+	std::string Error;
+	bool bFlip = false;
+	if (CalTarget == kCalFlaps)
 	{
-		std::string Error;
-		if (!buildCalibration(CalRaw[L], bWithReverse, Cal[L], bFlip[L], Error))
+		FlapsCal Cal;
+		if (!buildFlapsCal(CalRaw[0], Cal, bFlip, Error))
 		{
-			Message = FString::Printf(TEXT("Lever %d: %s"), L + 1, UTF8_TO_TCHAR(Error.c_str()));
-			CalStep = kCalIdle;
+			Message = UTF8_TO_TCHAR(Error.c_str());
+			CalStep = 0;
 			return;
 		}
+		JoyConfig.flapsCal = Cal;
+		JoyConfig.bind[kFlaps].invert = JoyConfig.bind[kFlaps].invert != bFlip;
+		Message = TEXT("Flaps lever calibrated.");
 	}
-	const Function Levers[2] = {kThrottle, kThrottle2};
-	for (int32 L = 0; L < Count; ++L)
+	else if (CalTarget == kCalSpeedbrake)
 	{
-		JoyConfig.cal[L] = Cal[L];
-		if (bFlip[L])
+		SpeedbrakeCal Cal;
+		if (!buildSpeedbrakeCal(CalRaw[0][0], CalRaw[0][1], bWithLastStep, CalRaw[0][2], Cal, bFlip, Error))
 		{
-			JoyConfig.bind[Levers[L]].invert = !JoyConfig.bind[Levers[L]].invert;
+			Message = UTF8_TO_TCHAR(Error.c_str());
+			CalStep = 0;
+			return;
 		}
+		JoyConfig.speedbrakeCal = Cal;
+		JoyConfig.bind[kSpeedbrake].invert = JoyConfig.bind[kSpeedbrake].invert != bFlip;
+		Message = bWithLastStep ? TEXT("Speedbrake lever calibrated, with ARM.") : TEXT("Speedbrake lever calibrated.");
 	}
-	if (Count == 1)
+	else
 	{
-		JoyConfig.cal[1] = Cal[0];
+		const int32 Count = HasSecondLever() ? 2 : 1;
+		ThrottleCal Cal[2];
+		bool bFlips[2] = {false, false};
+		for (int32 L = 0; L < Count; ++L)
+		{
+			if (!buildCalibration(CalRaw[L], bWithLastStep, Cal[L], bFlips[L], Error))
+			{
+				Message = FString::Printf(TEXT("Lever %d: %s"), L + 1, UTF8_TO_TCHAR(Error.c_str()));
+				CalStep = 0;
+				return;
+			}
+		}
+		const Function Levers[2] = {kThrottle, kThrottle2};
+		for (int32 L = 0; L < Count; ++L)
+		{
+			JoyConfig.cal[L] = Cal[L];
+			JoyConfig.bind[Levers[L]].invert = JoyConfig.bind[Levers[L]].invert != bFlips[L];
+		}
+		if (Count == 1)
+		{
+			JoyConfig.cal[1] = Cal[0];
+		}
+		Message = bWithLastStep ? TEXT("Thrust levers calibrated, with reverse.")
+			: TEXT("Thrust levers calibrated (no reverse range: use the REVERSE key or a button).");
 	}
 	CalStep = -1;
-	LastThrottle[0] = LastThrottle[1] = 2.0;
-	Message = bWithReverse ? TEXT("Thrust levers calibrated, with reverse.") : TEXT("Thrust levers calibrated (no reverse range: use the REVERSE key or a button).");
+	CalTarget = -1;
+	bHaveLastValues = false;
 	Save();
 }
+
+#if PLATFORM_WINDOWS
+#include "Windows/HideWindowsPlatformTypes.h"
+#endif
