@@ -933,10 +933,14 @@ void AA320Aircraft::BuildModel()
 {
 	// Rough A320 proportions around the CG (metres; x forward, y right, z up). The gear
 	// touches the ground 2.57 m below the CG, matching the flight model at rest.
+	// Livery in the style of airBaltic's (a white aircraft, the colour on the tail, engines and
+	// wingtips), in the colours of the Estonian flag: blue (#0072CE), black and white.
 	const FLinearColor BodyWhite(0.85f, 0.87f, 0.9f);
 	const FLinearColor BodyGrey(0.35f, 0.37f, 0.4f);
 	const FLinearColor BodyDark(0.05f, 0.05f, 0.06f);
-	const FLinearColor TailBlue(0.05f, 0.15f, 0.45f);
+	const FLinearColor FlagBlue = FLinearColor::FromSRGBColor(FColor(0, 114, 206));
+	const FLinearColor FlagBlack(0.012f, 0.012f, 0.014f);
+	const FLinearColor FlagWhite(0.92f, 0.93f, 0.95f);
 	const FRotator AlongX(90.0, 0.0, 0.0);  // cylinder axis Z -> X
 
 	// The nose section (Root) and the rest (RearRoot) meet where the fuselage breaks in a breakup.
@@ -957,8 +961,17 @@ void AA320Aircraft::BuildModel()
 		// Positive yaw sweeps the right wing aft; negative roll raises the right tip.
 		AddPart(Shapes.Cube, FVector(-1.6, Side * 8.8, -0.5), FRotator(0.0, Side * 25.0, Side * -5.0),
 			FVector(4.2, 15.5, 0.35), BodyGrey, Rest);
-		AddPart(Shapes.Cylinder, FVector(2.2, Side * 5.1, -1.2), AlongX, FVector(2.1, 2.1, 4.2), BodyGrey, Rest);
+		AddPart(Shapes.Cylinder, FVector(2.2, Side * 5.1, -1.2), AlongX, FVector(2.1, 2.1, 4.2), FlagBlue, Rest);  // nacelle
 		AddPart(Shapes.Cylinder, FVector(4.35, Side * 5.1, -1.2), AlongX, FVector(1.8, 1.8, 0.1), BodyDark, Rest);
+		// Sharklet at the wing tip (15.8 m out, swept with the wing), in the tail's blue.
+		AddPart(Shapes.Cube, FVector(-5.1, Side * 15.85, 1.25), FRotator(0.0, Side * 25.0, Side * 8.0), FVector(1.5, 0.15, 2.2), FlagBlue, Rest);
+		// The Estonian flag by the forward door, both sides, on a thin grey border.
+		AddPart(Shapes.Cube, FVector(9.6, Side * 1.73, 1.9), FRotator::ZeroRotator, FVector(1.2, 0.02, 0.76), BodyGrey, Nose);
+		const FLinearColor Bands[3] = {FlagBlue, FlagBlack, FlagWhite};
+		for (int32 b = 0; b < 3; ++b)
+		{
+			AddPart(Shapes.Cube, FVector(9.6, Side * 1.745, 2.12 - b * 0.22), FRotator::ZeroRotator, FVector(1.1, 0.02, 0.22), Bands[b], Nose);
+		}
 		// Horizontal stabiliser.
 		AddPart(Shapes.Cube, FVector(-17.0, Side * 3.2, 1.6), FRotator(0.0, Side * 30.0, 0.0),
 			FVector(2.6, 6.0, 0.25), BodyGrey, Rest);
@@ -966,8 +979,21 @@ void AA320Aircraft::BuildModel()
 		AddPart(Shapes.Cylinder, FVector(-0.4, Side * 3.67, -1.6), FRotator::ZeroRotator, FVector(0.25, 0.25, 2.0), BodyGrey, Rest);
 		AddPart(Shapes.Cylinder, FVector(-0.4, Side * 3.67, -2.0), FRotator(0.0, 0.0, 90.0), FVector(1.15, 1.15, 0.9), BodyDark, Rest);
 	}
-	// Fin.
-	AddPart(Shapes.Cube, FVector(-16.0, 0.0, 5.3), FRotator(35.0, 0.0, 0.0), FVector(5.5, 0.35, 6.2), TailBlue, Rest);
+	// Fin, swept 35 degrees, in the flag's horizontal bands (blue, black, white from the top): stacked
+	// level slices, each a little further aft, so the bands stay horizontal on the swept shape.
+	{
+		const double FinCentreX = -16.0, FinCentreZ = 5.3, FinHeight = 6.2 * FMath::Cos(FMath::DegreesToRadians(35.0));
+		const double Sweep = FMath::Tan(FMath::DegreesToRadians(35.0)), Chord = 5.5 / FMath::Cos(FMath::DegreesToRadians(35.0));
+		constexpr int32 Slices = 12;
+		const double SliceH = FinHeight / Slices;
+		for (int32 k = 0; k < Slices; ++k)
+		{
+			const double Z = FinCentreZ - FinHeight / 2.0 + (k + 0.5) * SliceH;
+			const FLinearColor& Band = k < Slices / 3 ? FlagWhite : (k < 2 * Slices / 3 ? FlagBlack : FlagBlue);
+			AddPart(Shapes.Cube, FVector(FinCentreX - (Z - FinCentreZ) * Sweep, 0.0, Z), FRotator::ZeroRotator,
+				FVector(Chord * 0.82, 0.35, SliceH * 1.02), Band, Rest);
+		}
+	}
 	// Nose gear.
 	AddPart(Shapes.Cylinder, FVector(12.1, 0.0, -1.5), FRotator::ZeroRotator, FVector(0.2, 0.2, 2.0), BodyGrey, Nose);
 	AddPart(Shapes.Cylinder, FVector(12.1, 0.0, -2.2), FRotator(0.0, 0.0, 90.0), FVector(0.75, 0.75, 0.5), BodyDark, Nose);
