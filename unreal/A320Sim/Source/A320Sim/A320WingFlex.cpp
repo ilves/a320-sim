@@ -222,10 +222,12 @@ bool FA320WingFlex::HasEfis() const
 
 void FA320WingFlex::Scan()
 {
+	// A panel that is already open is left alone: only a newly opened one gets its full state.
 	if (!Fcu)
 	{
 		Fcu = OpenPanel(kFcuVendorId, kFcuProductId);
 		bHaveFcuInput = false;
+		LastFcuOut = {};
 		if (Fcu)
 		{
 			UE_LOG(LogA320, Log, TEXT("WingFlex FCU Cube connected"));
@@ -235,22 +237,22 @@ void FA320WingFlex::Scan()
 	{
 		Efis = OpenPanel(kEfisVendorId, kEfisProductId);
 		bHaveEfisInput = false;
+		LastEfisOut = {};
 		if (Efis)
 		{
 			UE_LOG(LogA320, Log, TEXT("WingFlex EFIS Cube connected"));
 		}
 	}
-	LastFcuOut = {};
-	LastEfisOut = {};
 }
 
 void FA320WingFlex::Tick(AA320Aircraft& Aircraft, float DeltaSeconds)
 {
-	// Panels plugged in later are found within a few seconds.
+	// Panels plugged in later are found within seconds. Looking through every USB device takes
+	// a moment, so once one panel is there the other (often not owned) is looked for rarely.
 	ScanTimer -= DeltaSeconds;
 	if ((!Fcu || !Efis) && ScanTimer <= 0.0f)
 	{
-		ScanTimer = 3.0f;
+		ScanTimer = Fcu || Efis ? 30.0f : 3.0f;
 		Scan();
 	}
 	TArray<uint8> Report;
@@ -286,8 +288,8 @@ void FA320WingFlex::Tick(AA320Aircraft& Aircraft, float DeltaSeconds)
 
 void FA320WingFlex::HandleFcu(AA320Aircraft& Aircraft, const FcuInput& In)
 {
-	Backlight = In.backlight;
-	LcdBrightness = In.lcd;
+	Backlight = steadyBrightness(Backlight, In.backlight);
+	LcdBrightness = steadyBrightness(LcdBrightness, In.lcd);
 	if (!bHaveFcuInput)
 	{
 		// The first report is the starting state, not a press.
@@ -412,7 +414,8 @@ void FA320WingFlex::SendOutputs(const AA320Aircraft& Aircraft, double Now)
 		O.backlight = Backlight;
 		O.lcd = LcdBrightness;
 		const Payload Out = buildFcu(O);
-		if ((Out != LastFcuOut || Now >= NextRefresh) && Fcu->Write(Out))
+		// Only changes are sent: a resend of the same state can make the displays redraw.
+		if (Out != LastFcuOut && Fcu->Write(Out))
 		{
 			LastFcuOut = Out;
 		}
@@ -428,14 +431,10 @@ void FA320WingFlex::SendOutputs(const AA320Aircraft& Aircraft, double Now)
 		O.backlight = Backlight;
 		O.lcd = LcdBrightness;
 		const Payload Out = buildEfis(O);
-		if ((Out != LastEfisOut || Now >= NextRefresh) && Efis->Write(Out))
+		if (Out != LastEfisOut && Efis->Write(Out))
 		{
 			LastEfisOut = Out;
 		}
-	}
-	if (Now >= NextRefresh)
-	{
-		NextRefresh = Now + 1.0;  // resend now and then, e.g. after the panel was power-cycled
 	}
 }
 

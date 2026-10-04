@@ -40,6 +40,14 @@ TEST(wingflex_fcu_input_report) {
   CHECK(!parseFcu(r, sizeof(r), in));  // an EFIS report
 }
 
+TEST(wingflex_brightness_ignores_jitter) {
+  CHECK(steadyBrightness(0xC0, 0xC2) == 0xC0);
+  CHECK(steadyBrightness(0xC0, 0xBE) == 0xC0);
+  CHECK(steadyBrightness(0xC0, 0x80) == 0x80);
+  CHECK(steadyBrightness(0xFB, 0xFF) == 0xFF);  // the end stop is always reached
+  CHECK(steadyBrightness(0x03, 0x00) == 0x00);
+}
+
 TEST(wingflex_efis_reports) {
   EfisOutput o;
   o.ls = true;

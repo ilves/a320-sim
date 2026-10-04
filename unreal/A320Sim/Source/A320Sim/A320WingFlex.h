@@ -35,7 +35,6 @@ private:
 	uint8 Backlight = 0xC0;
 	uint8 LcdBrightness = 0xC0;
 	float ScanTimer = 0.0f;
-	double NextRefresh = 0.0;
 	a320::wingflex::Payload LastFcuOut{};
 	a320::wingflex::Payload LastEfisOut{};
 };

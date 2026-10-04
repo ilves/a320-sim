@@ -55,6 +55,13 @@ struct EfisOutput {
   uint16_t baro = 1013;
 };
 
+// The panel's brightness knobs come with every input report and jitter by a step or two;
+// following each reading makes the lights flicker. Only a real turn (or an end stop) counts.
+inline uint8_t steadyBrightness(uint8_t current, uint8_t reading) {
+  const int diff = reading > current ? reading - current : current - reading;
+  return diff >= 8 || ((reading == 0 || reading == 0xFF) && diff > 0) ? reading : current;
+}
+
 inline bool bit(const uint8_t* p, int index) { return (p[6 + index / 8] >> (index % 8)) & 1; }
 
 inline void setBit(Payload& p, int index, bool on) {
