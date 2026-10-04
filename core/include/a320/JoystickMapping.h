@@ -123,6 +123,9 @@ inline const std::vector<CommandInfo>& commandCatalog() {
       {"GEAR", "Gear toggle", Action::Press},
       {"GEAR_UP", "Gear lever UP", Action::Select},
       {"GEAR_DOWN", "Gear lever DOWN", Action::Select},
+      // A gear lever with one contact: down while it is closed (or up, for the opposite one).
+      {"GEAR_DOWN_SW", "Gear DOWN switch", Action::Held},
+      {"GEAR_UP_SW", "Gear UP switch", Action::Held},
       {"BRAKES", "Brakes (hold)", Action::Held},
       {"PARK_BRAKE", "Parking brake switch", Action::Held},
       {"AUTOBRK_OFF", "Autobrake OFF/DISARM", Action::Select},

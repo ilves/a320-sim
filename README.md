@@ -192,7 +192,10 @@ TCA Quadrant Add-On Airbus Edition:
 3. Press **CAL** next to SPEEDBRAKE and set it in RET, FULL and ARM (or **NO ARM** if your lever
    has no ARM position: then assign SPOILERS ARM to its button).
 4. On the BUTTONS page, assign:
-   - the gear lever to GEAR UP / GEAR DOWN;
+   - the gear lever. Move it and watch **Last pressed**. If each position presses its own
+     button, assign GEAR UP and GEAR DOWN. If only one position presses a button (and the
+     other just releases it), assign that button to **GEAR DOWN switch** (pressed when the
+     lever is down) or **GEAR UP switch** (pressed when up);
    - each autobrake knob position to AUTOBRAKE OFF/LO/MED/MAX;
    - the parking brake switch to PARKING BRAKE.
 

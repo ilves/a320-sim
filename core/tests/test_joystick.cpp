@@ -167,6 +167,7 @@ TEST(joystick_command_catalog) {
     CHECK(findCommand(name) != nullptr);
   CHECK(findCommand("NOPE") == nullptr);
   CHECK(findCommand("PARK_BRAKE")->action == Action::Held);
+  CHECK(findCommand("GEAR_DOWN_SW")->action == Action::Held && findCommand("GEAR_UP_SW")->action == Action::Held);
   CHECK(findCommand("ND_LS")->action == Action::Select);
   // One command per hardware button; a command can have several buttons.
   Config c;

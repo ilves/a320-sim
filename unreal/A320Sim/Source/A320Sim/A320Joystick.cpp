@@ -313,9 +313,14 @@ void FA320Joystick::Poll(float DeltaSeconds)
 			{
 				Device.Releases[B] = 1;
 			}
+			// Both edges, so a switch that only closes in one position shows that too.
 			if (Device.Presses[B] > 0)
 			{
-				LastPressed = FString::Printf(TEXT("%s: button %d"), *Device.Name, B + 1);
+				LastPressed = FString::Printf(TEXT("%s: button %d pressed"), *Device.Name, B + 1);
+			}
+			else if (Device.Releases[B] > 0)
+			{
+				LastPressed = FString::Printf(TEXT("%s: button %d released"), *Device.Name, B + 1);
 			}
 		}
 	}

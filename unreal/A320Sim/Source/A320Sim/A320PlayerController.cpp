@@ -134,6 +134,8 @@ void AA320PlayerController::ApplyHardwareCommand(AA320Aircraft* Aircraft, FA320F
 			}
 		}
 		else if (Name == TEXT("PARK_BRAKE")) Aircraft->SetSwitch(EA320Switch::ParkBrake, bDown);
+		else if (Name == TEXT("GEAR_DOWN_SW")) Aircraft->SetSwitch(EA320Switch::Gear, bDown ? 1 : 0);
+		else if (Name == TEXT("GEAR_UP_SW")) Aircraft->SetSwitch(EA320Switch::Gear, bDown ? 0 : 1);
 		else if (Name == TEXT("SPOILERS_ARM")) Aircraft->SetSwitch(EA320Switch::SpoilersArm, bDown);
 		return;
 	}
