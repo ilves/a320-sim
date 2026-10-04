@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cstdio>
 #include <exception>
 #include <new>
@@ -129,6 +130,38 @@ int a320_get_runway(const A320Sim* sim, int index, A320RunwayInfo* info) {
 
 void a320_fcu_command(A320Sim* sim, A320FcuCommand command) {
   if (sim) sim->sim.fcuCommand(command);
+}
+
+int a320_atc_message(const A320Sim* sim, uint32_t seq, A320AtcMessage* out) {
+  if (!sim || !out) return 0;
+  return sim->sim.atc().message(seq, *out) ? 1 : 0;
+}
+
+void a320_atc_get_status(const A320Sim* sim, A320AtcStatus* status) {
+  if (!status) return;
+  *status = A320AtcStatus{};
+  if (!sim) return;
+  const a320::Simulation& s = sim->sim;
+  const A320State& st = s.state();
+  std::snprintf(status->station, sizeof(status->station), "%s", s.atc().stationName(st.com1ActiveKhz).c_str());
+  const std::vector<std::string> options = s.atcOptions();
+  status->optionCount = static_cast<int>(std::min<size_t>(options.size(), A320_ATC_MAX_OPTIONS));
+  for (int i = 0; i < status->optionCount; ++i)
+    std::snprintf(status->options[i], sizeof(status->options[i]), "%s", options[static_cast<size_t>(i)].c_str());
+  status->awaitingReadback = st.atcAwaitingReadback;
+  std::snprintf(status->callsign, sizeof(status->callsign), "%s", s.atc().callsign(s.fms()).c_str());
+}
+
+void a320_atc_choose(A320Sim* sim, int option) {
+  if (sim) sim->sim.atcChoose(option);
+}
+
+void a320_atc_set_enabled(A320Sim* sim, int enabled) {
+  if (sim) sim->sim.atc().setEnabled(enabled != 0);
+}
+
+void a320_audio_radio_clip(A320Sim* sim, const int16_t* samples, int frames, int sampleRate, int frequencyKhz) {
+  if (sim && samples && frames > 0 && sampleRate > 0) sim->sim.audio().radioClip(samples, frames, sampleRate, frequencyKhz);
 }
 
 void a320_mcdu_key(A320Sim* sim, int key) {

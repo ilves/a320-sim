@@ -120,3 +120,22 @@ TEST(audio_callouts_do_not_overlap) {
   renderSeconds(a, s, 1.0);
   CHECK(a.activeVoices() == 0);
 }
+
+// A radio transmission is heard through the VHF filter while COM 1 stays on its frequency, and
+// dropped when the pilot tunes away.
+TEST(audio_radio_clip_follows_the_frequency) {
+  AudioEngine a;
+  a.init(kRate, A320_SOUNDS_DIR);
+  A320State s{};
+  s.com1ActiveKhz = 135905;
+  renderSeconds(a, s, 0.1);
+  std::vector<int16_t> voice(16000);
+  for (size_t i = 0; i < voice.size(); ++i) voice[i] = static_cast<int16_t>(8000.0 * std::sin(i * 2.0 * 3.14159 * 800.0 / 16000.0));
+  a.radioClip(voice.data(), static_cast<int>(voice.size()), 16000, 135905);
+  CHECK(a.radioQueued() == 1);
+  CHECK(rms(renderSeconds(a, s, 0.4)) > 0.05);
+  s.com1ActiveKhz = 124880;  // tuned away: gone
+  renderSeconds(a, s, 0.05);
+  CHECK(a.radioQueued() == 0);
+  CHECK(rms(renderSeconds(a, s, 0.3)) < 0.01);
+}

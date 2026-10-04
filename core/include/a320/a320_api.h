@@ -21,7 +21,7 @@
 extern "C" {
 #endif
 
-#define A320_API_VERSION 8
+#define A320_API_VERSION 9
 
 typedef enum A320Scenario {
   A320_SCENARIO_RUNWAY = 0,     /* lined up, engines idle, CONF 1+F, park brake set */
@@ -140,7 +140,15 @@ typedef struct A320Controls {
   /* EFIS control panel (display only; the guides check them). */
   int efisLs;  /* LS pushbutton: ILS scales on the PFD */
   int ndMode;  /* A320_ND_* */
+  /* Radio management panel (VHF 1, kHz, e.g. 135905) and the ATC transponder (API 9). */
+  int com1ActiveKhz, com1StandbyKhz;
+  int xpdrCode; /* four octal digits written as a decimal number, e.g. 2341 */
+  int xpdrMode; /* A320_XPDR_* */
 } A320Controls;
+
+#define A320_XPDR_STBY 0
+#define A320_XPDR_AUTO 1 /* replies once airborne */
+#define A320_XPDR_ON 2
 
 typedef struct A320State {
   uint32_t structSize;
@@ -223,6 +231,19 @@ typedef struct A320State {
   int papiRunway[4][4];           /* PAPI of every runway direction (index < a320_runway_count) */
   int dhFt, mdaFt;                /* approach minimums from PERF APPR, -1 = none */
   double vappKt;                  /* approach speed for the landing configuration */
+
+  /* ATC (API 9). */
+  int atcEnabled;
+  int atcPhase;                   /* A320AtcPhase */
+  int atcClearedAltFt;            /* 0 = none yet */
+  int atcHeadingMag;              /* assigned heading, -1 = own navigation */
+  int atcSpeedKt;                 /* assigned speed, 0 = none */
+  int atcSquawk;                  /* assigned code, -1 = none */
+  int atcIfrCleared, atcTakeoffCleared, atcApproachCleared, atcLandingCleared, atcRadarContact;
+  int atcAwaitingReadback;        /* an instruction waits for the crew's readback */
+  int atcRunwayIndex;             /* the runway ATC expects you to land on */
+  int com1ActiveKhz;              /* mirrors the control, for the audio engine */
+  uint32_t atcMessageSeq;         /* number of the newest radio message (a320_atc_message) */
 } A320State;
 
 typedef struct A320RunwayInfo {
@@ -286,6 +307,8 @@ typedef enum A320GuideTarget {
   A320_GT_THRUST_LEVERS, A320_GT_FLAPS, A320_GT_GEAR, A320_GT_SPOILERS, A320_GT_AUTOBRAKE,
   A320_GT_PARK_BRAKE,
   A320_GT_MCDU,
+  A320_GT_RADIO,     /* the RADIO window: RMP and transponder */
+  A320_GT_ATC_REPLY, /* the reply list in the RADIO window */
   A320_GT_COUNT
 } A320GuideTarget;
 typedef enum A320GuideText {
@@ -367,6 +390,55 @@ typedef struct A320McduDisplay {
 
 A320_API void a320_mcdu_key(A320Sim* sim, int key);
 A320_API void a320_mcdu_get_display(const A320Sim* sim, A320McduDisplay* display);
+
+/* ATC: Tallinn Information (ATIS) 124.880, Tallinn Tower 135.905 (also IFR clearances), Tallinn
+ * Radar 127.905, Tallinn Handling 131.905 (EETN AD 2.18). Every transmission on the radio, ATC's
+ * and the crew's, is a message; the front end speaks it (speech) and logs it (text). */
+typedef enum A320AtcPhase {
+  A320_ATC_PHASE_CLEARANCE = 0, /* on the ground: IFR clearance from Tower */
+  A320_ATC_PHASE_DEPARTURE,     /* cleared IFR: ready for departure, takeoff */
+  A320_ATC_PHASE_RADAR,         /* with Tallinn Radar: vectors */
+  A320_ATC_PHASE_APPROACH,      /* cleared for the ILS */
+  A320_ATC_PHASE_TOWER,         /* with Tower on final */
+  A320_ATC_PHASE_LANDED,
+  A320_ATC_PHASE_DONE
+} A320AtcPhase;
+
+typedef enum A320AtcSpeaker {
+  A320_ATC_SPEAKER_ATC = 0,
+  A320_ATC_SPEAKER_PILOT,
+  A320_ATC_SPEAKER_ATIS
+} A320AtcSpeaker;
+
+#define A320_ATC_MAX_OPTIONS 6
+
+typedef struct A320AtcMessage {
+  uint32_t seq;
+  int speaker;       /* A320AtcSpeaker */
+  int frequencyKhz;
+  int heard;         /* on the frequency COM 1 was tuned to (otherwise nobody on board heard it) */
+  double simTimeS;
+  char station[24];  /* "TALLINN TOWER", or the callsign for the crew */
+  char text[320];    /* as written, e.g. "SIM320, turn left heading 080" */
+  char speech[480];  /* as spoken, e.g. "Sierra India Mike three two zero, turn left heading zero eight zero" */
+} A320AtcMessage;
+
+typedef struct A320AtcStatus {
+  char station[24]; /* who is on COM 1 now, "" = nobody */
+  int optionCount;  /* what the crew can say now (readbacks, requests) */
+  char options[A320_ATC_MAX_OPTIONS][200];
+  int awaitingReadback;
+  char callsign[16];
+} A320AtcStatus;
+
+/* Message number seq (1 .. state.atcMessageSeq); 0 if it is too old to be kept. */
+A320_API int a320_atc_message(const A320Sim* sim, uint32_t seq, A320AtcMessage* out);
+A320_API void a320_atc_get_status(const A320Sim* sim, A320AtcStatus* status);
+A320_API void a320_atc_choose(A320Sim* sim, int option);
+A320_API void a320_atc_set_enabled(A320Sim* sim, int enabled);
+/* A spoken transmission (16-bit mono PCM) for the radio: band-pass, static and squelch, heard only
+ * while COM 1 stays on frequencyKhz. Clips play one after another. */
+A320_API void a320_audio_radio_clip(A320Sim* sim, const int16_t* samples, int frames, int sampleRate, int frequencyKhz);
 
 A320_API const char* a320_warning_text(uint32_t warningBit);
 A320_API const char* a320_flap_config_name(int flapsLever, int onePlusF);

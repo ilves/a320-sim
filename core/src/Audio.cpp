@@ -262,6 +262,40 @@ void AudioEngine::detectEvents(const A320State& s, double blockS) {
   }
 }
 
+void AudioEngine::radioClip(const int16_t* samples, int frames, int sampleRate, int khz) {
+  if (!ready() || !samples || frames <= 0 || sampleRate <= 0) return;
+  RadioClip clip{{}, khz, 0};
+  // Squelch opening, the voice, then the squelch tail: noise bursts framing the transmission.
+  const size_t open = static_cast<size_t>(0.05 * rate_), tail = static_cast<size_t>(0.09 * rate_);
+  const double step = static_cast<double>(sampleRate) / rate_;
+  clip.samples.reserve(open + tail + static_cast<size_t>(frames / step) + 1);
+  for (size_t i = 0; i < open; ++i) clip.samples.push_back(0.18f * noise());
+  for (double t = 0.0; t < frames - 1; t += step) {
+    const size_t i = static_cast<size_t>(t);
+    const double f = t - static_cast<double>(i);
+    clip.samples.push_back(static_cast<float>((samples[i] + (samples[i + 1] - samples[i]) * f) / 32768.0));
+  }
+  for (size_t i = 0; i < tail; ++i) clip.samples.push_back(0.25f * noise() * (1.0f - static_cast<float>(i) / tail));
+  radio_.push_back(std::move(clip));
+}
+
+// The next radio sample: band-limited like a VHF set (about 350-2800 Hz), slightly overdriven,
+// with a little hiss. Clips for another frequency are dropped (the pilot tuned away).
+float AudioEngine::radioSample(int activeKhz) {
+  while (!radio_.empty() && (radio_.front().khz != activeKhz || radio_.front().pos >= radio_.front().samples.size()))
+    radio_.pop_front();
+  if (radio_.empty()) return 0.0f;
+  RadioClip& clip = radio_.front();
+  const float x = clip.samples[clip.pos++] + 0.015f * noise();
+  const float hpA = 1.0f - onePoleCoef(350.0f, rate_);
+  radioHp_ = hpA * (radioHp_ + x - radioHpIn_);
+  radioHpIn_ = x;
+  const float lpA = onePoleCoef(2800.0f, rate_);
+  radioLp1_ += lpA * (radioHp_ - radioLp1_);
+  radioLp2_ += lpA * (radioLp1_ - radioLp2_);
+  return 0.8f * std::tanh(2.2f * radioLp2_);
+}
+
 void AudioEngine::render(int16_t* out, int frames, const A320State& s) {
   if (!ready() || frames <= 0) {
     if (out && frames > 0) std::fill(out, out + frames, int16_t(0));
@@ -314,6 +348,7 @@ void AudioEngine::render(int16_t* out, int frames, const A320State& s) {
     for (Voice& v : voices_) {
       if (v.pos < v.clip->size()) mix += v.gain * (*v.clip)[v.pos++];
     }
+    mix += radioSample(s.com1ActiveKhz);
     const float y = std::tanh(mix * volume_);
     out[i] = static_cast<int16_t>(clamp(y, -1.0f, 1.0f) * 32000.0f);
   }

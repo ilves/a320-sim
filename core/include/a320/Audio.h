@@ -29,6 +29,9 @@ class AudioEngine {
   void setVolume(double volume);
   void event(A320SoundEvent e);
   void render(int16_t* out, int frames, const A320State& s);
+  // A spoken radio transmission: played after the ones before it, only while COM 1 stays on khz.
+  void radioClip(const int16_t* samples, int frames, int sampleRate, int khz);
+  size_t radioQueued() const { return radio_.size(); }
 
   int clipCount() const { return static_cast<int>(clips_.size()); }
   bool hasClip(const std::string& name) const { return clips_.count(name) != 0; }
@@ -69,6 +72,14 @@ class AudioEngine {
   double chimeTimer_ = 0.0, voiceTimer_ = 0.0;
   // Callouts speak one at a time (V1 and ROTATE can be half a second apart).
   std::deque<std::string> calloutQueue_;
+  struct RadioClip {
+    std::vector<float> samples;
+    int khz;
+    size_t pos;
+  };
+  std::deque<RadioClip> radio_;
+  float radioHp_ = 0.0f, radioHpIn_ = 0.0f, radioLp1_ = 0.0f, radioLp2_ = 0.0f;
+  float radioSample(int activeKhz);
   double calloutBusyS_ = 0.0;
   bool clickPending_ = false;
 };

@@ -68,3 +68,16 @@ TEST(wingflex_efis_reports) {
   CHECK(in.button[kLs] && in.button[kNdLs] && in.button[kRange20] && !in.button[kRange10]);
   CHECK(in.baroKnob == -2);
 }
+
+#include "a320/RadioTuning.h"
+
+TEST(radio_833_channel_stepping) {
+  using namespace a320::radio;
+  CHECK(isChannel(135905) && isChannel(124880) && isChannel(127905) && !isChannel(135920) && !isChannel(135945));
+  CHECK(stepKhz(135905, 1) == 135910);
+  CHECK(stepKhz(135915, 1) == 135925);
+  CHECK(stepKhz(135925, -1) == 135915);
+  CHECK(stepKhz(135990, 1) == 135000);  // wraps within the MHz
+  CHECK(stepMhz(136905, 1) == 118905 && stepMhz(118905, -1) == 136905);
+  CHECK(isSquawk(2341) && !isSquawk(2381) && isSquawk(7000));
+}

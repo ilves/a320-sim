@@ -24,6 +24,8 @@ the ILS and land, from a glass cockpit with a working PFD, ND and E/WD.
   - Centre panel: gear lever and the AUTO/BRK pushbuttons.
   - A pop-up overhead panel: APU, APU bleed, exterior lights and signs.
   - A pop-up **MCDU** (Tab), see [MCDU](#mcdu-flight-computer).
+  - A **RADIO** window (F10): VHF 1 radio panel, transponder and the ATC radio, see
+    [Radio and ATC](#radio-and-atc).
 - **Autopilot and autothrust** through the FCU: HDG, LOC, APPR with **autoland** (LOC*, LOC,
   G/S*, G/S, LAND, FLARE, ROLL OUT), OPEN CLIMB/DESCENT, V/S, ALT capture and hold, and SPEED
   autothrust with RETARD.
@@ -135,6 +137,7 @@ Other scripts:
 | Sound on/off, silence master warning | - (minus), M or click MASTER WARN | |
 | Overhead panel | O | |
 | MCDU | Tab (type on the keyboard while it's open, Backspace = CLR, Esc closes) | |
+| Radio / ATC | F10 (keys 1-6 pick a reply while it's open) | |
 | Joystick setup | F2 | |
 | Cold and dark | Shift + F5 | |
 | Help overlay | H or F1 | |
@@ -292,6 +295,58 @@ The ILS data is the published one (Estonian eAIP, EETN AD 2.19, AIRAC 2026-10-01
 
 The DME is co-located with the glide path antenna, as at EETN, so it reads the distance to
 the touchdown zone.
+
+## Radio and ATC
+
+Tallinn's real ATC units and frequencies (Estonian eAIP, EETN AD 2.18) talk to you with ICAO
+phraseology:
+
+| Station | Frequency | What it does here |
+|---|---|---|
+| Tallinn Information (ATIS) | 124.880 | Runway in use, weather, QNH, information letter (changes at hh20/hh50 UTC) |
+| Tallinn Tower | 135.905 | IFR clearance, takeoff clearance, landing clearance |
+| Tallinn Radar | 127.905 | Radar contact, vectors to the ILS, approach clearance |
+| Tallinn Handling | 131.905 | After landing |
+
+**The radio window (F10, or RADIO at the top right):**
+- **VHF 1:** set the next frequency in STBY with the MHz and kHz knobs (8.33 kHz channels), then
+  swap it to ACTIVE with `<->`. You only hear, and are only heard on, the ACTIVE frequency.
+- **Transponder:** type the four-digit squawk on the keypad and select AUTO. Radar only gives
+  "radar contact" when it sees your code.
+- **Radio log:** what was said on your frequency. ATC is in white, you are in blue, the ATIS in
+  grey.
+- **Replies:** what you can say now, by click or keys 1–6 (requests, check-ins and readbacks).
+  - For a readback you get the correct one and wrong ones, as a test. A wrong one gets
+    "negative, I say again", and the sim tutor explains what was wrong.
+
+**How ATC behaves:**
+- **Voices:** ATC speaks with the Windows text-to-speech voices, through a radio filter with
+  static and squelch.
+  - English voices are used if installed. Add them in Windows Settings > Time & language >
+    Speech.
+  - Your own transmissions use a second voice.
+  - Without voices, everything still shows as text.
+- **Unanswered instructions:** they are repeated, then ATC asks "how do you read?". If you're on
+  the wrong frequency, the tutor tells you who is calling and where.
+- **Compliance:** headings or altitudes you don't fly are queried ("check heading", "check
+  altitude").
+- **Takeoff and landing:** taking off or landing without a clearance is pointed out.
+
+**A flight:**
+1. Listen to the ATIS.
+2. Ask Tower for the IFR clearance. It is "cleared to Tallinn via radar vectors, runway heading,
+   climb 4000 feet, squawk ….". Read it back.
+3. Set the squawk and 4000 ft, then report "ready for departure".
+4. After takeoff Tower hands you to Radar. Check in.
+5. Radar vectors you around: downwind, descend 3000 ft, base, then a 30° intercept with
+   "cleared ILS approach runway 26".
+6. On the localizer, Radar hands you to Tower for the landing clearance. After landing, Tower
+   sends you to Handling.
+7. You can request the other runway's ILS from Radar. Select it in the MCDU too.
+
+Your callsign is the MCDU's flight number (INIT page), or SIM320.
+
+**Lesson:** F3, *Radio: a full flight with ATC*, walks you through all of this step by step.
 
 ## First flight
 

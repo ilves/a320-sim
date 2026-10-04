@@ -15,6 +15,8 @@ public class A320Sim : ModuleRules
 			PublicSystemLibraries.AddRange(new string[] { "dinput8.lib", "dxguid.lib" });
 			// USB HID: WingFlex FCU and EFIS Cube lights and displays.
 			PublicSystemLibraries.AddRange(new string[] { "hid.lib", "setupapi.lib" });
+			// SAPI text-to-speech for the ATC voices (COM).
+			PublicSystemLibraries.AddRange(new string[] { "ole32.lib" });
 		}
 	}
 }

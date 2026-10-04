@@ -216,6 +216,10 @@ void AA320Hud::DrawHUD()
 		{
 			DrawMcdu(*Aircraft);
 		}
+		if (Aircraft->IsRadioVisible())
+		{
+			DrawRadio(*Aircraft);
+		}
 	}
 	DrawSimBar(*Aircraft);
 	if (const AA320PlayerController* A320PC = Cast<AA320PlayerController>(PC))
@@ -226,6 +230,10 @@ void AA320Hud::DrawHUD()
 		}
 	}
 	DrawOverlays(*Aircraft);
+	if (Aircraft->IsSimReady() && !Aircraft->IsRadioVisible())
+	{
+		DrawAtcSubtitle(*Aircraft);
+	}
 	if (Aircraft->IsSimReady())
 	{
 		DrawGuide(*Aircraft);
@@ -904,6 +912,7 @@ void AA320Hud::DrawHelp()
 		TEXT("Autopilot      A AP1,  Shift+A AP2,  T A/THR (thrust levers in CL: Ins),  K APPR (autoland),  J LOC"),
 		TEXT("Lessons        F3 (or LESSONS, top right): step-by-step guides, e.g. ILS approach and autoland"),
 		TEXT("MCDU           Tab (or MCDU, top right): arrival ILS, RAD NAV, PERF; type on the keyboard, Backspace = CLR"),
+		TEXT("Radio / ATC    F10 (or RADIO, top right): COM 1, transponder, ATC log; keys 1-6 pick a reply while it's open"),
 		TEXT("FCU            1/2 SPD,  3/4 HDG,  5/6 ALT,  7/8 V/S  (Shift = x10);  U fly HDG,  9 climb/descend to ALT,  0 hold V/S"),
 		TEXT("Sound          - (minus) on/off,  M silence master warning"),
 		TEXT("Takeoff        N (release brake), Home (TOGA), rotate ~150 kt with Down arrow, G at positive climb"),
@@ -1333,6 +1342,7 @@ void AA320Hud::DrawSimBar(const AA320Aircraft& Aircraft)
 		{Aircraft.IsCockpitView() ? TEXT("VIEW: CKPT") : TEXT("VIEW: EXT"), EA320Command::ViewToggle, false},
 		{TEXT("OVERHEAD"), EA320Command::OverheadToggle, Aircraft.IsOverheadVisible()},
 		{TEXT("MCDU"), EA320Command::McduToggle, Aircraft.IsMcduVisible()},
+		{TEXT("RADIO"), EA320Command::RadioToggle, Aircraft.IsRadioVisible() || Aircraft.GetSimState().atcAwaitingReadback != 0},
 		{TEXT("JOYSTICK"), EA320Command::JoystickPanel, false},
 		{Aircraft.IsSoundOn() ? TEXT("SOUND ON") : TEXT("SOUND OFF"), EA320Command::SoundToggle, !Aircraft.IsSoundOn()},
 		{TEXT("HELP"), EA320Command::HelpToggle, Aircraft.IsHelpVisible()},
@@ -1352,6 +1362,11 @@ void AA320Hud::DrawSimBar(const AA320Aircraft& Aircraft)
 		if (Item.Command == EA320Command::McduToggle && !Aircraft.IsMcduVisible())
 		{
 			MarkTarget(A320_GT_MCDU, BX, 8.0 * Scale, BW, BH);  // the open MCDU marks itself
+		}
+		if (Item.Command == EA320Command::RadioToggle && !Aircraft.IsRadioVisible())
+		{
+			MarkTarget(A320_GT_RADIO, BX, 8.0 * Scale, BW, BH);  // the open window marks its parts
+			MarkTarget(A320_GT_ATC_REPLY, BX, 8.0 * Scale, BW, BH);
 		}
 		AddButton(BX, 8.0 * Scale, BW, BH, Item.Label, Item.Command, Item.bLit);
 		BX += BW + Gap;
@@ -1539,6 +1554,170 @@ void AA320Hud::DrawMcdu(const AA320Aircraft& Aircraft)
 	}
 	Text(TEXT("Keyboard types here   Backspace = CLR   Tab / Esc closes"), MX + MW / 2.0, MY + MH - 0.015 * MH,
 		FLinearColor(0.75f, 0.8f, 0.85f), 0, 1);
+}
+
+namespace
+{
+	FString FreqText(int32 Khz)
+	{
+		return FString::Printf(TEXT("%03d.%03d"), Khz / 1000, Khz % 1000);
+	}
+}
+
+void AA320Hud::DrawRadio(const AA320Aircraft& Aircraft)
+{
+	const A320State& St = Aircraft.GetSimState();
+	const A320Controls& Ctl = Aircraft.GetSimControls();
+	const A320AtcStatus Atc = Aircraft.GetAtcStatus();
+	const double W = Canvas->ClipX, H = Canvas->ClipY;
+	// Left side, so the MCDU (right) can stay open with it.
+	const double RX = 0.01 * W, RY = 0.06 * H, RW = FMath::Min(0.42 * W, 860.0 * Scale), RH = 0.62 * H;
+	const double Pad = 10.0 * Scale;
+	Fill(RX, RY, RW, RH, FLinearColor(0.08f, 0.09f, 0.1f, 0.97f));
+	Buttons.Add({FBox2D(FVector2D(RX, RY), FVector2D(RX + RW, RY + RH)), EA320Command::None});  // swallows clicks
+	Frame(RX, RY, RW, RH, FLinearColor(0.5f, 0.52f, 0.55f), 2.0);
+	Text(FString::Printf(TEXT("RADIO   callsign %s"), UTF8_TO_TCHAR(Atc.callsign)), RX + Pad, RY + 16.0 * Scale, White, 1, 0);
+	const double SmallBtn = 30.0 * Scale;
+	AddButton(RX + RW - 1.2 * SmallBtn - Pad, RY + 4.0 * Scale, 1.2 * SmallBtn, 0.9 * SmallBtn, TEXT("X"), EA320Command::RadioToggle, false);
+	AddButton(RX + RW - 4.4 * SmallBtn - Pad, RY + 4.0 * Scale, 3.0 * SmallBtn, 0.9 * SmallBtn,
+		St.atcEnabled ? TEXT("ATC ON") : TEXT("ATC OFF"), EA320Command::AtcToggle, St.atcEnabled != 0);
+
+	// VHF 1 radio management panel: ACTIVE <-> STBY, set STBY with the knobs.
+	const double PanelY = RY + 36.0 * Scale, PanelH = 96.0 * Scale;
+	const double RmpW = RW * 0.58;
+	Frame(RX + Pad, PanelY, RmpW - Pad, PanelH, Grey, 1.0);
+	MarkTarget(A320_GT_RADIO, RX + Pad, PanelY, RW - 2.0 * Pad, PanelH);
+	Text(TEXT("VHF 1   ACTIVE"), RX + 2.0 * Pad, PanelY + 12.0 * Scale, White, 0, 0);
+	Text(TEXT("STBY"), RX + RmpW * 0.62, PanelY + 12.0 * Scale, White, 0, 0);
+	const double DigitsY = PanelY + 38.0 * Scale;
+	Fill(RX + 2.0 * Pad, DigitsY - 16.0 * Scale, RmpW * 0.36, 32.0 * Scale, Screen);
+	Text(FreqText(Ctl.com1ActiveKhz), RX + 2.0 * Pad + RmpW * 0.18, DigitsY, Amber, 2, 1);
+	Fill(RX + RmpW * 0.62, DigitsY - 16.0 * Scale, RmpW * 0.33, 32.0 * Scale, Screen);
+	Text(FreqText(Ctl.com1StandbyKhz), RX + RmpW * 0.62 + RmpW * 0.165, DigitsY, Amber, 2, 1);
+	AddButton(RX + RmpW * 0.47, DigitsY - 14.0 * Scale, RmpW * 0.12, 28.0 * Scale, TEXT("<->"), EA320Command::ComSwap, false);
+	const FString StationName = UTF8_TO_TCHAR(Atc.station);
+	Text(StationName.IsEmpty() ? FString(TEXT("no station")) : StationName, RX + 2.0 * Pad + RmpW * 0.18, DigitsY + 24.0 * Scale,
+		StationName.IsEmpty() ? Grey : Green, 0, 1);
+	const double KnobY = PanelY + PanelH - 30.0 * Scale, KnobW = RmpW * 0.085;
+	const struct
+	{
+		const TCHAR* Label;
+		EA320Command Command;
+	} Knobs[] = {{TEXT("MHz-"), EA320Command::ComMhzDec}, {TEXT("MHz+"), EA320Command::ComMhzInc},
+		{TEXT("kHz-"), EA320Command::ComKhzDec}, {TEXT("kHz+"), EA320Command::ComKhzInc}};
+	double KX = RX + RmpW * 0.6;
+	for (const auto& Knob : Knobs)
+	{
+		AddButton(KX, KnobY, KnobW, 24.0 * Scale, Knob.Label, Knob.Command, false);
+		KX += KnobW + 3.0 * Scale;
+	}
+
+	// Transponder: four octal digits, then the mode.
+	const double XX = RX + RmpW + Pad, XW = RW - RmpW - 2.0 * Pad;
+	Frame(XX, PanelY, XW, PanelH, Grey, 1.0);
+	Text(TEXT("ATC XPDR"), XX + Pad, PanelY + 12.0 * Scale, White, 0, 0);
+	const FString& Entry = Aircraft.GetXpdrEntry();
+	const FString Code = Entry.IsEmpty() ? FString::Printf(TEXT("%04d"), Ctl.xpdrCode) : (Entry + FString::ChrN(4 - Entry.Len(), TEXT('-')));
+	Fill(XX + XW * 0.45, PanelY + 3.0 * Scale, XW * 0.5, 22.0 * Scale, Screen);
+	Text(Code, XX + XW * 0.7, PanelY + 14.0 * Scale, Entry.IsEmpty() ? Amber : Cyan, 1, 1);
+	const double KeyW = (XW - Pad) / 9.0 - 2.0 * Scale, KeyY = PanelY + 32.0 * Scale;
+	for (int32 Digit = 0; Digit < 8; ++Digit)
+	{
+		AddButton(XX + Pad * 0.5 + Digit * (KeyW + 2.0 * Scale), KeyY, KeyW, 24.0 * Scale, FString::FromInt(Digit),
+			EA320Command::XpdrDigit, false, Digit);
+	}
+	AddButton(XX + Pad * 0.5 + 8 * (KeyW + 2.0 * Scale), KeyY, KeyW, 24.0 * Scale, TEXT("CLR"), EA320Command::XpdrClear, false);
+	const TCHAR* Modes[] = {TEXT("STBY"), TEXT("AUTO"), TEXT("ON")};
+	const double ModeW = (XW - Pad) / 3.0 - 3.0 * Scale;
+	for (int32 Mode = 0; Mode < 3; ++Mode)
+	{
+		AddButton(XX + Pad * 0.5 + Mode * (ModeW + 3.0 * Scale), KnobY, ModeW, 24.0 * Scale, Modes[Mode], EA320Command::XpdrMode,
+			Ctl.xpdrMode == Mode, Mode);
+	}
+	if (St.atcSquawk > 0 && Ctl.xpdrCode != St.atcSquawk)
+	{
+		Text(FString::Printf(TEXT("cleared squawk %04d"), St.atcSquawk), XX + Pad, PanelY + PanelH + 10.0 * Scale, Amber, 0, 0);
+	}
+
+	// Replies at the bottom, the radio log above them.
+	const double ReplyW = RW - 2.0 * Pad;
+	double RepliesH = 26.0 * Scale;
+	TArray<double> OptionH;
+	for (int32 i = 0; i < Atc.optionCount; ++i)
+	{
+		const FString Option = FString::Printf(TEXT("%d  %s"), i + 1, UTF8_TO_TCHAR(Atc.options[i]));
+		OptionH.Add(TextWrapped(Option, 0.0, 0.0, ReplyW - 2.0 * Pad, White, 0, false) + 8.0 * Scale);
+		RepliesH += OptionH.Last() + 4.0 * Scale;
+	}
+	if (Atc.optionCount == 0)
+	{
+		RepliesH += 22.0 * Scale;
+	}
+	double Y = RY + RH - Pad - RepliesH;
+	MarkTarget(A320_GT_ATC_REPLY, RX + Pad, Y, ReplyW, RepliesH);
+	const bool bFlash = FMath::Fmod(GetWorld()->GetRealTimeSeconds(), 1.0) < 0.6;
+	Text(Atc.awaitingReadback ? TEXT("READBACK REQUIRED  (keys 1-6 or click)") : TEXT("SAY  (keys 1-6 or click)"),
+		RX + Pad, Y + 10.0 * Scale, Atc.awaitingReadback && bFlash ? Amber : Grey, 0, 0);
+	Y += 22.0 * Scale;
+	for (int32 i = 0; i < Atc.optionCount; ++i)
+	{
+		const FString Option = FString::Printf(TEXT("%d  %s"), i + 1, UTF8_TO_TCHAR(Atc.options[i]));
+		Fill(RX + Pad, Y, ReplyW, OptionH[i], ButtonFace);
+		Frame(RX + Pad, Y, ReplyW, OptionH[i], FLinearColor(0.3f, 0.3f, 0.33f), 1.0);
+		TextWrapped(Option, RX + 2.0 * Pad, Y + 4.0 * Scale, ReplyW - 2.0 * Pad, Cyan, 0);
+		Buttons.Add({FBox2D(FVector2D(RX + Pad, Y), FVector2D(RX + Pad + ReplyW, Y + OptionH[i])), EA320Command::AtcReply, i});
+		Y += OptionH[i] + 4.0 * Scale;
+	}
+	if (Atc.optionCount == 0)
+	{
+		const TCHAR* Why = !St.atcEnabled ? TEXT("ATC is off.")
+			: (StationName.IsEmpty() ? TEXT("Nobody on this frequency.") : TEXT("Nothing to say now: listen."));
+		Text(Why, RX + 2.0 * Pad, Y + 10.0 * Scale, Grey, 0, 0);
+	}
+
+	// Radio log, newest at the bottom, as much as fits.
+	const double LogTop = PanelY + PanelH + (Aircraft.HasVoices() ? 24.0 : 42.0) * Scale, LogBottom = RY + RH - Pad - RepliesH - 6.0 * Scale;
+	const TArray<A320AtcMessage>& RadioLog = Aircraft.GetRadioLog();
+	double Bottom = LogBottom;
+	for (int32 i = RadioLog.Num() - 1; i >= 0; --i)
+	{
+		const A320AtcMessage& M = RadioLog[i];
+		const FLinearColor Color = M.speaker == A320_ATC_SPEAKER_PILOT ? Cyan : (M.speaker == A320_ATC_SPEAKER_ATIS ? Grey : White);
+		const FString LogLine = FString::Printf(TEXT("%s: %s"), UTF8_TO_TCHAR(M.station), UTF8_TO_TCHAR(M.text));
+		const double LineH = TextWrapped(LogLine, 0.0, 0.0, RW - 2.0 * Pad, Color, 0, false);
+		if (Bottom - LineH < LogTop)
+		{
+			break;
+		}
+		Bottom -= LineH + 3.0 * Scale;
+		TextWrapped(LogLine, RX + Pad, Bottom, RW - 2.0 * Pad, Color, 0);
+	}
+	if (!Aircraft.HasVoices())
+	{
+		Text(TEXT("No Windows voices installed: ATC as text only."), RX + Pad, LogTop - 14.0 * Scale, Grey, 0, 0);
+	}
+}
+
+void AA320Hud::DrawAtcSubtitle(const AA320Aircraft& Aircraft)
+{
+	double Age = 0.0;
+	const FString& Subtitle = Aircraft.GetAtcSubtitle(Age);
+	const bool bAwaiting = Aircraft.GetSimState().atcAwaitingReadback != 0;
+	if (Subtitle.IsEmpty() || (Age > 8.0 && !bAwaiting))
+	{
+		return;
+	}
+	const double W = Canvas->ClipX, H = Canvas->ClipY;
+	const double TW = FMath::Min(W * 0.5, 900.0 * Scale), Pad = 8.0 * Scale;
+	const double TX = (W - TW) / 2.0, TY = H * 0.105;
+	const double TextH = TextWrapped(Subtitle, TX + Pad, TY + Pad, TW - 2.0 * Pad, White, 0, false);
+	const double BoxH = TextH + 2.0 * Pad + (bAwaiting ? 18.0 * Scale : 0.0);
+	Fill(TX, TY, TW, BoxH, FLinearColor(0.0f, 0.0f, 0.0f, 0.6f));
+	TextWrapped(Subtitle, TX + Pad, TY + Pad, TW - 2.0 * Pad, White, 0);
+	if (bAwaiting)
+	{
+		Text(TEXT("Readback required: F10 (RADIO)"), TX + Pad, TY + BoxH - 12.0 * Scale, Amber, 0, 0);
+	}
 }
 
 void AA320Hud::DrawJoystickPanel(const AA320PlayerController& Controller)

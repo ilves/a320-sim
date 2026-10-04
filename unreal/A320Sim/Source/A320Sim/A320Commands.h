@@ -101,6 +101,19 @@ enum class EA320Command : uint8
 	// MCDU pop-up; McduKey buttons carry the key code (A320McduKey or an ASCII character).
 	McduToggle,
 	McduKey,
+	// RADIO window: VHF 1 radio management panel, transponder and the ATC replies (buttons carry
+	// a digit, a mode or a reply number in their Param).
+	RadioToggle,
+	ComSwap,
+	ComMhzDec,
+	ComMhzInc,
+	ComKhzDec,
+	ComKhzInc,
+	XpdrDigit,
+	XpdrClear,
+	XpdrMode,
+	AtcToggle,
+	AtcReply,
 };
 
 // Levers dragged with the mouse; the value is the handle position, 0 at the top of its slot.

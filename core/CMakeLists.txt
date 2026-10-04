@@ -40,6 +40,7 @@ set(A320_WARNINGS $<IF:$<CXX_COMPILER_ID:MSVC>,/W4,-Wall -Wextra -Wpedantic -Wsh
 
 add_library(a320core_static STATIC
   src/Airport.cpp
+  src/Atc.cpp
   src/Audio.cpp
   src/Autopilot.cpp
   src/FlyByWire.cpp
@@ -68,7 +69,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 endif()
 
 install(TARGETS A320Core RUNTIME DESTINATION bin LIBRARY DESTINATION bin ARCHIVE DESTINATION lib)
-install(FILES include/a320/a320_api.h include/a320/Geometry2D.h include/a320/JoystickMapping.h include/a320/WingFlexReports.h DESTINATION include/a320)
+install(FILES include/a320/a320_api.h include/a320/Geometry2D.h include/a320/JoystickMapping.h include/a320/WingFlexReports.h include/a320/RadioTuning.h DESTINATION include/a320)
 
 if(A320_BUILD_TESTS)
   enable_testing()

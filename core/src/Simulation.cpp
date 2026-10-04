@@ -1,6 +1,7 @@
 #include "a320/Simulation.h"
 
 #include <cmath>
+#include <ctime>
 #include <cstdio>
 #include <cstring>
 #include <exception>
@@ -188,8 +189,22 @@ bool Simulation::reset(A320Scenario scenario, int runwayIndex) {
     fms_.flown = true;
   }
   mcdu_.reset();
+  {
+    // The real UTC time gives the ATIS letter and time; the squawk differs per flight.
+    const std::time_t now = std::time(nullptr);
+    std::tm utc{};
+#ifdef _WIN32
+    gmtime_s(&utc, &now);
+#else
+    gmtime_r(&now, &utc);
+#endif
+    atc_.reset(scenario, runwayIndex_, controls_, static_cast<uint32_t>(now), utc.tm_hour * 60 + utc.tm_min);
+  }
+  stepTimeS_ = 0.0;
   clock_.resetTime();
   refreshState();
+  state_.com1ActiveKhz = controls_.com1ActiveKhz;
+  atc_.fillState(state_);
   wasOnGround_ = state_.onGround != 0;
   wasAlphaFloor_ = false;
   aboveGsHinted_ = noGsArmHinted_ = false;
@@ -384,7 +399,32 @@ void Simulation::step() {
   if (!fdm_) return;
   applyControls();
   fdm_->Run();
+  stepTimeS_ += clock_.stepS();
   refreshState();
+  updateAtc();
+}
+
+void Simulation::updateAtc() {
+  state_.simTimeS = stepTimeS_;
+  state_.com1ActiveKhz = controls_.com1ActiveKhz;
+  const AtcContext ctx{airport_, frame_, state_, controls_, fms_};
+  atc_.update(ctx);
+  const std::string h = atc_.takeHint();
+  if (!h.empty()) hint(h.c_str());
+  atc_.fillState(state_);
+}
+
+std::vector<std::string> Simulation::atcOptions() const {
+  const AtcContext ctx{airport_, frame_, state_, controls_, fms_};
+  return atc_.options(ctx);
+}
+
+void Simulation::atcChoose(int option) {
+  const AtcContext ctx{airport_, frame_, state_, controls_, fms_};
+  atc_.choose(option, ctx);
+  const std::string h = atc_.takeHint();
+  if (!h.empty()) hint(h.c_str());
+  atc_.fillState(state_);
 }
 
 void Simulation::applyControls() {

@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "a320/Airport.h"
+#include "a320/Atc.h"
 #include "a320/Audio.h"
 #include "a320/Autopilot.h"
 #include "a320/FlyByWire.h"
@@ -54,6 +55,12 @@ class Simulation {
   void mcduKey(int key);
   void mcduDisplay(A320McduDisplay& out) const;
   Fms& fms() { return fms_; }
+  const Fms& fms() const { return fms_; }
+
+  Atc& atc() { return atc_; }
+  const Atc& atc() const { return atc_; }
+  std::vector<std::string> atcOptions() const;
+  void atcChoose(int option);
 
  private:
   double trimAirborne();
@@ -74,6 +81,9 @@ class Simulation {
   IlsSignal ilsSignal_;
   Fms fms_;
   Mcdu mcdu_;
+  Atc atc_;
+  double stepTimeS_ = 0.0;
+  void updateAtc();
   double weightLbs_ = 0.0;
   SimClock clock_;
   FlyByWire fbw_;

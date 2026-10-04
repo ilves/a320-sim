@@ -1,6 +1,8 @@
 #include "A320Aircraft.h"
 
 #include "A320Sim.h"
+#include "A320Voice.h"
+#include "a320/RadioTuning.h"
 #include "A320World.h"
 #include "Camera/CameraComponent.h"
 #include "Components/AudioComponent.h"
@@ -11,6 +13,7 @@
 #include "Engine/StaticMesh.h"
 #include "Engine/World.h"
 #include "GameFramework/SpringArmComponent.h"
+#include "HAL/PlatformTime.h"
 #include "Misc/Paths.h"
 
 namespace
@@ -158,12 +161,14 @@ void AA320Aircraft::BeginPlay()
 	ResetScenario(A320_SCENARIO_RUNWAY);
 	ApplyView();
 	StartAudio();
+	Voice = MakeShared<FA320Voice>();
 	UE_LOG(LogA320, Log, TEXT("Flight model ready: %d runways, lined up on %s"), Runways.Num(),
 		Runways.IsValidIndex(ActiveRunway) ? UTF8_TO_TCHAR(Runways[ActiveRunway].ident) : TEXT("?"));
 }
 
 void AA320Aircraft::EndPlay(const EEndPlayReason::Type Reason)
 {
+	Voice.Reset();  // stops the speech thread
 	if (AudioOut)
 	{
 		AudioOut->Stop();
@@ -199,6 +204,7 @@ void AA320Aircraft::Tick(float DeltaSeconds)
 	}
 	UpdateTransform();
 	UpdateExteriorLights();
+	PumpRadio();
 	if (World)
 	{
 		for (int32 i = 0; i < Runways.Num() && i < 4; ++i)
@@ -207,6 +213,65 @@ void AA320Aircraft::Tick(float DeltaSeconds)
 		}
 	}
 	PumpAudio(DeltaSeconds);
+}
+
+void AA320Aircraft::PumpRadio()
+{
+	// New transmissions: those heard on COM 1 go to the log and the voice; ATC's become the subtitle.
+	for (uint32 Seq = LastAtcSeq + 1; Seq <= State.atcMessageSeq; ++Seq)
+	{
+		A320AtcMessage Message;
+		if (!a320_atc_message(Sim, Seq, &Message) || !Message.heard)
+		{
+			continue;
+		}
+		RadioLog.Add(Message);
+		if (RadioLog.Num() > 40)
+		{
+			RadioLog.RemoveAt(0);
+		}
+		if (Voice && bSoundOn)
+		{
+			Voice->Speak(UTF8_TO_TCHAR(Message.speech), Message.speaker, Message.frequencyKhz);
+		}
+		if (Message.speaker == A320_ATC_SPEAKER_ATC)
+		{
+			AtcSubtitle = FString::Printf(TEXT("%s: %s"), UTF8_TO_TCHAR(Message.station), UTF8_TO_TCHAR(Message.text));
+			AtcSubtitleAt = FPlatformTime::Seconds();
+		}
+	}
+	LastAtcSeq = State.atcMessageSeq;
+	if (Voice)
+	{
+		TArray<int16> Pcm;
+		int32 Khz = 0;
+		while (Voice->PopClip(Pcm, Khz))
+		{
+			a320_audio_radio_clip(Sim, Pcm.GetData(), Pcm.Num(), FA320Voice::SampleRate, Khz);
+		}
+	}
+}
+
+A320AtcStatus AA320Aircraft::GetAtcStatus() const
+{
+	A320AtcStatus Status;
+	FMemory::Memzero(Status);
+	if (Sim)
+	{
+		a320_atc_get_status(Sim, &Status);
+	}
+	return Status;
+}
+
+const FString& AA320Aircraft::GetAtcSubtitle(double& OutAgeSeconds) const
+{
+	OutAgeSeconds = FPlatformTime::Seconds() - AtcSubtitleAt;
+	return AtcSubtitle;
+}
+
+bool AA320Aircraft::HasVoices() const
+{
+	return Voice && Voice->GetVoiceCount() != 0;
 }
 
 void AA320Aircraft::McduKey(int32 Key)
@@ -302,7 +367,7 @@ void AA320Aircraft::SetFlightInputs(const FA320FlightInputs& Inputs, float Delta
 	}
 }
 
-void AA320Aircraft::ExecuteCommand(EA320Command Command, bool bLarge)
+void AA320Aircraft::ExecuteCommand(EA320Command Command, bool bLarge, int32 Param)
 {
 	if (Command != EA320Command::None && Sim)
 	{
@@ -342,6 +407,40 @@ void AA320Aircraft::ExecuteCommand(EA320Command Command, bool bLarge)
 		break;
 	case EA320Command::OverheadToggle: bOverheadVisible = !bOverheadVisible; break;
 	case EA320Command::McduToggle: bMcduVisible = !bMcduVisible; break;
+	case EA320Command::RadioToggle: bRadioVisible = !bRadioVisible; break;
+	case EA320Command::ComSwap: Swap(Controls.com1ActiveKhz, Controls.com1StandbyKhz); break;
+	case EA320Command::ComMhzDec: Controls.com1StandbyKhz = a320::radio::stepMhz(Controls.com1StandbyKhz, -1); break;
+	case EA320Command::ComMhzInc: Controls.com1StandbyKhz = a320::radio::stepMhz(Controls.com1StandbyKhz, 1); break;
+	case EA320Command::ComKhzDec: Controls.com1StandbyKhz = a320::radio::stepKhz(Controls.com1StandbyKhz, -1); break;
+	case EA320Command::ComKhzInc: Controls.com1StandbyKhz = a320::radio::stepKhz(Controls.com1StandbyKhz, 1); break;
+	case EA320Command::XpdrDigit:
+		// The code changes once all four digits are in, as on the ATC panel.
+		if (Param >= 0 && Param <= 7)
+		{
+			XpdrEntry.AppendChar(static_cast<TCHAR>(TEXT('0') + Param));
+			if (XpdrEntry.Len() == 4)
+			{
+				Controls.xpdrCode = FCString::Atoi(*XpdrEntry);
+				XpdrEntry.Reset();
+			}
+		}
+		break;
+	case EA320Command::XpdrClear: XpdrEntry.Reset(); break;
+	case EA320Command::XpdrMode: Controls.xpdrMode = FMath::Clamp(Param, A320_XPDR_STBY, A320_XPDR_ON); break;
+	case EA320Command::AtcToggle:
+		if (Sim)
+		{
+			a320_atc_set_enabled(Sim, State.atcEnabled ? 0 : 1);
+		}
+		break;
+	case EA320Command::AtcReply:
+		if (Sim)
+		{
+			a320_atc_choose(Sim, Param);
+			a320_get_state(Sim, &State);
+			PumpRadio();  // the crew's call shows and speaks at once
+		}
+		break;
 	case EA320Command::NdModeToggle:
 		// EFIS mode selector: ARC -> ROSE NAV -> ROSE LS.
 		NdMode = NdMode == A320_ND_ARC ? A320_ND_ROSE_NAV : (NdMode == A320_ND_ROSE_NAV ? A320_ND_ROSE_LS : A320_ND_ARC);
@@ -514,6 +613,14 @@ void AA320Aircraft::ResetScenario(A320Scenario Scenario)
 	a320_reset(Sim, Scenario, ActiveRunway);
 	a320_get_state(Sim, &State);
 	a320_get_controls(Sim, &Controls);
+	LastAtcSeq = State.atcMessageSeq;  // a new flight starts a new radio log
+	if (Voice)
+	{
+		Voice->Flush();
+	}
+	RadioLog.Reset();
+	XpdrEntry.Reset();
+	AtcSubtitle.Reset();
 	bLsOn = Scenario == A320_SCENARIO_FINAL_10NM || Scenario == A320_SCENARIO_FINAL_4NM;
 	NdMode = A320_ND_ARC;
 	UpdateTransform();

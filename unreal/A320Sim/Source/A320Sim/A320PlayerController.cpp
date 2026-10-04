@@ -426,6 +426,7 @@ void AA320PlayerController::PlayerTick(float DeltaTime)
 		{EKeys::F3, EA320Command::GuideMenu},
 		{EKeys::F4, EA320Command::ResetApproach},
 		{EKeys::Tab, EA320Command::McduToggle},
+		{EKeys::F10, EA320Command::RadioToggle},
 		{EKeys::Hyphen, EA320Command::SoundToggle},
 		{EKeys::Gamepad_FaceButton_Bottom, EA320Command::GearToggle},
 		{EKeys::Gamepad_LeftShoulder, EA320Command::FlapsUp},
@@ -442,9 +443,33 @@ void AA320PlayerController::PlayerTick(float DeltaTime)
 	{
 		TypeIntoMcdu(*Aircraft);
 	}
+	// With the RADIO window open (and the MCDU closed), 1-6 pick an ATC reply instead of FCU keys.
+	static const FKey ReplyKeys[] = {EKeys::One, EKeys::Two, EKeys::Three, EKeys::Four, EKeys::Five, EKeys::Six};
+	const bool bRadioReplies = Aircraft->IsRadioVisible() && !bMcduTyping;
+	if (bRadioReplies)
+	{
+		int32 Reply = 0;
+		for (const FKey& ReplyKey : ReplyKeys)
+		{
+			if (WasInputKeyJustPressed(ReplyKey))
+			{
+				Aircraft->ExecuteCommand(EA320Command::AtcReply, false, Reply);
+			}
+			++Reply;
+		}
+	}
 	for (const FKeyCommand& Binding : Bindings)
 	{
 		if (bMcduTyping && IsMcduTypingKey(Binding.Key))
+		{
+			continue;
+		}
+		bool bReplyKey = false;
+		for (const FKey& ReplyKey : ReplyKeys)
+		{
+			bReplyKey = bReplyKey || (bRadioReplies && Binding.Key == ReplyKey);
+		}
+		if (bReplyKey)
 		{
 			continue;
 		}
@@ -516,7 +541,7 @@ void AA320PlayerController::PlayerTick(float DeltaTime)
 		}
 		else if (Clicked != EA320Command::None && !HandleJoystickCommand(Clicked, Hud->ParamAt(Mouse)))
 		{
-			Aircraft->ExecuteCommand(Clicked, bShift);
+			Aircraft->ExecuteCommand(Clicked, bShift, Hud->ParamAt(Mouse));
 		}
 	}
 	if (DraggedLever != EA320Lever::None)

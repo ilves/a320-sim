@@ -42,7 +42,8 @@ public:
 
 	void SetFlightInputs(const FA320FlightInputs& Inputs, float DeltaSeconds);
 	// bLarge: Shift held, for 10x FCU steps.
-	void ExecuteCommand(EA320Command Command, bool bLarge = false);
+	// Param: the extra value some buttons carry (a transponder digit or mode, an ATC reply number).
+	void ExecuteCommand(EA320Command Command, bool bLarge = false, int32 Param = 0);
 	void SetLever(EA320Lever Lever, double Position);
 	// Thrust levers from a hardware throttle (0..1; with reverse the reverse amount). Without
 	// bSplit engine 2 follows lever 1; keyboard, mouse and commands move both together again.
@@ -70,6 +71,14 @@ public:
 	int32 GetNdMode() const { return NdMode; }  // A320_ND_*
 	bool IsGuideMenuVisible() const { return bGuideMenu; }
 	bool IsMcduVisible() const { return bMcduVisible; }
+	// RADIO window: the radio log (heard transmissions, newest last), the transponder digits being
+	// typed, and the latest ATC call for the subtitle.
+	bool IsRadioVisible() const { return bRadioVisible; }
+	const TArray<A320AtcMessage>& GetRadioLog() const { return RadioLog; }
+	const FString& GetXpdrEntry() const { return XpdrEntry; }
+	A320AtcStatus GetAtcStatus() const;
+	const FString& GetAtcSubtitle(double& OutAgeSeconds) const;
+	bool HasVoices() const;
 	void McduKey(int32 Key);
 	void GetMcduDisplay(A320McduDisplay& Out) const;
 	A320GuideStatus GetGuideStatus() const;
@@ -109,6 +118,14 @@ private:
 	int32 NdMode = A320_ND_ARC;
 	bool bGuideMenu = false;
 	bool bMcduVisible = false;
+	bool bRadioVisible = false;
+	void PumpRadio();
+	TSharedPtr<class FA320Voice> Voice;
+	uint32 LastAtcSeq = 0;
+	TArray<A320AtcMessage> RadioLog;
+	FString XpdrEntry;
+	FString AtcSubtitle;
+	double AtcSubtitleAt = -1000.0;
 	int32 AudioRate = 44100;
 	TArray<int16> AudioScratch;
 	int32 NdRangeNm = 10;

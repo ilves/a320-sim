@@ -1,5 +1,7 @@
 #include "a320/Guide.h"
 
+#include <cmath>
+
 namespace a320 {
 namespace {
 
@@ -228,11 +230,192 @@ const char* ilsAlert(const A320State& s, const A320Controls& c, int step) {
   return nullptr;
 }
 
+bool fcuAltIs(const A320State& s, int ft) { return std::fabs(s.fcuAltFt - ft) < 1.0; }
+
+// A full IFR flight with ATC from runway 26: the radio panel, the ATIS, the clearance and its
+// readback, the transponder, the handovers, radar vectors and the ILS clearance. Step indexes
+// matter to radioAlert below.
+const GuideStep kRadioFlight[] = {
+    {"BEFORE START", "The radio panel",
+     "Open the RADIO window (RADIO at the top, or F10). COM 1 shows ACTIVE 135.905 (Tallinn Tower) and STBY 124.880 "
+     "(the ATIS). Then press NEXT.",
+     "ACTIVE is what you hear and transmit on. STBY is the one you prepare with the knobs.",
+     "On the A320's radio management panel (RMP) you set the next frequency in STBY and swap it in with the transfer "
+     "key, so you can always swap back if nobody answers.",
+     "Same RMP on the pedestal in MSFS; the ATC window there is the reply list here.",
+     {A320_GT_RADIO}, true, nullptr},
+    {"BEFORE START", "Listen to the ATIS",
+     "Press the transfer key (<->) so 124.880 is ACTIVE, and listen to Tallinn Information to the end.",
+     "The ATIS repeats: information letter, time, runway in use, wind, visibility, temperature, QNH.",
+     "The ATIS saves the controller from saying the weather to every aircraft. You confirm you have it with its "
+     "letter on first contact (\"with information K\").",
+     "In MSFS: tune the ATIS frequency on COM 1 or pick ATIS in the ATC window.",
+     {A320_GT_RADIO}, false,
+     [](const A320State&, const A320Controls& c) { return c.com1ActiveKhz == 124880; }},
+    {"BEFORE START", "Note the ATIS",
+     "Note the information letter, runway in use 26 and QNH 1013, then press NEXT.",
+     "The letter changes every half hour (time hh20 and hh50).",
+     "QNH sets the altimeter to show altitude above sea level near the airport; below the transition altitude "
+     "(5000 ft at Tallinn) all altitudes are on QNH.",
+     "The same in MSFS (the ATIS text also shows in the ATC window).",
+     {A320_GT_RADIO}, true, nullptr},
+    {"CLEARANCE", "Back to Tower",
+     "Press the transfer key again: 135.905 Tallinn Tower is ACTIVE.",
+     "COM 1 ACTIVE 135.905, and the window shows TALLINN TOWER.",
+     "At Tallinn the Tower also gives IFR clearances; there is no separate delivery frequency (AIP EETN AD 2.20).",
+     "In MSFS the ATC window switches to Tower when you tune it.",
+     {A320_GT_RADIO}, false,
+     [](const A320State&, const A320Controls& c) { return c.com1ActiveKhz == 135905; }},
+    {"CLEARANCE", "Request the IFR clearance",
+     "In the reply list, pick \"request IFR clearance to Tallinn\" (click it, or its number key while the RADIO "
+     "window is open).",
+     "Your call is logged in blue; a few seconds later Tower answers with the clearance.",
+     "Every call starts with who you call and who you are: \"Tallinn Tower, SIM320\". Set a flight number in the "
+     "MCDU INIT page to fly as that callsign.",
+     "MSFS: \"Request IFR clearance\" in the ATC window.",
+     {A320_GT_ATC_REPLY}, false,
+     [](const A320State& s, const A320Controls&) { return s.atcAwaitingReadback || s.atcIfrCleared; }},
+    {"CLEARANCE", "Read back the clearance",
+     "Listen to the clearance, then pick the readback that repeats it exactly: route, altitude, squawk, callsign.",
+     "Tower answers \"readback correct, report ready for departure\". A wrong readback gets \"negative, I say again\".",
+     "The readback is how ATC knows you heard right; altitudes, headings, frequencies, squawks and runways are always "
+     "read back.",
+     "The MSFS ATC window always offers the correct readback; here you have to find it.",
+     {A320_GT_ATC_REPLY}, false,
+     [](const A320State& s, const A320Controls&) { return s.atcIfrCleared != 0; }},
+    {"CLEARANCE", "Squawk and altitude",
+     "Type the squawk on the transponder keypad in the RADIO window and set the mode to AUTO. Set the cleared "
+     "altitude, 4000, in the FCU ALT window. [Keys: 5/6, Shift = 1000 ft]",
+     "XPDR shows your code; FCU ALT 4000.",
+     "The squawk identifies you on radar. AUTO makes the transponder reply once airborne.",
+     "In MSFS the transponder is on the pedestal (ATC/TCAS panel); the FCU is the same.",
+     {A320_GT_RADIO, A320_GT_FCU_ALT}, false,
+     [](const A320State& s, const A320Controls& c) {
+       return s.atcSquawk > 0 && c.xpdrCode == s.atcSquawk && c.xpdrMode != A320_XPDR_STBY && fcuAltIs(s, 4000);
+     }},
+    {"DEPARTURE", "Ready for departure",
+     "Pick \"ready for departure runway 26\", then read back the takeoff clearance with the runway.",
+     "Tower: \"wind calm, runway 26, cleared for takeoff\".",
+     "Never take off without hearing \"cleared for takeoff\" and reading back the runway: runway confusion is a "
+     "classic accident cause.",
+     "MSFS: \"Ready for departure\" in the ATC window.",
+     {A320_GT_ATC_REPLY}, false,
+     [](const A320State& s, const A320Controls&) { return s.atcTakeoffCleared != 0; }},
+    {"DEPARTURE", "Take off",
+     "Release the parking brake [N], thrust levers to FLX/MCT [Del] or TOGA [Home], rotate at VR [Down arrow], gear "
+     "up at positive climb [G].",
+     "ONE HUNDRED KNOTS, V ONE, ROTATE, POSITIVE CLIMB.",
+     "Fly runway heading, as cleared, and climb to 4000 ft.",
+     "Same in MSFS.",
+     {A320_GT_PARK_BRAKE, A320_GT_THRUST_LEVERS, A320_GT_GEAR}, false,
+     [](const A320State& s, const A320Controls& c) { return !s.onGround && s.radioAltFt > 300.0 && !c.gearDown; }},
+    {"DEPARTURE", "Autopilot",
+     "Engage AP1 [A]. At 1500 ft put the thrust levers in CL [Ins] and press A/THR if it isn't on [T].",
+     "FMA: AP1 and A/THR; the aircraft climbs to 4000 ft.",
+     "With the autopilot flying you can work the radio.",
+     "Same in MSFS.",
+     {A320_GT_FCU_AP1, A320_GT_THRUST_LEVERS}, false,
+     [](const A320State& s, const A320Controls&) { return s.apEngaged != 0; }},
+    {"DEPARTURE", "Contact Radar",
+     "When Tower says \"contact Tallinn Radar 127.905\", read it back, then set 127.905 in STBY with the knobs and "
+     "press the transfer key.",
+     "COM 1 ACTIVE 127.905 TALLINN RADAR.",
+     "A handover always includes the frequency, and you read it back so a wrong frequency is caught.",
+     "MSFS tunes it for you if you let it; here you tune it yourself.",
+     {A320_GT_RADIO, A320_GT_ATC_REPLY}, false,
+     [](const A320State&, const A320Controls& c) { return c.com1ActiveKhz == 127905; }},
+    {"DEPARTURE", "Check in with Radar",
+     "Pick the check-in: \"Tallinn Radar, SIM320, passing ... climbing altitude 4000 feet, heading 260\".",
+     "Radar: \"radar contact\" and your first heading. Without the right squawk in AUTO, Radar asks for it first.",
+     "On first contact you tell the controller your level (passing and cleared) so the radar picture can be checked.",
+     "MSFS checks you in automatically after you tune.",
+     {A320_GT_ATC_REPLY}, false,
+     [](const A320State& s, const A320Controls&) { return s.atcRadarContact != 0; }},
+    {"VECTORS", "Fly the heading",
+     "Read back the heading (\"Right heading 070\"), set it in the FCU HDG window and pull the knob. [Keys: 3/4, "
+     "Shift = 10 degrees, U]",
+     "FMA: HDG; the ND heading bug on the assigned heading, the aircraft turning in the direction ATC said.",
+     "Radar vectors take you around to the final approach. Turn the way ATC says, even if the other way looks shorter.",
+     "Same FCU in MSFS.",
+     {A320_GT_FCU_HDG, A320_GT_ATC_REPLY}, false,
+     [](const A320State& s, const A320Controls&) {
+       return s.atcHeadingMag > 0 && std::fabs(std::remainder(s.fcuHdgMagDeg - s.atcHeadingMag, 360.0)) < 3.0 &&
+              s.latMode == A320_LAT_HDG;
+     }},
+    {"VECTORS", "Descend to 3000",
+     "When Radar clears you to 3000 ft, read it back with the QNH, set 3000 in the FCU ALT window and pull it "
+     "(open descent) [Keys: 5, 9].",
+     "FMA: OP DES, then ALT at 3000 ft.",
+     "Descend only to the cleared altitude: going below it is a level bust.",
+     "Same in MSFS.",
+     {A320_GT_FCU_ALT, A320_GT_ATC_REPLY}, false,
+     [](const A320State& s, const A320Controls&) { return s.atcClearedAltFt == 3000 && fcuAltIs(s, 3000); }},
+    {"VECTORS", "Cleared for the ILS",
+     "Keep reading back and flying the headings. On \"cleared ILS approach runway 26\": read it back, set the "
+     "heading, press APPR [K] and AP2 [Shift+A], and set SPD 180 if told.",
+     "FMA: LOC and G/S in blue (armed), then LOC* and G/S*.",
+     "The approach clearance lets the autopilot capture the localizer by itself; before it you may only fly the "
+     "headings ATC gives.",
+     "Same in MSFS.",
+     {A320_GT_FCU_APPR, A320_GT_ATC_REPLY}, false,
+     [](const A320State& s, const A320Controls&) {
+       return s.atcApproachCleared && ((s.armed & A320_ARMED_GS) || s.vertMode == A320_VERT_GS_STAR ||
+                                       s.vertMode == A320_VERT_GS || s.latMode == A320_LAT_LOC);
+     }},
+    {"APPROACH", "Contact Tower",
+     "On \"contact Tallinn Tower 135.905\": read it back, set 135.905 and transfer, then check in: \"established ILS "
+     "runway 26\".",
+     "Tower: \"wind calm, runway 26, cleared to land\".",
+     "Radar hands you to Tower once you are on the localizer; Tower owns the runway.",
+     "Same in MSFS.",
+     {A320_GT_RADIO, A320_GT_ATC_REPLY}, false,
+     [](const A320State& s, const A320Controls& c) { return c.com1ActiveKhz == 135905 && s.atcPhase >= A320_ATC_PHASE_TOWER; }},
+    {"APPROACH", "Landing clearance",
+     "Read back \"cleared to land runway 26\".",
+     "The landing clearance is logged; without it you go around at 500 ft at the latest.",
+     "Like the takeoff clearance, the landing clearance is read back with the runway.",
+     "Same in MSFS.",
+     {A320_GT_ATC_REPLY}, false,
+     [](const A320State& s, const A320Controls&) { return s.atcLandingCleared != 0; }},
+    {"APPROACH", "Configure and land",
+     "Flaps 2 and SPD 160 after LOC capture, gear down and flaps 3 at G/S capture, flaps FULL and VAPP, spoilers "
+     "armed, autobrake LO; the autoland flares, RETARD: levers to idle [End].",
+     "LAND, FLARE, ROLL OUT; reverse after touchdown [R], brake below 70 kt.",
+     "The same configuration as the ILS lesson (F3).",
+     "Same in MSFS.",
+     {A320_GT_FLAPS, A320_GT_GEAR, A320_GT_FMA}, false,
+     [](const A320State& s, const A320Controls&) { return s.onGround && s.atcTakeoffCleared && s.groundSpeedKt < 60.0 &&
+                                                           s.atcPhase >= A320_ATC_PHASE_TOWER; }},
+    {"AFTER LANDING", "Vacate",
+     "Slow down, then read back \"vacate the runway when able, contact Tallinn Handling 131.905\".",
+     "The flight is closed with Tower.",
+     "Vacating quickly frees the runway for the next aircraft; Handling then guides you to the stand.",
+     "Same in MSFS.",
+     {A320_GT_ATC_REPLY}, false,
+     [](const A320State& s, const A320Controls&) { return s.atcPhase == A320_ATC_PHASE_DONE && !s.atcAwaitingReadback; }},
+};
+
+constexpr int kRadioStepCount = static_cast<int>(sizeof(kRadioFlight) / sizeof(kRadioFlight[0]));
+
+const char* radioAlert(const A320State& s, const A320Controls& c, int) {
+  if (!s.atcEnabled) return "ATC is switched off: switch it on in the RADIO window.";
+  if (s.atcAwaitingReadback) return "ATC is waiting for your readback: pick it in the RADIO window.";
+  if (s.onGround && s.groundSpeedKt > 30.0 && !s.atcTakeoffCleared && c.thrustLever > 0.5)
+    return "No takeoff clearance yet: thrust levers to IDLE and brake.";
+  if (!s.onGround && s.atcApproachCleared && !s.atcLandingCleared && s.radioAltFt < 1000.0)
+    return "No landing clearance yet: contact Tower on 135.905.";
+  return nullptr;
+}
+
 const GuideDef kGuides[] = {
     {"ILS approach and autoland",
      "Runway 26 at Tallinn, from 20 NM out at 3000 ft: arm the approach, capture the localizer and glideslope, "
      "configure for landing and let both autopilots land.",
      A320_SCENARIO_APPROACH, "26", kIlsAutoland, kIlsStepCount, ilsAlert},
+    {"Radio: a full flight with ATC",
+     "From runway 26 with Tallinn Tower and Radar: ATIS, IFR clearance and readback, squawk, takeoff clearance, "
+     "handovers, radar vectors, the ILS clearance and the landing clearance.",
+     A320_SCENARIO_RUNWAY, "26", kRadioFlight, kRadioStepCount, radioAlert},
 };
 
 }  // namespace

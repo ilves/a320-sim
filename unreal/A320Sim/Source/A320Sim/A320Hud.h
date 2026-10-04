@@ -52,6 +52,10 @@ private:
 	void DrawOverhead(const AA320Aircraft& Aircraft);
 	// The MCDU pop-up: its 14 x 24 screen, line select keys, page keys and keypad.
 	void DrawMcdu(const AA320Aircraft& Aircraft);
+	// The RADIO window: VHF 1 radio management panel, transponder, the radio log and ATC replies.
+	void DrawRadio(const AA320Aircraft& Aircraft);
+	// The latest ATC call as a subtitle while the RADIO window is closed.
+	void DrawAtcSubtitle(const AA320Aircraft& Aircraft);
 	void DrawJoystickPanel(const class AA320PlayerController& Controller);
 	// First-start progress (shader/asset compilation) instead of a black screen; also logs
 	// progress lines and "READY" for the launcher window (scripts/play.ps1).
