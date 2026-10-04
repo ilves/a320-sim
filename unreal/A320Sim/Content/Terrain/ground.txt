@@ -1,0 +1,5 @@
+version=1
+origin=-220000.0|-200000.0
+spacing=250.0
+size=1121|1641
+# int16 little-endian, decimetres above the EETN field (same reference as the terrain heights), rows south to north, columns west to east

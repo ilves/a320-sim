@@ -18,7 +18,8 @@ working PFD, ND and E/WD. A FLIGHT menu at start picks the airports and how the 
 - **Scenery:** real terrain from open data, satellite imagery on real elevation:
   - **All of Estonia:** about 20 m per pixel, islands included.
   - **Around Tallinn:** 80 × 80 km at about 10 m per pixel.
-  - **Buildings:** about 135,000 OpenStreetMap buildings within 20 km of the airport.
+  - **Buildings:** about 380,000 OpenStreetMap buildings: Tallinn, around every airport, and the
+    towns of over about 4,000 people.
   - **Performance:** only what is near the aircraft is loaded, streamed in the background. See
     [Scenery](#scenery).
 - **Cockpit:**
@@ -539,16 +540,22 @@ scripts/, *.bat              Windows setup, run and package scripts
 
 `tools/make_terrain.py` builds `Content/Terrain/` from open data. The output is in the
 repository, so you only run the tool to change the area or the detail. It covers all of
-Estonia, with the islands, in three layers (about 58 MB in all):
-- **Detailed:** 80 × 80 km around EETN, 64 tiles of 10 km at about 10 m per pixel, and 16 more
-  over 40 × 40 km around Kuressaare (EEKE).
-- **Region:** 837 tiles of 10 km at about 20 m per pixel, wherever there is land (57.45–59.85° N,
+Estonia, with the islands, in three layers (about 78 MB in all):
+- **Detailed:** 80 × 80 km around EETN, 64 tiles of 10 km at about 10 m per pixel, and 65 more
+  around Kuressaare (EEKE, 16), Tartu (EETU, 16), Pärnu (EEPU, 16), Kärdla (EEKA, 9), Ruhnu (EERU, 4)
+  and Kihnu (EEKU, 4).
+- **Region:** 841 tiles of 10 km at about 20 m per pixel, wherever there is land (57.45–59.85° N,
   21.6–28.3° E, files in `Region/`). Open sea is skipped.
 - **Base:** one 570 km square at about 140 m per pixel, from southern Finland to Riga.
+- **Buildings:** about 382,000 (`buildings.bin`, 11 MB): within 20 km of EETN, around the other
+  airports and around every city and town of 4,000 people or more (23 of them, Narva to Valga).
+- **Ground map:** `ground.txt` and `ground.i16` (3.7 MB), the terrain heights every 250 m over the
+  region box, for the flight model (radio altimeter, crashes).
+- **Airport layouts:** `Content/Airports/<ICAO>.txt`, the taxiways and aprons of all seven airports.
 
 - **Imagery:** Sentinel-2 cloudless 2024 by EOX.
 - **Elevation:** Mapzen Terrain Tiles on AWS.
-- **Buildings:** OpenStreetMap, through the Overpass API.
+- **Buildings and airport layouts:** OpenStreetMap, through the Overpass API.
 
 To regenerate it:
 
@@ -556,18 +563,33 @@ To regenerate it:
 pip install numpy pillow
 python tools/make_terrain.py              # --inner-km, --tile-px, --buildings-km to change the area
 python tools/make_terrain.py --region none                       # the airport areas only
-python tools/make_terrain.py --airports none                     # no detailed area around EEKE
+python tools/make_terrain.py --airports none                     # only EETN gets detailed tiles
 python tools/make_terrain.py --region 57.5,60,21.5,28.5 --region-px 1024   # another box, sharper
 ```
 
 Other options: `--region-zoom`, `--region-grid`, `--region-quality`, `--outer-margin-km`,
-`--outer-px` and `--outer-step-km` (see `--help`). The first run downloads about 6,700 tiles into
+`--outer-px` and `--outer-step-km` (see `--help`). The first run downloads about 9,000 tiles into
 `build/terrain-cache`.
+`--patch-km` and `--patch-buildings-km` override the per-airport radii of `AIRPORTS` in the tool;
+`--town-population` and `--ground-m` set which towns get buildings and the ground map spacing.
+
+The ground map and the airport layouts are plain files (the tool's docstring has the details):
+```
+ground.txt    version=1 / origin=<southM>|<westM> / spacing=<metres> / size=<rows>|<cols>, one a line
+ground.i16    rows*cols int16 little-endian, decimetres above the EETN field (as the terrain),
+              rows south to north, columns west to east, the first sample at the origin
+Airports/<ICAO>.txt
+              icao=<ICAO>
+              level=<metres above the EETN field, the level the terrain is flattened to>
+              taxiway=<ref or ->|<widthM>|n,e;n,e;...  centreline; OSM width, else a default
+              apron=<ref or ->|n,e;n,e;...             simple closed outline, last point not repeated
+```
+Positions are metres north and east in the sim's frame, with one decimal; `#` starts a comment.
 
 How the sim uses the data:
 - **Placement:** every pixel and vertex goes through the same airport frame as the flight model,
   so the imaged runway lies under the modelled one.
-- **Airport area:** the terrain around the EETN and EEKE runways is blended to runway elevation.
+- **Airport area:** the terrain around the runways of all seven airports is blended to their elevation.
 - **Sea level:** the sea sits at sea level, about 40 m below the field.
 - **Streaming:** only the base layer loads at start-up, with the tiles under the aircraft. In
   flight, detailed tiles load within 20 km (and unload beyond 28 km), region tiles within 45 km
@@ -578,7 +600,8 @@ How the sim uses the data:
   flicker against each other. Where no finer tile is loaded, the base layer shows.
 - **Buildings:** they are boxes fitted to their OpenStreetMap footprints. The height comes from the
   `height` or `building:levels` tags, or is estimated from the building type. Buildings mapped as
-  multipolygons are skipped (for example the Ülemiste centre).
+  multipolygons are skipped (for example the Ülemiste centre). In towns away from the detailed
+  tiles, they stand on the region tiles' surface.
 - **Material:** `Play.bat` runs the editor build, so the terrain gets a lit material that is
   built at start-up. A packaged build (`Package.bat`) shows the same imagery unlit.
 
@@ -648,7 +671,7 @@ These are marked `a320-sim:` in `unreal/A320Sim/Content/JSBSim/aircraft/A320/A32
 - managed (FMS) speed and NAV modes, SIDs/STARs and DIR TO, and the flight directors;
 - go-around (TOGA during an approach: SRS and GA TRK);
 - weather radar and TCAS;
-- trees as 3D objects (forests are in the imagery only), and buildings beyond 20 km;
+- trees as 3D objects (forests are in the imagery only), and buildings in the villages;
 - a 3D clickable cockpit;
 - wind and low visibility;
 - failures.

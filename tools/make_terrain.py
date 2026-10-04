@@ -11,26 +11,45 @@ unreal/A320Sim/Content/Terrain/, which the simulator loads at start-up and strea
                  Tile lines are name|southM|westM|sizeM|grid|holeM, keyed by layer:
                    tile=    always loaded (the low-detail base under everything)
                    detail=  10 m/px tiles around the airport (tile_R_C) and around the other
-                            airports of --airports (eeke_R_C, ...), streamed close to the aircraft
+                            airports of --airports (eeke_R_C, eetu_R_C, ...), streamed close to the aircraft
                    region=  20 m/px tiles over all of Estonia (files in Region/), streamed
   *.jpg / *.f32  per tile: satellite image (north up) and a float32 height grid (metres above
                  the airfield, rows south to north, columns west to east)
   buildings.bin  OpenStreetMap buildings as boxes: 7 float32 each (north, east, ground height, length,
-                 width, yaw from north towards east in degrees, height), metres
+                 width, yaw from north towards east in degrees, height), metres. Rows: around EETN,
+                 around each airport of --airports, then the towns of --town-population and more
+                 (each OSM building once; a town's ground is the surface the sim draws there)
+  ground.txt     the ground height map for the flight model (radio altimeter, crashes), the same
+  ground.i16     flattened heights as the terrain on a regular grid over the region box:
+                   version=1
+                   origin=<southM>|<westM>        (the first sample, south-west corner)
+                   spacing=<metres>
+                   size=<rows>|<cols>
+                 ground.i16 holds rows*cols int16 little-endian, decimetres above the EETN field,
+                 rows south to north, columns west to east (sample r,c at north = south + r*spacing,
+                 east = west + c*spacing); sea level outside the elevation data
+and unreal/A320Sim/Content/Airports/<ICAO>.txt for every airport in AIRPORTS: its taxiways and aprons
+from OpenStreetMap (runways come from the AIP data in the sim), plain text, '#' starts a comment:
+  icao=<ICAO>
+  level=<metres above the EETN field: the level the terrain is flattened to there>
+  taxiway=<ref or ->|<widthM>|n,e;n,e;...   centreline polyline, north/east metres in the same frame
+  apron=<ref or ->|n,e;n,e;...              simple closed outline: last point not repeated, no holes
+Numbers have one decimal. Taxiway width is the OSM width tag, else the airport's default (AIRPORTS).
 
 Sources (keep the attribution when sharing the output):
   Imagery   Sentinel-2 cloudless 2024 by EOX IT Services GmbH (https://s2maps.eu), contains
             modified Copernicus Sentinel data 2024. CC BY-NC-SA 4.0: non-commercial use.
   Elevation Terrain Tiles (Mapzen, AWS Open Data): SRTM, GMTED, ETOPO1 and others.
-  Buildings OpenStreetMap contributors, ODbL (via the Overpass API).
+  Buildings OpenStreetMap contributors, ODbL (via the Overpass API), also the airport layouts.
 
 The sim's world is the airport's local east-north-up tangent plane (core/src/Geo.cpp), with
 heights above the field; every vertex and pixel is placed through the same transform.
 
-Every runway in AIRPORTS is blended to its elevation in all layers and under the buildings. Each
-airport named by --airports (default EEKE) also gets detailed tiles over the 10 km squares within
---patch-km of its reference point, each with a region tile of the same square, and OpenStreetMap
-buildings within --patch-buildings-km (cached as buildings_<code>_<m>.json).
+Every runway in AIRPORTS is blended to its elevation in all layers, under the buildings and in the
+ground map. Each airport named by --airports (default: all but EETN) also gets detailed tiles over
+the 10 km squares within its patch radius (AIRPORTS, or --patch-km for all) of its reference point,
+each with a region tile of the same square, and OpenStreetMap buildings within its buildings radius
+(or --patch-buildings-km), cached as buildings_<code>_<m>.json.
 """
 import argparse
 import collections
@@ -41,6 +60,7 @@ import math
 import os
 import sys
 import time
+import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -60,10 +80,12 @@ USER_AGENT = "a320-sim-terrain/1.0 (personal flight simulator; one-time download
 IMAGERY_URL = "https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2024_3857/default/g/{z}/{y}/{x}.jpg"
 ELEVATION_URL = "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"
 OVERPASS_URLS = [
-    "https://overpass-api.de/api/interpreter",
     "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+    "https://overpass.openstreetmap.fr/api/interpreter",
+    "https://overpass-api.de/api/interpreter",
     "https://overpass.kumi.systems/api/interpreter",
 ]
+AIRPORTS_DIR = os.path.join(ROOT, "unreal", "A320Sim", "Content", "Airports")
 ATTRIBUTION = ("Imagery: Sentinel-2 cloudless 2024 by EOX IT Services GmbH (s2maps.eu), modified Copernicus "
                "Sentinel data 2024, CC BY-NC-SA 4.0. Elevation: Mapzen Terrain Tiles (AWS Open Data). "
                "Buildings: (c) OpenStreetMap contributors, ODbL.")
@@ -73,13 +95,33 @@ RWY08 = (59.413338, 24.805908, 129.0)
 RWY26 = (59.413174, 24.867208, 131.0)
 REF = ((RWY08[0] + RWY26[0]) / 2.0, (RWY08[1] + RWY26[1]) / 2.0, 131.0 * 0.3048)
 
-# Runways the terrain is flattened around: both ends (lat, lon), the level to blend to (ft MSL) and
-# the reference point a detailed patch is centred on. EEKE 17/35 from the Estonian eAIP AD 2.12
-# (AIRAC 2026-10-01): thresholds 58°14'27.69"N 22°30'33.61"E (10 ft), 58°13'23.05"N 22°30'34.52"E (8 ft).
-Airport = collections.namedtuple("Airport", "ends elev_ft ref")
+# Runways the terrain is flattened around: both ends (lat, lon), the level to blend to (ft MSL), the
+# reference point a detailed patch is centred on, the half widths (km) of that patch and of its
+# buildings area (None: the --patch-km / --patch-buildings-km defaults) and the taxiway width (m) the
+# layout uses where OSM has none. Data from the Estonian eAIP AD 2.2/2.12 (AIRAC 2026-10-01).
+Airport = collections.namedtuple("Airport", "ends elev_ft ref patch_km buildings_km taxiway_m",
+                                 defaults=(None, None, 18.0))
 AIRPORTS = {
-    "EETN": Airport((RWY08[:2], RWY26[:2]), 131.0, REF[:2]),
-    "EEKE": Airport(((58.2410250, 22.5093361), (58.2230694, 22.5095889)), 9.0, (58.2300000, 22.5094444)),
+    "EETN": Airport((RWY08[:2], RWY26[:2]), 131.0, REF[:2], taxiway_m=23.0),
+    # 17/35 thresholds 58°14'27.69"N 22°30'33.61"E (10 ft), 58°13'23.05"N 22°30'34.52"E (8 ft).
+    "EEKE": Airport(((58.2410250, 22.5093361), (58.2230694, 22.5095889)), 9.0, (58.2300000, 22.5094444), 15.0, 8.0),
+    # Tartu 08/26: 58°18'25.87"N 26°40'17.26"E, 58°18'27.47"N 26°42'07.76"E; ARP 58°18'27"N 26°41'13"E.
+    # Its buildings reach Tartu city, 9 km NNE.
+    "EETU": Airport(((58.3071861, 26.6714611), (58.3076306, 26.7021556)), 202.0, (58.3075000, 26.6869444),
+                    15.0, 12.0),
+    # Pärnu 03/21: 58°24'48.66"N 24°27'56.45"E, 58°25'40.63"N 24°29'06.58"E; ARP 58°25'08"N 24°28'22"E.
+    "EEPU": Airport(((58.4135167, 24.4656806), (58.4279528, 24.4851611)), 38.0, (58.4188889, 24.4727778),
+                    12.0, 8.0),
+    # Kärdla 14/32: 58°59'47.53"N 22°49'25.47"E, 58°59'06.16"N 22°50'16.78"E; ARP 58°59'27"N 22°49'51"E.
+    "EEKA": Airport(((58.9965361, 22.8237417), (58.9850444, 22.8379944)), 14.0, (58.9908333, 22.8308333),
+                    10.0, 5.0),
+    # Ruhnu 13/31 (600 m grass): 57°47'16.1"N 23°15'32.9"E, 57°47'00.8"N 23°15'55.6"E; ARP 57°47'08"N 23°15'44"E.
+    "EERU": Airport(((57.7878056, 23.2591389), (57.7835556, 23.2654444)), 10.0, (57.7855556, 23.2622222),
+                    4.0, 4.0, 10.0),
+    # Kihnu 04/22 (600 m grass): 58°08'46.87"N 23°59'41.22"E, 58°08'59.44"N 24°00'09.15"E;
+    # ARP 58°08'54"N 24°00'09"E.
+    "EEKU": Airport(((58.1463528, 23.9947833), (58.1498444, 24.0025417)), 10.0, (58.1483333, 24.0025000),
+                    5.0, 4.0, 10.0),
 }
 
 # Estonia with the islands and the south-east: lat min, lat max, lon min, lon max.
@@ -301,9 +343,13 @@ def airport_flatten(frame, e, n, h):
         dist = np.hypot(np.maximum(along, 0.0), np.maximum(across, 0.0))
         w = np.clip(dist / 700.0, 0.0, 1.0)
         w = w * w * (3.0 - 2.0 * w)
-        level = airport.elev_ft * 0.3048 - REF[2]  # metres above the reference: 0 at EETN
-        h = level + (h - level) * w
+        level = airport_level(airport)
+        h = np.where(w < 1.0, level + (h - level) * w, h)  # exactly unchanged away from the airport
     return h
+
+
+def airport_level(airport):
+    return airport.elev_ft * 0.3048 - REF[2]  # metres above the reference: 0 at EETN
 
 
 def ground_heights(frame, elevation, ee, nn):
@@ -372,6 +418,20 @@ class Coverage:
         out[inside] = low[r[inside], c[inside]]
         return out
 
+    def surface(self, ee, nn):
+        """Heights on the mesh the sim builds from this grid (A320Terrain.cpp: each cell split along
+        its south-west to north-east diagonal), inf outside the grid or where no tile is."""
+        x, y = (np.asarray(ee) - self.west) / self.spacing, (np.asarray(nn) - self.south) / self.spacing
+        rows, cols = self.h.shape
+        c = np.clip(np.floor(x).astype(np.int64), 0, cols - 2)
+        r = np.clip(np.floor(y).astype(np.int64), 0, rows - 2)
+        fc, fr = x - c, y - r
+        a, b, cc, d = self.h[r, c], self.h[r, c + 1], self.h[r + 1, c], self.h[r + 1, c + 1]
+        with np.errstate(invalid="ignore"):
+            out = np.where(fr >= fc, a + fc * (d - cc) + fr * (cc - a), a + fc * (b - a) + fr * (d - b))
+        inside = (x >= 0) & (x <= cols - 1) & (y >= 0) & (y <= rows - 1)
+        return np.where(inside & np.isfinite(out), out, np.inf)
+
 
 def base_heights(frame, elevation, south, west, size, grid, coverages):
     """The always-loaded base layer: true heights, but under any finer tile it is pushed below it.
@@ -394,6 +454,14 @@ def base_heights(frame, elevation, south, west, size, grid, coverages):
 
 def region_tiles(frame, bounds, tile, elevation_zoom):
     """The tile grid (aligned with the detailed area) over a lat/lon box, and its elevation."""
+    west, south, rows, cols = region_grid(frame, bounds, tile)
+    lat_r, lon_r = geo_bounds(frame, west, south, west + cols * tile, south + rows * tile)
+    elevation = Source("elevation", ELEVATION_URL, elevation_zoom, "png", decode_terrarium).area(lat_r, lon_r)
+    return west, south, rows, cols, elevation
+
+
+def region_grid(frame, bounds, tile):
+    """West, south, rows and columns of the tile grid (aligned with the detailed area) over a lat/lon box."""
     lat0, lat1, lon0, lon1 = bounds
     t = np.linspace(0.0, 1.0, 33)
     lat = np.concatenate([lat0 + (lat1 - lat0) * t, np.full(33, lat1), lat0 + (lat1 - lat0) * t, np.full(33, lat0)])
@@ -401,43 +469,63 @@ def region_tiles(frame, bounds, tile, elevation_zoom):
     e, n = frame.to_enu(lat, lon)
     west, east = math.floor(e.min() / tile) * tile, math.ceil(e.max() / tile) * tile
     south, north = math.floor(n.min() / tile) * tile, math.ceil(n.max() / tile) * tile
-    rows, cols = int(round((north - south) / tile)), int(round((east - west) / tile))
-    lat_r, lon_r = geo_bounds(frame, west, south, east, north)
-    elevation = Source("elevation", ELEVATION_URL, elevation_zoom, "png", decode_terrarium).area(lat_r, lon_r)
-    return west, south, rows, cols, elevation
+    return west, south, int(round((north - south) / tile)), int(round((east - west) / tile))
 
 
-def fetch_buildings(frame, half_m, centre=(0.0, 0.0), cache_name=None):
-    """OpenStreetMap buildings in the square of half width half_m around centre (east, north)."""
+def overpass(query, path, what):
+    """An Overpass API answer (parsed JSON), cached at path; None if no server gives a complete one."""
+    if not os.path.exists(path):
+        body = urllib.parse.urlencode({"data": query}).encode()
+        last = None
+        for attempt in range(3):  # the public servers are often busy: try them all, a few times
+            for url in OVERPASS_URLS:
+                try:
+                    print(f"  {what}: asking {url}", flush=True)
+                    req = urllib.request.Request(url, data=body, headers={"User-Agent": USER_AGENT})
+                    with urllib.request.urlopen(req, timeout=400) as r:
+                        data = r.read()
+                    remark = json.loads(data).get("remark", "")
+                    if "error" in remark.lower():  # a timed-out query still answers 200, with partial data
+                        raise RuntimeError(remark)
+                    os.makedirs(os.path.dirname(path), exist_ok=True)
+                    with open(path + ".part", "wb") as f:
+                        f.write(data)
+                    os.replace(path + ".part", path)
+                    break
+                except Exception as e:  # noqa: BLE001 - any mirror failure: try the next one
+                    last = e
+            else:
+                time.sleep(30 * (attempt + 1))
+                continue
+            break
+        else:
+            print(f"  {what}: no Overpass server answered ({last})")
+            return None
+    with open(path, "rb") as f:
+        return json.load(f)
+
+
+def fetch_buildings(frame, half_m, centre=(0.0, 0.0), cache_name=None, seen=None):
+    """OpenStreetMap buildings in the square of half width half_m around centre (east, north).
+
+    seen: OSM way ids already taken from other areas, skipped here; updated with the new ones.
+    """
     ce, cn = centre
     (lat0, lat1), (lon0, lon1) = geo_bounds(frame, ce - half_m, cn - half_m, ce + half_m, cn + half_m)
     query = (f'[out:json][timeout:300];(way["building"]({lat0:.5f},{lon0:.5f},{lat1:.5f},{lon1:.5f}););'
              "out tags geom;")
-    path = os.path.join(CACHE_DIR, cache_name or f"buildings_{int(half_m)}.json")
-    if not os.path.exists(path):
-        body = urllib.parse.urlencode({"data": query}).encode()
-        last = None
-        for url in OVERPASS_URLS:
-            try:
-                print(f"  buildings: asking {url}", flush=True)
-                req = urllib.request.Request(url, data=body, headers={"User-Agent": USER_AGENT})
-                with urllib.request.urlopen(req, timeout=400) as r:
-                    data = r.read()
-                json.loads(data)
-                os.makedirs(CACHE_DIR, exist_ok=True)
-                with open(path, "wb") as f:
-                    f.write(data)
-                break
-            except Exception as e:  # noqa: BLE001 - any mirror failure: try the next one
-                last = e
-        else:
-            print(f"  buildings: no Overpass server answered ({last}); skipping buildings")
-            return None
-    with open(path, "rb") as f:
-        elements = json.load(f).get("elements", [])
+    data = overpass(query, os.path.join(CACHE_DIR, cache_name or f"buildings_{int(half_m)}.json"), "buildings")
+    if data is None:
+        print("  buildings: skipped")
+        return None
+    elements = data.get("elements", [])
 
     boxes = []
     for el in elements:
+        if seen is not None:
+            if el.get("id") in seen:
+                continue
+            seen.add(el.get("id"))
         geom = el.get("geometry")
         if not geom or len(geom) < 3:
             continue
@@ -493,23 +581,32 @@ def building_height(tags, area):
     return 6.0 if area < 200.0 else 9.0
 
 
-def building_rows(frame, elevation, half_m, centre=(0.0, 0.0), cache_name=None):
-    """buildings.bin rows (north, east, ground, length, width, yaw, height) for one area, or None."""
-    boxes = fetch_buildings(frame, half_m, centre, cache_name)
+def building_rows(frame, elevation, half_m, centre=(0.0, 0.0), cache_name=None, seen=None, surface=None):
+    """buildings.bin rows (north, east, ground, length, width, yaw, height) for one area, or None.
+
+    surface: optional (east, north) -> heights of the mesh the sim draws there, inf where it has none;
+    elsewhere the ground is the true (flattened) height under each building.
+    """
+    boxes = fetch_buildings(frame, half_m, centre, cache_name, seen)
     if not boxes:
         return None
     b = np.array(boxes, dtype=np.float64)
     ground = ground_heights(frame, elevation, b[:, 1], b[:, 0])
+    if surface is not None:
+        drawn = surface(b[:, 1], b[:, 0])
+        ground = np.where(np.isfinite(drawn), drawn, ground)
     return np.column_stack([b[:, 0], b[:, 1], ground, b[:, 2], b[:, 3], b[:, 4], b[:, 5]]).astype("<f4")
 
 
-def write_patch(frame, args, code, tile, taken):
-    """Detailed tiles over the grid squares within --patch-km of an airport, and its buildings.
+def write_patch(frame, args, code, tile, taken, seen=None):
+    """Detailed tiles over the grid squares within the patch radius of an airport, and its buildings.
 
     taken: (south, west) of squares that already have a detailed tile; updated with the new ones.
+    seen: OSM building ids already written (see fetch_buildings).
     """
     ce, cn = frame.to_enu(*AIRPORTS[code].ref)
-    half = args.patch_km * 1000.0
+    patch_km, buildings_km = patch_radii_km(args, code)
+    half = patch_km * 1000.0
     west, south = math.floor((ce - half) / tile) * tile, math.floor((cn - half) / tile) * tile
     cols = int(math.ceil((ce + half) / tile)) - int(west / tile)
     rows = int(math.ceil((cn + half) / tile)) - int(south / tile)
@@ -531,12 +628,306 @@ def write_patch(frame, args, code, tile, taken):
                                                 args.tile_px, imagery))
     print(f"  {len(lines)} tiles of {rows}x{cols} squares written", flush=True)
     rows_b = None
-    if args.patch_buildings_km > 0:
-        half_b = args.patch_buildings_km * 1000.0
-        rows_b = building_rows(frame, elevation, half_b, (ce, cn), f"buildings_{code.lower()}_{int(half_b)}.json")
+    if buildings_km > 0:
+        half_b = buildings_km * 1000.0
+        rows_b = building_rows(frame, elevation, half_b, (ce, cn), f"buildings_{code.lower()}_{int(half_b)}.json",
+                               seen)
         print(f"  {0 if rows_b is None else len(rows_b)} buildings", flush=True)
     extent = (west, south, west + cols * tile, south + rows * tile)
     return lines, Coverage(west, south, tile / (grid - 1), heights), rows_b, extent
+
+
+def patch_radii_km(args, code):
+    """Half widths (km) of an airport's detailed patch and of its buildings area."""
+    airport = AIRPORTS[code]
+    patch = args.patch_km if args.patch_km is not None else airport.patch_km or 15.0
+    buildings = args.patch_buildings_km if args.patch_buildings_km is not None else airport.buildings_km or 8.0
+    return patch, buildings
+
+
+TOWNS_QUERY = ('[out:json][timeout:180];area["ISO3166-1"="EE"][admin_level=2]->.ee;'
+               'node["place"~"^(city|town)$"](area.ee);out;')
+
+
+def fetch_towns(min_population):
+    """Estonia's cities and towns (OSM place nodes) of at least min_population: (name, population, lat, lon)."""
+    data = overpass(TOWNS_QUERY, os.path.join(CACHE_DIR, "towns_ee.json"), "towns")
+    towns = []
+    for el in (data or {}).get("elements", []):
+        tags = el.get("tags", {})
+        digits = "".join(ch for ch in tags.get("population", "").split(";")[0] if ch.isdigit())
+        if digits and int(digits) >= min_population and "lat" in el:
+            towns.append((tags.get("name", str(el["id"])), int(digits), el["lat"], el["lon"]))
+    return sorted(towns, key=lambda t: (-t[1], t[0]))
+
+
+def town_half_km(population):
+    """Half width of a town's buildings area: 2.5 km at 4,000 people, up to 6 km at 50,000 and more."""
+    t = (math.log10(population) - math.log10(4000.0)) / (math.log10(50000.0) - math.log10(4000.0))
+    return 2.5 + 3.5 * min(max(t, 0.0), 1.0)
+
+
+def town_buildings(frame, args, tile, areas, seen, taken, region):
+    """buildings.bin rows for each town of --town-population not inside an area done before.
+
+    areas: (east, north, half width) of the buildings areas so far, updated; region: the region
+    layer's Coverage, whose mesh is what the sim draws where no detailed tile is (taken: those squares).
+    """
+    out = []
+    for name, population, lat, lon in fetch_towns(args.town_population):
+        ce, cn = frame.to_enu(lat, lon)
+        half = town_half_km(population) * 1000.0
+        if any(abs(ce - e) + half <= h and abs(cn - n) + half <= h for e, n, h in areas):
+            print(f"  {name}: inside an area done before", flush=True)
+            continue
+        areas.append((ce, cn, half))
+
+        def surface(ee, nn):
+            if region is None:
+                return np.full(np.shape(ee), np.inf)
+            detailed = np.array([square_key(math.floor(n / tile) * tile, math.floor(e / tile) * tile) in taken
+                                 for e, n in zip(ee, nn)], dtype=bool)
+            return np.where(detailed, np.inf, region.surface(ee, nn))
+
+        lat_r, lon_r = geo_bounds(frame, ce - half, cn - half, ce + half, cn + half)
+        elevation = Source("elevation", ELEVATION_URL, 11, "png", decode_terrarium).area(lat_r, lon_r)
+        slug = "".join(c if c.isalnum() else "-" for c in
+                       unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode().lower())
+        rows = building_rows(frame, elevation, half, (ce, cn), f"buildings_town_{slug}_{int(half)}.json", seen,
+                             surface)
+        print(f"  {name} ({population} people, {half / 1000:.1f} km): {0 if rows is None else len(rows)} buildings",
+              flush=True)
+        if rows is not None:
+            out.append(rows)
+    return out
+
+
+def write_ground(frame, bounds, tile, spacing):
+    """ground.txt / ground.i16: the flattened terrain heights on a regular grid over the region box."""
+    west, south, rows, cols = region_grid(frame, bounds, tile)
+    nr, nc = int(round(rows * tile / spacing)) + 1, int(round(cols * tile / spacing)) + 1
+    e = west + np.arange(nc) * spacing
+    elevation = Source("elevation", ELEVATION_URL, 11, "png", decode_terrarium, keep=400)
+    bands = [np.arange(r0, min(r0 + 40, nr)) for r0 in range(0, nr, 40)]
+    needed = set()
+    for band in bands:
+        ee, nn = np.meshgrid(e, south + band * spacing)
+        x0, y0, x1, y1 = tile_range(*frame.to_geo(ee, nn), elevation.z, pad_px=1.0)
+        needed.update((x, y) for y in range(y0, y1 + 1) for x in range(x0, x1 + 1))
+    elevation.prefetch(needed)
+    heights = np.zeros((nr, nc), dtype="<i2")
+    for band in bands:
+        ee, nn = np.meshgrid(e, south + band * spacing)
+        h = ground_heights(frame, elevation, ee, nn)
+        heights[band] = np.clip(np.rint(h * 10.0), -32768, 32767).astype("<i2")
+    heights.tofile(os.path.join(OUT_DIR, "ground.i16"))
+    with open(os.path.join(OUT_DIR, "ground.txt"), "w", encoding="utf-8") as f:
+        f.write(f"version=1\norigin={south:.1f}|{west:.1f}\nspacing={spacing:.1f}\nsize={nr}|{nc}\n"
+                "# int16 little-endian, decimetres above the EETN field (same reference as the terrain heights), "
+                "rows south to north, columns west to east\n")
+    worst = 0.0
+    for airport in AIRPORTS.values():
+        (e0, n0), (e1, n1) = (frame.to_enu(lat, lon) for lat, lon in airport.ends)
+        x, y = ((e0 + e1) / 2.0 - west) / spacing, ((n0 + n1) / 2.0 - south) / spacing
+        c, r = int(x), int(y)
+        fx, fy = x - c, y - r
+        g = heights[r:r + 2, c:c + 2].astype(np.float64) / 10.0
+        at = (g[0, 0] * (1 - fx) + g[0, 1] * fx) * (1 - fy) + (g[1, 0] * (1 - fx) + g[1, 1] * fx) * fy
+        worst = max(worst, abs(at - airport_level(airport)))
+    print(f"  {nr}x{nc} heights every {spacing:.0f} m, {heights.nbytes / 1e6:.1f} MB; "
+          f"runway midpoints within {worst:.2f} m of their level", flush=True)
+
+
+LAYOUT_RADIUS_M = 4000.0
+LAYOUT_MAX_POINTS = 200
+
+
+def write_layouts(frame):
+    """Content/Airports/<ICAO>.txt: taxiway centrelines and apron outlines from OpenStreetMap."""
+    os.makedirs(AIRPORTS_DIR, exist_ok=True)
+    for code, airport in AIRPORTS.items():
+        ce, cn = frame.to_enu(*airport.ref)
+        r = LAYOUT_RADIUS_M
+        t = np.linspace(-r, r, 9)
+        lat, lon = frame.to_geo(np.concatenate([t, t, np.full(9, -r), np.full(9, r)]) + ce,
+                                np.concatenate([np.full(9, -r), np.full(9, r), t, t]) + cn)
+        bbox = f"{lat.min():.5f},{lon.min():.5f},{lat.max():.5f},{lon.max():.5f}"
+        query = (f'[out:json][timeout:120];(way["aeroway"~"^(taxiway|apron)$"]({bbox});'
+                 f'relation["aeroway"="apron"]({bbox}););out tags geom;')
+        data = overpass(query, os.path.join(CACHE_DIR, f"airport_{code.lower()}.json"), f"{code} layout")
+        if data is None:
+            print(f"  {code}: no layout (kept the old file, if any)")
+            continue
+
+        def enu(geom):
+            e, n = frame.to_enu(np.array([g[0] for g in geom]), np.array([g[1] for g in geom]))
+            return [(round(float(nv), 1), round(float(ev), 1)) for nv, ev in zip(n, e)]
+
+        def near(p):
+            return math.hypot(p[0] - cn, p[1] - ce) <= r
+
+        elements = data.get("elements", [])
+        in_relation = {m["ref"] for el in elements if el["type"] == "relation"
+                       for m in el.get("members", []) if m.get("type") == "way"}
+        taxiways, aprons, dropped = [], [], 0
+        for el in elements:
+            tags = el.get("tags", {})
+            ref = layout_ref(tags)
+            if el["type"] == "way" and tags.get("aeroway") == "taxiway":
+                width = osm_width(tags) or airport.taxiway_m
+                run = []
+                for p in dedupe(enu([(g["lat"], g["lon"]) for g in el.get("geometry", [])])) + [None]:
+                    if p is not None and near(p):
+                        run.append(p)
+                        continue
+                    if len(run) >= 2:  # the part within reach of the airport
+                        taxiways.append((ref, width, run))
+                    run = []
+            elif tags.get("aeroway") == "apron":
+                if el["type"] == "way":
+                    geom = [(g["lat"], g["lon"]) for g in el.get("geometry", [])]
+                    closed = len(geom) >= 4 and geom[0] == geom[-1]
+                    rings = [geom[:-1]] if closed and el["id"] not in in_relation else []
+                else:
+                    rings = join_rings([[(g["lat"], g["lon"]) for g in m.get("geometry", [])]
+                                        for m in el.get("members", []) if m.get("role") == "outer"])
+                for ring in rings:
+                    pts = simple_ring(dedupe(enu(ring), closed=True))
+                    if pts is None or not all(near(p) for p in pts):
+                        dropped += 1
+                        continue
+                    aprons.append((ref, pts))
+
+        lines = [f"# {code} taxiways and aprons, generated by tools/make_terrain.py (see there for the format).",
+                 "# From OpenStreetMap: (c) OpenStreetMap contributors, ODbL. North,east metres in the sim's frame.",
+                 f"icao={code}", f"level={airport_level(airport):.1f}"]
+        lines += [f"taxiway={ref}|{w:.1f}|" + ";".join(f"{n:.1f},{e:.1f}" for n, e in pts) for ref, w, pts in taxiways]
+        lines += [f"apron={ref}|" + ";".join(f"{n:.1f},{e:.1f}" for n, e in pts) for ref, pts in aprons]
+        with open(os.path.join(AIRPORTS_DIR, f"{code}.txt"), "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+        print(f"  {code}: {len(taxiways)} taxiways, {len(aprons)} aprons"
+              + (f", {dropped} aprons skipped (not simple or beyond {r / 1000:.0f} km)" if dropped else ""), flush=True)
+
+
+def layout_ref(tags):
+    ref = tags.get("ref", "").strip()
+    return "".join("/" if c in "|;=\n" else c for c in ref) or "-"
+
+
+def osm_width(tags):
+    """The OSM width tag in metres (plain metres, or feet marked ' or ft), None if absent or odd."""
+    text = tags.get("width", "").strip().lower()
+    try:
+        value = float(text.replace(",", ".").rstrip("m'ft ").split()[0])
+    except (ValueError, IndexError):
+        return None
+    value *= 0.3048 if ("'" in text or "ft" in text) else 1.0
+    return value if 3.0 <= value <= 100.0 else None
+
+
+def dedupe(pts, closed=False):
+    """Drops points equal to the one before (after rounding), and for a ring a last point equal to the first."""
+    out = [p for i, p in enumerate(pts) if i == 0 or p != pts[i - 1]]
+    while closed and len(out) > 1 and out[-1] == out[0]:
+        out.pop()
+    return out
+
+
+def join_rings(parts):
+    """Closed rings (last point not repeated) from multipolygon member ways joined end to end."""
+    parts = [list(p) for p in parts if len(p) >= 2]
+    rings = []
+    while parts:
+        ring = parts.pop(0)
+        while ring[0] != ring[-1]:
+            for i, p in enumerate(parts):
+                if p[0] == ring[-1] or p[-1] == ring[-1]:
+                    ring += (p if p[0] == ring[-1] else p[::-1])[1:]
+                    parts.pop(i)
+                    break
+            else:
+                break  # an unclosed ring: broken data, left out
+        if len(ring) >= 4 and ring[0] == ring[-1]:
+            rings.append(ring[:-1])
+    return rings
+
+
+def simple_ring(pts):
+    """The outline with at most LAYOUT_MAX_POINTS points (Douglas-Peucker), or None if it can't be simple."""
+    if len(pts) < 3:
+        return None
+    tol = 0.0
+    for _ in range(40):
+        out = pts if tol == 0.0 else simplify_ring(pts, tol)
+        if 3 <= len(out) <= LAYOUT_MAX_POINTS and is_simple(out):
+            return out
+        tol = 0.25 if tol == 0.0 else tol * 1.4
+    return None
+
+
+def simplify_ring(pts, tol):
+    a = np.array(pts, dtype=np.float64)
+    far = int(np.argmax(np.hypot(*(a - a[0]).T)))
+    keep = np.zeros(len(a), dtype=bool)
+    keep[[0, far]] = True
+    for lo, hi in ((0, far), (far, len(a))):
+        stack = [(lo, hi)]
+        while stack:
+            i, j = stack.pop()
+            if j - i < 2:
+                continue
+            p, q = a[i], a[j % len(a)]
+            seg = q - p
+            mid = a[i + 1:j]
+            d = np.abs(seg[0] * (mid[:, 1] - p[1]) - seg[1] * (mid[:, 0] - p[0])) / max(np.hypot(*seg), 1e-9)
+            k = int(np.argmax(d))
+            if d[k] > tol:
+                keep[i + 1 + k] = True
+                stack += [(i, i + 1 + k), (i + 1 + k, j)]
+    return [pts[i] for i in np.flatnonzero(keep)]
+
+
+def is_simple(pts):
+    """True if no two edges of the closed outline meet except neighbours at their shared corner."""
+    a = np.array(pts, dtype=np.float64)
+    n = len(a)
+    if len(set(pts)) != n:
+        return False
+    p, q = a, np.roll(a, -1, axis=0)
+
+    def orient(o, u, v):
+        return np.sign((u[..., 0] - o[..., 0]) * (v[..., 1] - o[..., 1])
+                       - (u[..., 1] - o[..., 1]) * (v[..., 0] - o[..., 0]))
+
+    for i in range(n):
+        j = np.arange(i + 2, n)
+        if i == 0:
+            j = j[j != n - 1]
+        if not len(j):
+            continue
+        d1, d2 = orient(p[i], q[i], p[j]), orient(p[i], q[i], q[j])
+        d3, d4 = orient(p[j], q[j], p[i]), orient(p[j], q[j], q[i])
+        if np.any((d1 * d2 < 0) & (d3 * d4 < 0)):
+            return False
+        for k in np.flatnonzero((d1 == 0) | (d2 == 0) | (d3 == 0) | (d4 == 0)):  # touching or collinear
+            jj = j[k]
+            if segments_touch(p[i], q[i], p[jj], q[jj]):
+                return False
+    return True
+
+
+def segments_touch(p1, q1, p2, q2):
+    def on(o, u, v):  # v on segment o-u, given collinear
+        return min(o[0], u[0]) - 1e-9 <= v[0] <= max(o[0], u[0]) + 1e-9 and \
+            min(o[1], u[1]) - 1e-9 <= v[1] <= max(o[1], u[1]) + 1e-9
+
+    def cross(o, u, v):
+        return (u[0] - o[0]) * (v[1] - o[1]) - (u[1] - o[1]) * (v[0] - o[0])
+
+    for o, u, v in ((p1, q1, p2), (p1, q1, q2), (p2, q2, p1), (p2, q2, q1)):
+        if cross(o, u, v) == 0 and on(o, u, v):
+            return True
+    return False
 
 
 def union(a, b):
@@ -579,18 +970,24 @@ def main():
     ap.add_argument("--outer-px", type=int, default=4096, help="low-detail base image size (px)")
     ap.add_argument("--outer-step-km", type=float, default=2.0, help="low-detail base height spacing (km)")
     ap.add_argument("--buildings-km", type=float, default=20.0, help="half width of the buildings area (km), 0 = none")
-    ap.add_argument("--airports", type=parse_airports, default=["EEKE"],
-                    help="other airports (codes from AIRPORTS) that get a detailed patch, comma-separated, or none")
-    ap.add_argument("--patch-km", type=float, default=15.0, help="half width of each airport's detailed patch (km)")
-    ap.add_argument("--patch-buildings-km", type=float, default=8.0,
-                    help="half width of each airport patch's buildings area (km), 0 = none")
+    ap.add_argument("--airports", type=parse_airports, default=[c for c in AIRPORTS if c != "EETN"],
+                    help="other airports (codes from AIRPORTS) that get a detailed patch, comma-separated, or none "
+                         "(default: all but EETN)")
+    ap.add_argument("--patch-km", type=float, default=None,
+                    help="half width of every airport's detailed patch (km); default: per airport in AIRPORTS")
+    ap.add_argument("--patch-buildings-km", type=float, default=None,
+                    help="half width of every airport patch's buildings area (km), 0 = none; default: per airport")
+    ap.add_argument("--town-population", type=int, default=4000,
+                    help="buildings also around every city and town of at least this many people, 0 = none")
+    ap.add_argument("--ground-m", type=float, default=250.0,
+                    help="spacing of the flight model's ground height map (m), 0 = none")
     args = ap.parse_args()
 
     frame = Frame(*REF)
     os.makedirs(REGION_DIR, exist_ok=True)
     for d in (OUT_DIR, REGION_DIR):
         for f in os.listdir(d):
-            if f.endswith((".jpg", ".f32", ".bin")) or f == "terrain.txt":
+            if f.endswith((".jpg", ".f32", ".bin", ".i16")) or f in ("terrain.txt", "ground.txt"):
                 os.remove(os.path.join(d, f))
     lines = ["# Generated by tools/make_terrain.py; see that file for the format and the sources.",
              "version=2", f"reference={REF[0]:.7f},{REF[1]:.7f},{REF[2]:.2f}", f"attribution={ATTRIBUTION}"]
@@ -618,9 +1015,13 @@ def main():
     taken = {square_key(-inner + r * tile, -inner + c * tile) for r in range(count) for c in range(count)}
 
     buildings = []
+    seen = set()  # OSM ids of the buildings written: each once, where areas overlap
+    areas = []  # (east, north, half width) of the buildings areas
     if args.buildings_km > 0:
         print("Buildings", flush=True)
-        out = building_rows(frame, elevation, min(args.buildings_km * 1000.0, inner))
+        half_b = min(args.buildings_km * 1000.0, inner)
+        out = building_rows(frame, elevation, half_b, seen=seen)
+        areas.append((0.0, 0.0, half_b))
         if out is not None:
             buildings.append(out)
             print(f"  {len(out)} buildings")
@@ -629,22 +1030,38 @@ def main():
     extent = (-inner, -inner, inner, inner)  # west, south, east, north
     for code in args.airports:
         print(f"Detailed area around {code}", flush=True)
-        patch_lines, cov, out, box = write_patch(frame, args, code, tile, taken)
+        patch_lines, cov, out, box = write_patch(frame, args, code, tile, taken, seen)
         lines += patch_lines
         coverages.append(cov)
         extent = union(extent, box)
+        if patch_radii_km(args, code)[1] > 0:
+            areas.append(frame.to_enu(*AIRPORTS[code].ref) + (patch_radii_km(args, code)[1] * 1000.0,))
         if out is not None:
             buildings.append(out)
-    if buildings:
-        np.concatenate(buildings).tofile(os.path.join(OUT_DIR, "buildings.bin"))
-        lines.append("buildings=buildings.bin")
 
+    region = None
     if args.region:
         print("Region", flush=True)
-        box, region_lines, cov = write_region(frame, args, tile, taken)
+        box, region_lines, region = write_region(frame, args, tile, taken)
         extent = union(extent, box)
         lines += region_lines
-        coverages.append(cov)
+        coverages.append(region)
+
+    if args.town_population > 0:
+        print("Towns", flush=True)
+        buildings += town_buildings(frame, args, tile, areas, seen, taken, region)
+    if buildings:
+        rows = np.concatenate(buildings)
+        rows.tofile(os.path.join(OUT_DIR, "buildings.bin"))
+        lines.append("buildings=buildings.bin")
+        print(f"  buildings.bin: {len(rows)} buildings, {rows.nbytes / 1e6:.1f} MB", flush=True)
+
+    if args.ground_m > 0:
+        print("Ground height map", flush=True)
+        write_ground(frame, args.region or ESTONIA, tile, args.ground_m)
+
+    print("Airport layouts", flush=True)
+    write_layouts(frame)
 
     print("Low-detail base", flush=True)
     margin = args.outer_margin_km * 1000.0
