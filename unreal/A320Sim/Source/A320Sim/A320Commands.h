@@ -123,6 +123,19 @@ enum class EA320Command : uint8
 	FlightDistance,
 	FlightGo,
 	FlightPlan,  // Param: A320FlightPlan (entered or not)
+	FlightDepAirport,  // Param: airport index (its best runway)
+	FlightArrAirport,
+	// World map (MAP window). MapToggle shows it; the rest are handled by the map itself (AA320Hud).
+	MapToggle,
+	MapSearchFocus,
+	MapResult,         // Param: place index: select and centre
+	MapDeparture,      // Param: airport index
+	MapDestination,    // Param: place index, or -2 for the point clicked on the map
+	MapClearDestination,
+	MapZoomIn,
+	MapZoomOut,
+	MapCentreAircraft,
+	MapFly,
 };
 
 // Levers dragged with the mouse; the value is the handle position, 0 at the top of its slot.

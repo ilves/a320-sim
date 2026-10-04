@@ -1,16 +1,20 @@
 #include "A320Hud.h"
 
 #include "A320Aircraft.h"
+#include "A320Map.h"
 #include "A320PlayerController.h"
 #include "A320Sim.h"
 #include "CanvasItem.h"
 #include "Engine/Canvas.h"
 #include "Engine/Engine.h"
 #include "Engine/Font.h"
+#include "Engine/Texture2D.h"
 #include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
 #include "RenderUtils.h"
 #include "a320/Geometry2D.h"
+#include "a320/WorldMap.h"
+#include "Misc/Paths.h"
 #if WITH_EDITOR
 #include "AssetCompilingManager.h"
 #include "ShaderCompiler.h"
@@ -138,6 +142,11 @@ void AA320Hud::TextSized(const FString& Str, double X, double Y, const FLinearCo
 	DrawText(Str, Color, static_cast<float>(X - StrW / 2.0), static_cast<float>(Y - StrH / 2.0), Font, TextScale);
 }
 
+bool AA320Hud::IsOverButton(const FVector2D& ScreenPos) const
+{
+	return Buttons.ContainsByPredicate([&ScreenPos](const FButton& B) { return B.Box.IsInside(ScreenPos); });
+}
+
 int32 AA320Hud::ParamAt(const FVector2D& ScreenPos) const
 {
 	for (int32 i = Buttons.Num() - 1; i >= 0; --i)
@@ -259,6 +268,14 @@ void AA320Hud::DrawHUD()
 	if (Aircraft->IsSimReady() && Aircraft->IsFlightMenuVisible())
 	{
 		DrawFlightMenu(*Aircraft);  // modal too
+	}
+	if (Aircraft->IsSimReady() && Aircraft->IsMapVisible())
+	{
+		DrawMap(*Aircraft);  // over everything but the top bar
+	}
+	else
+	{
+		MapArea = FBox2D(ForceInit);
 	}
 	DrawLoadingStatus(Aircraft);
 }
@@ -577,6 +594,25 @@ void AA320Hud::DrawNd(const AA320Aircraft& Aircraft, double X, double Y, double 
 			{
 				Text(UTF8_TO_TCHAR(Rw.ident), T.X + 0.02 * S, T.Y, White, 0, 0);
 			}
+		}
+	}
+
+	// A trip's destination (a place picked on the map, or another airport): a magenta line to it.
+	if (!bLs && Runways.IsValidIndex(Aircraft.GetArrRunway()) && Runways.IsValidIndex(Aircraft.GetDepRunway()))
+	{
+		const FA320Destination& Place = Aircraft.GetPlaceDestination();
+		const TArray<A320AirportInfo>& Airports = Aircraft.GetAirports();
+		const int32 ArrAirport = Runways[Aircraft.GetArrRunway()].airport;
+		const bool bElsewhere = Place.bSet || ArrAirport != Runways[Aircraft.GetDepRunway()].airport;
+		if (bElsewhere && Airports.IsValidIndex(ArrAirport))
+		{
+			const double DN = Place.bSet ? Place.NorthM : Airports[ArrAirport].northM;
+			const double DE = Place.bSet ? Place.EastM : Airports[ArrAirport].eastM;
+			const FVector2D Dest = ToScreen(DN, DE);
+			ClippedLine(AcX, AcY, Dest.X, Dest.Y, CX0, CY0, CX1, CY1, Magenta, 2.0);
+			const FString Name = Place.bSet ? Place.Name : FString(UTF8_TO_TCHAR(Airports[ArrAirport].icao));
+			const double Nm = FVector2D(DN - St.northM, DE - St.eastM).Size() / 1852.0;
+			Text(FString::Printf(TEXT("%s  %.0f NM"), *Name, Nm), X + 0.03 * S, Y + 0.085 * S, Magenta, 0, 0);
 		}
 	}
 
@@ -1379,11 +1415,9 @@ void AA320Hud::DrawSimBar(const AA320Aircraft& Aircraft)
 		{TEXT("HELP"), EA320Command::HelpToggle, Aircraft.IsHelpVisible()},
 		{TEXT("LESSONS"), EA320Command::GuideMenu, Aircraft.IsGuideMenuVisible() || Aircraft.GetGuideStatus().active != 0},
 		{TEXT("FLIGHT"), EA320Command::FlightMenu, Aircraft.IsFlightMenuVisible()},
+		{TEXT("MAP"), EA320Command::MapToggle, Aircraft.IsMapVisible()},
 		{TEXT("LINE UP"), EA320Command::ResetRunway, false},
-		{TEXT("COLD+DARK"), EA320Command::ResetColdDark, false},
 		{TEXT("APPROACH"), EA320Command::ResetApproach, false},
-		{TEXT("FINAL 10"), EA320Command::ResetFinal10, false},
-		{TEXT("FINAL 4"), EA320Command::ResetFinal4, false},
 	};
 	const int32 Count = UE_ARRAY_COUNT(Items);
 	const double BW = FMath::Min(W * 0.055, 120.0 * Scale), BH = 30.0 * Scale, Gap = 4.0 * Scale;
@@ -2432,31 +2466,45 @@ void AA320Hud::DrawFlightMenu(const AA320Aircraft& Aircraft)
 	CY += TextWrapped(TEXT("Where you depart and land, and how the flight starts. All optional: FLY starts what is selected, "
 		"X keeps the current flight. F11 opens this menu again."), PX + Pad, CY, PW - 2.0 * Pad, Grey, 0) + Gap;
 
-	// One row of runway buttons per airport: "EETN Tallinn Lennart Meri   RWY 08  RWY 26".
-	auto RunwayRows = [&](const TCHAR* Label, int32 Selected, EA320Command Command, bool bUsed)
+	AddButton(PX + PW - 230.0 * Scale, PY + 10.0 * Scale, 170.0 * Scale, 30.0 * Scale, TEXT("CHOOSE ON MAP (F12)"), EA320Command::MapToggle, false);
+	// Per end of the trip: the airports by ICAO code, then the selected one's runways.
+	const FA320Destination& Place = Aircraft.GetPlaceDestination();
+	auto AirportRows = [&](const TCHAR* Label, int32 Selected, EA320Command AirportCommand, EA320Command RunwayCommand, bool bUsed,
+		bool bPlace)
 	{
 		Text(Label, PX + Pad, CY + BH / 2.0, bUsed ? White : Grey, 1, 0);
+		const int32 SelectedAirport = Runways[Selected].airport;
+		double BX = PX + Pad + LabelW;
 		for (int32 a = 0; a < Airports.Num(); ++a)
 		{
-			Text(AirportLabel(Airports, a), PX + Pad + LabelW, CY + BH / 2.0, bUsed ? Cyan : Grey, 0, 0);
-			double BX = PX + Pad + LabelW + 300.0 * Scale;
-			for (int32 i = 0; i < Runways.Num(); ++i)
-			{
-				if (Runways[i].airport != a)
-				{
-					continue;
-				}
-				const FString Rwy = FString::Printf(TEXT("RWY %s%s"), UTF8_TO_TCHAR(Runways[i].ident), Runways[i].hasIls ? TEXT("") : TEXT(" no ILS"));
-				const double BW = (Runways[i].hasIls ? 100.0 : 150.0) * Scale;
-				AddButton(BX, CY, BW, BH, Rwy, Command, bUsed && i == Selected, i);
-				BX += BW + Gap;
-			}
-			CY += BH + Gap;
+			const double BW = 86.0 * Scale;
+			AddButton(BX, CY, BW, BH, UTF8_TO_TCHAR(Airports[a].icao), AirportCommand, bUsed && !bPlace && a == SelectedAirport, a);
+			BX += BW + Gap;
 		}
-		CY += Gap;
+		CY += BH + Gap;
+		if (bPlace)
+		{
+			Text(FString::Printf(TEXT("%s: a free flight, without ATC"), *Place.Name), PX + Pad + LabelW, CY + BH / 2.0, Cyan, 0, 0);
+			CY += BH + 2.0 * Gap;
+			return;
+		}
+		Text(AirportLabel(Airports, SelectedAirport), PX + Pad + LabelW, CY + BH / 2.0, bUsed ? Cyan : Grey, 0, 0);
+		BX = PX + Pad + LabelW + 300.0 * Scale;
+		for (int32 i = 0; i < Runways.Num(); ++i)
+		{
+			if (Runways[i].airport != SelectedAirport)
+			{
+				continue;
+			}
+			const FString Rwy = FString::Printf(TEXT("RWY %s%s"), UTF8_TO_TCHAR(Runways[i].ident), Runways[i].hasIls ? TEXT("") : TEXT(" no ILS"));
+			const double BW = (Runways[i].hasIls ? 100.0 : 150.0) * Scale;
+			AddButton(BX, CY, BW, BH, Rwy, RunwayCommand, bUsed && i == Selected, i);
+			BX += BW + Gap;
+		}
+		CY += BH + 2.0 * Gap;
 	};
-	RunwayRows(bAirborne ? TEXT("FROM (-)") : TEXT("FROM"), Dep, EA320Command::FlightDep, !bAirborne);
-	RunwayRows(TEXT("TO"), Arr, EA320Command::FlightArr, true);
+	AirportRows(bAirborne ? TEXT("FROM (-)") : TEXT("FROM"), Dep, EA320Command::FlightDepAirport, EA320Command::FlightDep, !bAirborne, false);
+	AirportRows(TEXT("TO"), Arr, EA320Command::FlightArrAirport, EA320Command::FlightArr, true, Place.bSet);
 
 	// How the flight starts.
 	struct FStart
@@ -2503,7 +2551,12 @@ void AA320Hud::DrawFlightMenu(const AA320Aircraft& Aircraft)
 	const FString DepName = FString::Printf(TEXT("runway %s at %s"), UTF8_TO_TCHAR(D.ident), *AirportLabel(Airports, D.airport));
 	const FString ArrName = FString::Printf(TEXT("runway %s at %s"), UTF8_TO_TCHAR(A.ident), *AirportLabel(Airports, A.airport));
 	FString Summary;
-	if (!bAirborne)
+	if (Place.bSet)
+	{
+		Summary = FString::Printf(TEXT("%s %s, a free flight to %s: no ATC (RADIO can switch it on); the route is on the MAP and the ND."),
+			Scenario == A320_SCENARIO_COLD_DARK ? TEXT("At") : TEXT("From"), *DepName, *Place.Name);
+	}
+	else if (!bAirborne)
 	{
 		double RouteNm = 0.0;
 		if (Airports.IsValidIndex(D.airport) && Airports.IsValidIndex(A.airport))
@@ -2564,4 +2617,529 @@ void AA320Hud::DrawFlightMenu(const AA320Aircraft& Aircraft)
 	CY += BH + Gap;
 	TextWrapped(TEXT("A lesson sets up its own flight at Tallinn and guides you step by step (LESSONS at the top, or F3)."),
 		PX + Pad + LabelW, CY, PW - 2.0 * Pad - LabelW, Grey, 0);
+}
+
+// ---------------------------------------------------------------------------------------------
+// World map (MAP window, F12): satellite tiles with roads and water from Content/Map, towns,
+// islands and lakes, the airports with their runways, the aircraft and the route.
+
+namespace
+{
+	// The coarsest zoom (metres per pixel) at which a kind of place is labelled, and clickable.
+	double MapLabelLimit(const std::string& Type)
+	{
+		if (Type == "airport" || Type == "city")
+		{
+			return 1e9;
+		}
+		return Type == "town" ? 400.0 : Type == "island" ? 300.0 : Type == "lake" ? 150.0 : 70.0;
+	}
+}
+
+bool AA320Hud::IsMapCommand(EA320Command Command)
+{
+	switch (Command)
+	{
+	case EA320Command::MapSearchFocus:
+	case EA320Command::MapResult:
+	case EA320Command::MapDeparture:
+	case EA320Command::MapDestination:
+	case EA320Command::MapClearDestination:
+	case EA320Command::MapZoomIn:
+	case EA320Command::MapZoomOut:
+	case EA320Command::MapCentreAircraft:
+	case EA320Command::MapFly:
+		return true;
+	default:
+		return false;
+	}
+}
+
+bool AA320Hud::IsOverMap(const FVector2D& ScreenPos) const
+{
+	return MapArea.bIsValid && MapArea.IsInside(ScreenPos);
+}
+
+FVector2D AA320Hud::MapToScreen(double NorthM, double EastM) const
+{
+	const FVector2D C = MapArea.GetCenter();
+	return FVector2D(C.X + (EastM - MapCentreE) / MapMetresPerPixel, C.Y - (NorthM - MapCentreN) / MapMetresPerPixel);
+}
+
+void AA320Hud::ScreenToMap(const FVector2D& ScreenPos, double& NorthM, double& EastM) const
+{
+	const FVector2D C = MapArea.GetCenter();
+	EastM = MapCentreE + (ScreenPos.X - C.X) * MapMetresPerPixel;
+	NorthM = MapCentreN - (ScreenPos.Y - C.Y) * MapMetresPerPixel;
+}
+
+void AA320Hud::MapZoom(double Factor, const FVector2D& ScreenPos)
+{
+	// Keep the point under the cursor where it is.
+	double N = 0.0, E = 0.0;
+	ScreenToMap(ScreenPos, N, E);
+	MapMetresPerPixel = FMath::Clamp(MapMetresPerPixel * Factor, 8.0, 2500.0);
+	const FVector2D C = MapArea.GetCenter();
+	MapCentreE = E - (ScreenPos.X - C.X) * MapMetresPerPixel;
+	MapCentreN = N + (ScreenPos.Y - C.Y) * MapMetresPerPixel;
+}
+
+void AA320Hud::MapPan(const FVector2D& DeltaPixels)
+{
+	MapCentreE -= DeltaPixels.X * MapMetresPerPixel;
+	MapCentreN += DeltaPixels.Y * MapMetresPerPixel;
+}
+
+void AA320Hud::EnsureMapData(const AA320Aircraft& Aircraft)
+{
+	if (!MapData.IsValid())
+	{
+		MapData = MakeShared<FA320MapData>();
+		MapData->Load(FPaths::Combine(FPaths::ProjectContentDir(), TEXT("Map")), Aircraft.GetAirports());
+	}
+	if (!bMapViewSet)
+	{
+		// All of Estonia at first.
+		MapCentreN = -75000.0;
+		MapCentreE = -40000.0;
+		MapMetresPerPixel = 450.0 * 1080.0 / FMath::Max(static_cast<double>(Canvas->ClipY), 360.0);
+		bMapViewSet = true;
+	}
+}
+
+void AA320Hud::SelectPlace(int32 Place, bool bCentre)
+{
+	MapSelected = Place;
+	if (!bCentre || !MapData.IsValid() || Place < 0 || Place >= static_cast<int32>(MapData->GetPlaces().size()))
+	{
+		return;
+	}
+	const a320::worldmap::Place& P = MapData->GetPlaces()[static_cast<size_t>(Place)];
+	MapCentreN = P.northM;
+	MapCentreE = P.eastM;
+	MapMetresPerPixel = FMath::Min(MapMetresPerPixel, P.type == "airport" ? 25.0 : P.type == "village" ? 30.0 : 90.0);
+}
+
+void AA320Hud::UpdateMapResults()
+{
+	MapResults.Reset();
+	if (!MapData.IsValid())
+	{
+		return;
+	}
+	for (const int Index : a320::worldmap::search(MapData->GetPlaces(), std::string(TCHAR_TO_UTF8(*MapSearch)), 8))
+	{
+		MapResults.Add(Index);
+	}
+}
+
+void AA320Hud::MapType(TCHAR Char)
+{
+	if (MapSearch.Len() < 32)
+	{
+		MapSearch.AppendChar(Char);
+		UpdateMapResults();
+	}
+}
+
+void AA320Hud::MapBackspace()
+{
+	MapSearch.LeftChopInline(1);
+	UpdateMapResults();
+}
+
+void AA320Hud::MapEnter(AA320Aircraft& Aircraft)
+{
+	if (MapResults.Num() > 0)
+	{
+		MapCommand(EA320Command::MapResult, MapResults[0], Aircraft);
+	}
+	bMapSearchActive = false;
+}
+
+void AA320Hud::MapClick(const FVector2D& ScreenPos)
+{
+	bMapSearchActive = false;
+	if (!MapData.IsValid())
+	{
+		return;
+	}
+	// The nearest airport or labelled place within reach, else the point itself.
+	const std::vector<a320::worldmap::Place>& Places = MapData->GetPlaces();
+	double Best = 16.0;
+	int32 Hit = -1;
+	for (size_t i = 0; i < Places.size(); ++i)
+	{
+		if (MapMetresPerPixel > MapLabelLimit(Places[i].type))
+		{
+			continue;  // not shown at this zoom
+		}
+		const double D = FVector2D::Distance(MapToScreen(Places[i].northM, Places[i].eastM), ScreenPos);
+		const double Reach = Places[i].type == "airport" ? Best * 1.5 : Best;
+		if (D < Reach)
+		{
+			Best = D;
+			Hit = static_cast<int32>(i);
+		}
+	}
+	if (Hit >= 0)
+	{
+		SelectPlace(Hit, false);
+		return;
+	}
+	MapSelected = -2;
+	ScreenToMap(ScreenPos, MapPointN, MapPointE);
+}
+
+void AA320Hud::MapCommand(EA320Command Command, int32 Param, AA320Aircraft& Aircraft)
+{
+	const std::vector<a320::worldmap::Place>* Places = MapData.IsValid() ? &MapData->GetPlaces() : nullptr;
+	const bool bValidPlace = Places && Param >= 0 && Param < static_cast<int32>(Places->size());
+	switch (Command)
+	{
+	case EA320Command::MapSearchFocus:
+		bMapSearchActive = !bMapSearchActive;
+		break;
+	case EA320Command::MapResult:
+		bMapSearchActive = false;
+		SelectPlace(Param, true);
+		break;
+	case EA320Command::MapDeparture:
+		Aircraft.SetDepartureAirport(Param);
+		break;
+	case EA320Command::MapDestination:
+		if (Param == -2)
+		{
+			FA320Destination Point;
+			Point.bSet = true;
+			Point.Name = TEXT("Map point");
+			Point.NorthM = MapPointN;
+			Point.EastM = MapPointE;
+			Aircraft.SetPlaceDestination(Point);
+		}
+		else if (bValidPlace && (*Places)[static_cast<size_t>(Param)].airport >= 0)
+		{
+			Aircraft.SetArrivalAirport((*Places)[static_cast<size_t>(Param)].airport);
+		}
+		else if (bValidPlace)
+		{
+			const a320::worldmap::Place& P = (*Places)[static_cast<size_t>(Param)];
+			FA320Destination Dest;
+			Dest.bSet = true;
+			Dest.Name = FA320MapData::NameOf(P);
+			Dest.NorthM = P.northM;
+			Dest.EastM = P.eastM;
+			Aircraft.SetPlaceDestination(Dest);
+		}
+		break;
+	case EA320Command::MapClearDestination:
+		Aircraft.SetLocalFlight();
+		break;
+	case EA320Command::MapZoomIn:
+		MapZoom(1.0 / 1.6, MapArea.GetCenter());
+		break;
+	case EA320Command::MapZoomOut:
+		MapZoom(1.6, MapArea.GetCenter());
+		break;
+	case EA320Command::MapCentreAircraft:
+		MapCentreN = Aircraft.GetSimState().northM;
+		MapCentreE = Aircraft.GetSimState().eastM;
+		break;
+	case EA320Command::MapFly:
+		Aircraft.ExecuteCommand(EA320Command::FlightGo);
+		break;
+	default:
+		break;
+	}
+}
+
+UTexture2D* AA320Hud::MapTile(int32 Level, int32 Row, int32 Col, int32& LoadBudget)
+{
+	const FString Key = FString::Printf(TEXT("%d/%d_%d"), Level, Row, Col);
+	if (TObjectPtr<UTexture2D>* Found = MapTextures.Find(Key))
+	{
+		MapTextureOrder.Remove(Key);
+		MapTextureOrder.Add(Key);
+		return Found->Get();
+	}
+	if (LoadBudget <= 0)
+	{
+		return nullptr;  // the coarser level stands in until next frame
+	}
+	--LoadBudget;
+	UTexture2D* Texture = FA320MapData::LoadTileTexture(MapData->TilePath(Level, Row, Col));
+	if (!Texture)
+	{
+		return nullptr;
+	}
+	MapTextures.Add(Key, Texture);
+	MapTextureOrder.Add(Key);
+	// Keep the memory bounded: about 100 tiles of 1 MB.
+	while (MapTextureOrder.Num() > 100)
+	{
+		MapTextures.Remove(MapTextureOrder[0]);
+		MapTextureOrder.RemoveAt(0);
+	}
+	return Texture;
+}
+
+void AA320Hud::DrawMap(const AA320Aircraft& Aircraft)
+{
+	const double W = Canvas->ClipX, H = Canvas->ClipY;
+	Scale = FMath::Max(H / 1080.0, 0.6);
+	EnsureMapData(Aircraft);
+	const A320State& St = Aircraft.GetSimState();
+	const TArray<A320AirportInfo>& Airports = Aircraft.GetAirports();
+	const TArray<A320RunwayInfo>& Runways = Aircraft.GetRunways();
+	const std::vector<a320::worldmap::Place>& Places = MapData->GetPlaces();
+
+	const double PX = 0.012 * W, PY = 46.0 * Scale, PW = W - 2.0 * PX, PH = H - PY - 0.015 * H;
+	const double SideW = FMath::Min(0.27 * W, 480.0 * Scale), Gap = 8.0 * Scale;
+	Fill(PX, PY, PW, PH, FLinearColor(0.05f, 0.06f, 0.07f, 0.98f));
+	Buttons.Add({FBox2D(FVector2D(PX, PY), FVector2D(PX + PW, PY + PH)), EA320Command::None});  // swallows clicks
+	Frame(PX, PY, PW, PH, FLinearColor(0.5f, 0.52f, 0.55f), 2.0);
+	const double MX = PX + Gap, MY = PY + Gap, MW = PW - SideW - 3.0 * Gap, MH = PH - 2.0 * Gap;
+	MapArea = FBox2D(FVector2D(MX, MY), FVector2D(MX + MW, MY + MH));
+	Fill(MX, MY, MW, MH, FLinearColor(0.02f, 0.06f, 0.11f));  // open sea where there are no tiles
+
+	// Tiles: every level from the coarsest to the one the zoom needs, so a missing or loading
+	// tile shows the coarser one beneath.
+	double ViewS = 0.0, ViewW = 0.0, ViewN = 0.0, ViewE = 0.0;
+	ScreenToMap(FVector2D(MX, MY + MH), ViewS, ViewW);
+	ScreenToMap(FVector2D(MX + MW, MY), ViewN, ViewE);
+	if (MapData->HasTiles())
+	{
+		const a320::worldmap::Manifest& M = MapData->GetManifest();
+		const int32 Finest = M.levelFor(MapMetresPerPixel);
+		int32 Budget = 3;
+		for (const a320::worldmap::Level& L : M.levels)
+		{
+			if (L.level > Finest)
+			{
+				break;
+			}
+			for (const a320::worldmap::Manifest::TileRef& T : M.visible(L.level, ViewS, ViewW, ViewN, ViewE))
+			{
+				UTexture2D* Texture = MapTile(T.level, T.row, T.col, Budget);
+				if (!Texture)
+				{
+					continue;
+				}
+				// The tile on screen, cropped to the map area (north up: the image's top row is north).
+				const FVector2D A = MapToScreen(T.southM + T.sizeM, T.westM), B = MapToScreen(T.southM, T.westM + T.sizeM);
+				const double X0 = FMath::Max(A.X, MX), Y0 = FMath::Max(A.Y, MY);
+				const double X1 = FMath::Min(B.X, MX + MW), Y1 = FMath::Min(B.Y, MY + MH);
+				if (X1 <= X0 || Y1 <= Y0)
+				{
+					continue;
+				}
+				const double SpanX = B.X - A.X, SpanY = B.Y - A.Y;
+				DrawTexture(Texture, static_cast<float>(X0), static_cast<float>(Y0), static_cast<float>(X1 - X0),
+					static_cast<float>(Y1 - Y0), static_cast<float>((X0 - A.X) / SpanX), static_cast<float>((Y0 - A.Y) / SpanY),
+					static_cast<float>((X1 - X0) / SpanX), static_cast<float>((Y1 - Y0) / SpanY), FLinearColor::White, BLEND_Opaque);
+			}
+		}
+	}
+	const double CX0 = MX, CY0 = MY, CX1 = MX + MW, CY1 = MY + MH;
+	auto InMap = [&](const FVector2D& P, double Margin) { return P.X > CX0 - Margin && P.X < CX1 + Margin && P.Y > CY0 - Margin && P.Y < CY1 + Margin; };
+
+	// Airports: runways to scale (at least a few pixels), then a ring.
+	for (const A320RunwayInfo& R : Runways)
+	{
+		const FVector2D A = MapToScreen(R.startNorthM, R.startEastM), B = MapToScreen(R.endNorthM, R.endEastM);
+		ClippedLine(A.X, A.Y, B.X, B.Y, CX0, CY0, CX1, CY1, White, FMath::Max(R.widthM / MapMetresPerPixel / Scale, 2.5));
+	}
+	for (const A320AirportInfo& Ap : Airports)
+	{
+		const FVector2D P = MapToScreen(Ap.northM, Ap.eastM);
+		if (InMap(P, 0.0) && MapMetresPerPixel > 40.0)
+		{
+			Arc(P.X, P.Y, 9.0 * Scale, 0.0, 360.0, Magenta, 2.5);
+		}
+	}
+
+	// Route: from the departure to the destination (a place, or the arrival airport), and from the
+	// aircraft to the destination while flying.
+	const A320RunwayInfo& DepRw = Runways[Aircraft.GetDepRunway()];
+	const A320RunwayInfo& ArrRw = Runways[Aircraft.GetArrRunway()];
+	const FA320Destination& Place = Aircraft.GetPlaceDestination();
+	const A320AirportInfo& DepAp = Airports[DepRw.airport];
+	const double DestN = Place.bSet ? Place.NorthM : Airports[ArrRw.airport].northM;
+	const double DestE = Place.bSet ? Place.EastM : Airports[ArrRw.airport].eastM;
+	const bool bTrip = Place.bSet || ArrRw.airport != DepRw.airport;
+	if (bTrip)
+	{
+		const FVector2D A = MapToScreen(DepAp.northM, DepAp.eastM), B = MapToScreen(DestN, DestE);
+		ClippedLine(A.X, A.Y, B.X, B.Y, CX0, CY0, CX1, CY1, Magenta, 3.0);
+		if (InMap(B, 0.0))
+		{
+			Triangle(FVector2D(B.X, B.Y - 10.0 * Scale), FVector2D(B.X - 7.0 * Scale, B.Y + 5.0 * Scale), FVector2D(B.X + 7.0 * Scale, B.Y + 5.0 * Scale), Magenta);
+		}
+		if (!St.onGround)
+		{
+			const FVector2D Ac = MapToScreen(St.northM, St.eastM);
+			ClippedLine(Ac.X, Ac.Y, B.X, B.Y, CX0, CY0, CX1, CY1, FLinearColor(1.0f, 0.4f, 1.0f, 0.6f), 1.5);
+		}
+	}
+
+	// Labels: the most important first, none on top of another.
+	{
+		struct FLabel
+		{
+			FVector2D At;
+			FString Name;
+			FLinearColor Color;
+			int32 Size;
+		};
+		TArray<FLabel> Labels;
+		std::vector<a320::geom::Rect> Boxes;
+		for (size_t i = 0; i < Places.size() && Labels.Num() < 400; ++i)
+		{
+			const a320::worldmap::Place& P = Places[i];
+			const std::string& Type = P.type;
+			const double Limit = MapLabelLimit(Type);
+			const FVector2D At = MapToScreen(P.northM, P.eastM);
+			if (MapMetresPerPixel > Limit || !InMap(At, -4.0))
+			{
+				continue;
+			}
+			const bool bAirport = P.airport >= 0;
+			const int32 Size = Type == "city" ? 1 : 0;
+			const FString Name = bAirport ? FString(UTF8_TO_TCHAR(Airports[P.airport].icao)) : FA320MapData::NameOf(P);
+			float TW = 0.0f, TH = 0.0f;
+			GetTextSize(Name, TW, TH, FontFor(Size), static_cast<float>(Scale));
+			Boxes.push_back({At.X + 6.0 * Scale, At.Y - TH / 2.0, At.X + 6.0 * Scale + TW, At.Y + TH / 2.0});
+			const FLinearColor Color = bAirport ? Magenta : Type == "lake" ? FLinearColor(0.55f, 0.8f, 1.0f)
+				: Type == "island" ? FLinearColor(0.85f, 0.9f, 0.7f) : White;
+			Labels.Add({At, Name, Color, Size});
+		}
+		for (const int Index : a320::worldmap::declutter(Boxes, 160))
+		{
+			const FLabel& L = Labels[Index];
+			if (L.Color != Magenta)
+			{
+				Fill(L.At.X - 2.0 * Scale, L.At.Y - 2.0 * Scale, 4.0 * Scale, 4.0 * Scale, L.Color);
+			}
+			const a320::geom::Rect& Box = Boxes[static_cast<size_t>(Index)];
+			Fill(Box.x0 - 2.0, Box.y0, Box.x1 - Box.x0 + 4.0, Box.y1 - Box.y0, FLinearColor(0.0f, 0.0f, 0.0f, 0.45f));
+			Text(L.Name, Box.x0, (Box.y0 + Box.y1) / 2.0, L.Color, L.Size, 0);
+		}
+	}
+
+	// The selection and the aircraft on top.
+	if (MapSelected != -1)
+	{
+		const bool bPoint = MapSelected == -2;
+		const FVector2D S = bPoint ? MapToScreen(MapPointN, MapPointE)
+			: MapToScreen(Places[static_cast<size_t>(MapSelected)].northM, Places[static_cast<size_t>(MapSelected)].eastM);
+		if (InMap(S, 0.0))
+		{
+			Arc(S.X, S.Y, 14.0 * Scale, 0.0, 360.0, Yellow, 2.5);
+		}
+	}
+	{
+		const FVector2D Ac = MapToScreen(St.northM, St.eastM);
+		if (InMap(Ac, 0.0))
+		{
+			const double R = 11.0 * Scale, Hd = FMath::DegreesToRadians(St.gridHeadingDeg);
+			const FVector2D Fwd(FMath::Sin(Hd), -FMath::Cos(Hd)), Right(FMath::Cos(Hd), FMath::Sin(Hd));
+			Triangle(Ac + Fwd * R, Ac - Fwd * (0.7 * R) + Right * (0.7 * R), Ac - Fwd * (0.7 * R) - Right * (0.7 * R), Yellow);
+		}
+	}
+	// Scale bar.
+	{
+		const double Nm = FMath::Max(1.0, FMath::Pow(10.0, FMath::FloorToDouble(FMath::LogX(10.0, MapMetresPerPixel * 120.0 / 1852.0))));
+		const double Len = Nm * 1852.0 / MapMetresPerPixel;
+		const double SX = MX + 16.0 * Scale, SY = MY + MH - 18.0 * Scale;
+		Fill(SX - 4.0, SY - 16.0 * Scale, Len + 60.0 * Scale, 24.0 * Scale, FLinearColor(0.0f, 0.0f, 0.0f, 0.5f));
+		Line(SX, SY, SX + Len, SY, White, 2.0);
+		Text(FString::Printf(TEXT("%.0f NM"), Nm), SX + Len + 6.0 * Scale, SY - 4.0 * Scale, White, 0, 0);
+	}
+	Frame(MX, MY, MW, MH, Grey, 1.0);
+
+	// Side panel: search, the selection, the flight.
+	const double SX = MX + MW + 2.0 * Gap, SW = SideW;
+	double CY = MY;
+	Text(TEXT("WORLD MAP - ESTONIA"), SX, CY + 14.0 * Scale, White, 1, 0);
+	AddButton(SX + SW - 40.0 * Scale, CY, 36.0 * Scale, 30.0 * Scale, TEXT("X"), EA320Command::MapToggle, false);
+	CY += 40.0 * Scale;
+	const double BH = 30.0 * Scale;
+	const FString SearchLabel = MapSearch.IsEmpty() && !bMapSearchActive ? FString(TEXT("Search a town or airport..."))
+		: MapSearch + (bMapSearchActive && FMath::Fmod(GetWorld()->GetRealTimeSeconds(), 1.0) < 0.5 ? TEXT("_") : TEXT(""));
+	AddButton(SX, CY, SW, BH, TEXT(""), EA320Command::MapSearchFocus, bMapSearchActive);
+	Text(SearchLabel, SX + 8.0 * Scale, CY + BH / 2.0, MapSearch.IsEmpty() && !bMapSearchActive ? Grey : White, 0, 0);
+	CY += BH + Gap;
+	for (const int32 Index : MapResults)
+	{
+		const a320::worldmap::Place& P = Places[static_cast<size_t>(Index)];
+		AddButton(SX, CY, SW, BH * 0.9, TEXT(""), EA320Command::MapResult, Index == MapSelected, Index);
+		Text(FA320MapData::NameOf(P), SX + 8.0 * Scale, CY + BH * 0.45, P.airport >= 0 ? Magenta : White, 0, 0);
+		Text(UTF8_TO_TCHAR(P.type.c_str()), SX + SW - 8.0 * Scale, CY + BH * 0.45, Grey, 0, 2);
+		CY += BH * 0.9 + 3.0 * Scale;
+	}
+	CY += Gap;
+
+	if (MapSelected != -1)
+	{
+		const bool bPoint = MapSelected == -2;
+		const a320::worldmap::Place* P = bPoint ? nullptr : &Places[static_cast<size_t>(MapSelected)];
+		const double N = bPoint ? MapPointN : P->northM, E = bPoint ? MapPointE : P->eastM;
+		Line(SX, CY, SX + SW, CY, Grey, 1.0);
+		CY += Gap;
+		Text(bPoint ? FString(TEXT("Map point")) : FA320MapData::NameOf(*P), SX, CY + 10.0 * Scale, Yellow, 1, 0);
+		CY += 26.0 * Scale;
+		const double FromAc = FVector2D(N - St.northM, E - St.eastM).Size() / 1852.0;
+		Text(FString::Printf(TEXT("%s%.0f NM from the aircraft"), bPoint ? TEXT("") : *FString::Printf(TEXT("%s, "), UTF8_TO_TCHAR(P->type.c_str())), FromAc),
+			SX, CY + 8.0 * Scale, Grey, 0, 0);
+		CY += 22.0 * Scale;
+		const double HalfW = (SW - Gap) / 2.0;
+		if (P && P->airport >= 0)
+		{
+			AddButton(SX, CY, HalfW, BH, TEXT("DEPART FROM HERE"), EA320Command::MapDeparture, Runways[Aircraft.GetDepRunway()].airport == P->airport, P->airport);
+		}
+		AddButton(SX + HalfW + Gap, CY, HalfW, BH, TEXT("FLY TO HERE"), EA320Command::MapDestination, false, bPoint ? -2 : MapSelected);
+		CY += BH + 2.0 * Gap;
+	}
+
+	// The flight as set up.
+	Line(SX, CY, SX + SW, CY, Grey, 1.0);
+	CY += Gap;
+	Text(TEXT("FLIGHT"), SX, CY + 10.0 * Scale, White, 1, 0);
+	CY += 26.0 * Scale;
+	Text(FString::Printf(TEXT("FROM  %s %s  RWY %s"), UTF8_TO_TCHAR(DepAp.icao), UTF8_TO_TCHAR(DepAp.name), UTF8_TO_TCHAR(DepRw.ident)),
+		SX, CY + 8.0 * Scale, Cyan, 0, 0);
+	CY += 20.0 * Scale;
+	const FString ToText = Place.bSet ? FString::Printf(TEXT("TO    %s (free flight, no ATC)"), *Place.Name)
+		: FString::Printf(TEXT("TO    %s %s  RWY %s"), UTF8_TO_TCHAR(Airports[ArrRw.airport].icao), UTF8_TO_TCHAR(Airports[ArrRw.airport].name),
+			UTF8_TO_TCHAR(ArrRw.ident));
+	Text(ToText, SX, CY + 8.0 * Scale, Cyan, 0, 0);
+	CY += 20.0 * Scale;
+	if (bTrip)
+	{
+		const double Nm = FVector2D(DestN - DepAp.northM, DestE - DepAp.eastM).Size() / 1852.0;
+		const double TrueBrg = FMath::RadiansToDegrees(FMath::Atan2(DestE - DepAp.eastM, DestN - DepAp.northM));
+		const int32 MagBrg = (FMath::RoundToInt(TrueBrg - DepAp.magneticVariationDeg) % 360 + 360) % 360;
+		Text(FString::Printf(TEXT("%.0f NM, course %03d MAG"), Nm, MagBrg == 0 ? 360 : MagBrg), SX, CY + 8.0 * Scale, White, 0, 0);
+		CY += 20.0 * Scale;
+		AddButton(SX, CY, SW, BH * 0.9, TEXT("BACK TO A LOCAL FLIGHT"), EA320Command::MapClearDestination, false);
+		CY += BH + Gap;
+	}
+	const double ThirdW = (SW - 2.0 * Gap) / 3.0;
+	AddButton(SX, CY, ThirdW * 1.5, BH * 1.2, TEXT("FLY  (Enter)"), EA320Command::MapFly, true);
+	AddButton(SX + ThirdW * 1.5 + Gap, CY, SW - ThirdW * 1.5 - Gap, BH * 1.2, TEXT("FLIGHT OPTIONS"), EA320Command::FlightMenu, false);
+	CY += BH * 1.2 + 2.0 * Gap;
+	AddButton(SX, CY, ThirdW, BH, TEXT("+"), EA320Command::MapZoomIn, false);
+	AddButton(SX + ThirdW + Gap, CY, ThirdW, BH, TEXT("-"), EA320Command::MapZoomOut, false);
+	AddButton(SX + 2.0 * (ThirdW + Gap), CY, ThirdW, BH, TEXT("AIRCRAFT"), EA320Command::MapCentreAircraft, false);
+	CY += BH + Gap;
+	TextWrapped(TEXT("Wheel: zoom.  Drag: move.  Click: select.  F12 / Esc: close."), SX, CY, SW, Grey, 0);
+	const FString Attribution = UTF8_TO_TCHAR(MapData->GetManifest().attribution.c_str());
+	if (!Attribution.IsEmpty())
+	{
+		TextWrapped(Attribution, SX, MY + MH - 60.0 * Scale, SW, FLinearColor(0.45f, 0.47f, 0.5f), 0);
+	}
+	else if (!MapData->HasTiles())
+	{
+		TextWrapped(TEXT("No map tiles found (Content/Map): run tools/make_map.py."), SX, MY + MH - 40.0 * Scale, SW, Amber, 0);
+	}
 }

@@ -52,4 +52,11 @@ private:
 		int32 Presses, bool bReleased, bool bDown);
 	void ApplyJoystickButtons(class AA320Aircraft* Aircraft, struct FA320FlightInputs& Inputs, float DeltaTime);
 	bool bLooking = false;
+	// World map: dragging moves it, a click without a drag selects.
+	bool bMapDragging = false;
+	double MapDragPixels = 0.0;
+	FVector2D LastMapMouse = FVector2D::ZeroVector;
+	// Typing into the map's search box.
+	void TypeIntoMapSearch(class AA320Hud& Hud, class AA320Aircraft& Aircraft);
+	static bool IsMapTypingKey(const FKey& Key);
 };

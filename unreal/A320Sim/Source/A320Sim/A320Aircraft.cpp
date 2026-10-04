@@ -152,6 +152,12 @@ void AA320Aircraft::BeginPlay()
 	}
 
 	FieldElevationFt = a320_field_elevation_ft(Sim);
+	// The real terrain under the flight model, so the radio altimeter and crashes follow it.
+	const FString TerrainDir = FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectContentDir(), TEXT("Terrain")));
+	if (!a320_load_ground(Sim, TCHAR_TO_UTF8(*TerrainDir)))
+	{
+		UE_LOG(LogA320, Warning, TEXT("No ground map in %s: the ground is each airport's elevation"), *TerrainDir);
+	}
 	for (int32 i = 0; i < a320_airport_count(Sim); ++i)
 	{
 		A320AirportInfo Info;
@@ -166,10 +172,13 @@ void AA320Aircraft::BeginPlay()
 		if (a320_get_runway(Sim, i, &Info))
 		{
 			Runways.Add(Info);
-			if (FCString::Strcmp(UTF8_TO_TCHAR(Info.ident), TEXT("26")) == 0)
-			{
-				DepRunway = ArrRunway = i;
-			}
+		}
+	}
+	{
+		const int32 Tallinn26 = FindRunway(TEXT("EETN"), TEXT("26"));
+		if (Tallinn26 >= 0)
+		{
+			DepRunway = ArrRunway = Tallinn26;
 		}
 	}
 
@@ -178,7 +187,7 @@ void AA320Aircraft::BeginPlay()
 	World = GetWorld()->SpawnActor<AA320World>(AA320World::StaticClass(), FTransform::Identity, Params);
 	if (World)
 	{
-		World->Build(Runways);
+		World->Build(Runways, Airports);
 	}
 
 	ResetScenario(A320_SCENARIO_RUNWAY);
@@ -621,6 +630,7 @@ void AA320Aircraft::ExecuteCommand(EA320Command Command, bool bLarge, int32 Para
 		break;
 	case EA320Command::FlightMenu:
 		bFlightMenu = !bFlightMenu;
+		bMapVisible = bMapVisible && !bFlightMenu;
 		bGuideMenu = bGuideMenu && !bFlightMenu;
 		break;
 	case EA320Command::FlightDep:
@@ -634,13 +644,22 @@ void AA320Aircraft::ExecuteCommand(EA320Command Command, bool bLarge, int32 Para
 		if (Runways.IsValidIndex(Param))
 		{
 			ArrRunway = Param;
+			PlaceDestination = FA320Destination{};
 		}
 		break;
 	case EA320Command::FlightStart: FlightScenario = static_cast<A320Scenario>(Param); break;
 	case EA320Command::FlightDistance: FlightDistanceNm = FMath::Clamp(Param, 8, 150); break;
 	case EA320Command::FlightPlan: FlightPlan = Param == A320_PLAN_EMPTY ? A320_PLAN_EMPTY : A320_PLAN_FULL; break;
+	case EA320Command::FlightDepAirport: SetDepartureAirport(Param); break;
+	case EA320Command::FlightArrAirport: SetArrivalAirport(Param); break;
+	case EA320Command::MapToggle:
+		bMapVisible = !bMapVisible;
+		bFlightMenu = bFlightMenu && !bMapVisible;
+		bGuideMenu = bGuideMenu && !bMapVisible;
+		break;
 	case EA320Command::FlightGo:
 		bFlightMenu = false;
+		bMapVisible = false;
 		ResetScenario(FlightScenario);
 		break;
 	case EA320Command::ResetRunway: ResetScenario(A320_SCENARIO_RUNWAY); break;
@@ -650,6 +669,7 @@ void AA320Aircraft::ExecuteCommand(EA320Command Command, bool bLarge, int32 Para
 	case EA320Command::GuideMenu:
 		bGuideMenu = !bGuideMenu;
 		bFlightMenu = bFlightMenu && !bGuideMenu;
+		bMapVisible = bMapVisible && !bGuideMenu;
 		break;
 	case EA320Command::GuideStart0:
 	case EA320Command::GuideStart1:
@@ -689,6 +709,8 @@ void AA320Aircraft::ResetScenario(A320Scenario Scenario)
 	a320_guide_stop(Sim);  // a lesson restarts its own scenario
 	FlightScenario = Scenario;
 	a320_start_flight(Sim, Scenario, DepRunway, ArrRunway, FlightDistanceNm, bLessonStart ? A320_PLAN_ROUTE : FlightPlan);
+	// To a place rather than an airport: a free (VFR) flight, without ATC; RADIO can switch it on.
+	a320_atc_set_enabled(Sim, PlaceDestination.bSet ? 0 : 1);
 	a320_get_state(Sim, &State);
 	a320_get_controls(Sim, &Controls);
 	ClearDestruction();
@@ -713,13 +735,12 @@ void AA320Aircraft::StartGuide(int32 Guide)
 	}
 	// The lesson's texts are written for one runway, a local flight from 20 NM out.
 	const FString Ident = UTF8_TO_TCHAR(a320_guide_runway(Guide));
-	for (int32 i = 0; i < Runways.Num(); ++i)
+	const int32 LessonRunway = FindRunway(TEXT("EETN"), *Ident);  // the lessons are written for Tallinn
+	if (LessonRunway >= 0)
 	{
-		if (FCString::Strcmp(*Ident, UTF8_TO_TCHAR(Runways[i].ident)) == 0)
-		{
-			DepRunway = ArrRunway = i;
-		}
+		DepRunway = ArrRunway = LessonRunway;
 	}
+	PlaceDestination = FA320Destination{};
 	FlightDistanceNm = 20;
 	// The lessons' steps are written for the route only: the crew enters the rest.
 	bLessonStart = true;
@@ -1098,4 +1119,70 @@ void AA320Aircraft::ClearDestruction()
 	ChaseArm->TargetArmLength = ChaseArmCm;
 	ChaseArm->TargetOffset = ChaseOffsetCm;
 	ApplyView();
+}
+
+int32 AA320Aircraft::FindRunway(const TCHAR* Icao, const TCHAR* Ident) const
+{
+	for (int32 i = 0; i < Runways.Num(); ++i)
+	{
+		if (FCString::Strcmp(UTF8_TO_TCHAR(Runways[i].icao), Icao) == 0 && FCString::Strcmp(UTF8_TO_TCHAR(Runways[i].ident), Ident) == 0)
+		{
+			return i;
+		}
+	}
+	return -1;
+}
+
+int32 AA320Aircraft::BestRunway(int32 Airport) const
+{
+	int32 First = -1;
+	for (int32 i = 0; i < Runways.Num(); ++i)
+	{
+		if (Runways[i].airport != Airport)
+		{
+			continue;
+		}
+		if (Runways[i].hasIls)
+		{
+			return i;
+		}
+		First = First < 0 ? i : First;
+	}
+	return First;
+}
+
+void AA320Aircraft::SetDepartureAirport(int32 Airport)
+{
+	const int32 Runway = BestRunway(Airport);
+	if (Runway < 0)
+	{
+		return;
+	}
+	// A local flight stays local; a trip elsewhere keeps its destination.
+	ArrRunway = ArrRunway == DepRunway ? Runway : ArrRunway;
+	DepRunway = Runway;
+}
+
+void AA320Aircraft::SetArrivalAirport(int32 Airport)
+{
+	const int32 Runway = BestRunway(Airport);
+	if (Runway >= 0)
+	{
+		ArrRunway = Runway;
+		PlaceDestination = FA320Destination{};
+	}
+}
+
+void AA320Aircraft::SetLocalFlight()
+{
+	PlaceDestination = FA320Destination{};
+	ArrRunway = DepRunway;
+}
+
+void AA320Aircraft::SetPlaceDestination(const FA320Destination& Place)
+{
+	// The flight plan and the airborne starts use the departure airport; the map, the ND and the
+	// route show the place.
+	PlaceDestination = Place;
+	ArrRunway = DepRunway;
 }

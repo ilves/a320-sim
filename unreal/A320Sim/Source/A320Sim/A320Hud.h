@@ -9,7 +9,9 @@
 #include "A320Hud.generated.h"
 
 class AA320Aircraft;
+class FA320MapData;
 class UFont;
+class UTexture2D;
 
 // Glass cockpit drawn on the canvas: PFD, ND (map), E/WD, a clickable panel of buttons,
 // and the callout/warning/pause overlays.
@@ -23,11 +25,25 @@ public:
 
 	// The panel button under a screen position (from the last drawn frame).
 	EA320Command CommandAt(const FVector2D& ScreenPos) const;
+	// Whether any button or window was drawn there this frame (nothing to drag beneath it).
+	bool IsOverButton(const FVector2D& ScreenPos) const;
 	// The extra value of that button (e.g. which command a SET button assigns), 0 if none.
 	int32 ParamAt(const FVector2D& ScreenPos) const;
 	// The lever slot under a screen position, and the handle position (0 = top) for a drag.
 	EA320Lever LeverAt(const FVector2D& ScreenPos) const;
 	double LeverPosition(EA320Lever Lever, const FVector2D& ScreenPos) const;
+
+	// The world map (MAP window): the player controller feeds it the wheel, drags, clicks and typing.
+	static bool IsMapCommand(EA320Command Command);
+	bool IsOverMap(const FVector2D& ScreenPos) const;
+	void MapZoom(double Factor, const FVector2D& ScreenPos);
+	void MapPan(const FVector2D& DeltaPixels);
+	void MapClick(const FVector2D& ScreenPos);
+	void MapCommand(EA320Command Command, int32 Param, AA320Aircraft& Aircraft);
+	bool IsMapSearchActive() const { return bMapSearchActive; }
+	void MapType(TCHAR Char);
+	void MapBackspace();
+	void MapEnter(AA320Aircraft& Aircraft);
 
 private:
 	struct FButton
@@ -60,6 +76,13 @@ private:
 	// First-start progress (shader/asset compilation) instead of a black screen; also logs
 	// progress lines and "READY" for the launcher window (scripts/play.ps1).
 	void DrawLoadingStatus(const AA320Aircraft* Aircraft);
+	void DrawMap(const AA320Aircraft& Aircraft);
+	void EnsureMapData(const AA320Aircraft& Aircraft);
+	FVector2D MapToScreen(double NorthM, double EastM) const;
+	void ScreenToMap(const FVector2D& Screen, double& NorthM, double& EastM) const;
+	UTexture2D* MapTile(int32 Level, int32 Row, int32 Col, int32& LoadBudget);
+	void SelectPlace(int32 Place, bool bCentre);
+	void UpdateMapResults();
 	// Airbus-style pushbutton: upper legend (e.g. FAULT/AVAIL) and lower legend (e.g. ON).
 	void Pushbutton(double X, double Y, double W, double H, const FString& Name, const FString& Upper,
 		const FLinearColor& UpperColor, const FString& Lower, const FLinearColor& LowerColor, EA320Command Command);
@@ -128,4 +151,17 @@ private:
 	// the lesson panel and the ATC subtitle keep clear of.
 	TArray<FBox2D> PanelBoxes;
 	TArray<FBox2D> YieldingBoxes;
+
+	// World map state: the view (centre and metres per pixel), the search and the selection.
+	TSharedPtr<FA320MapData> MapData;
+	UPROPERTY() TMap<FString, TObjectPtr<UTexture2D>> MapTextures;
+	TArray<FString> MapTextureOrder;  // least recently used first
+	FBox2D MapArea = FBox2D(ForceInit);
+	double MapCentreN = 0.0, MapCentreE = 0.0, MapMetresPerPixel = 600.0;
+	bool bMapViewSet = false;
+	FString MapSearch;
+	bool bMapSearchActive = false;
+	TArray<int32> MapResults;
+	int32 MapSelected = -1;  // a place index; -2: a point clicked on the map
+	double MapPointN = 0.0, MapPointE = 0.0;
 };

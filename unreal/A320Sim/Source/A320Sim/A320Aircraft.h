@@ -10,6 +10,14 @@
 #include "A320Aircraft.generated.h"
 
 class AA320Fx;
+
+// Where a free flight goes when it is not to an airport: a place picked on the world map.
+struct FA320Destination
+{
+	bool bSet = false;
+	FString Name;
+	double NorthM = 0.0, EastM = 0.0;
+};
 class AA320World;
 struct FA320FxSpec;
 class UAudioComponent;
@@ -67,6 +75,18 @@ public:
 	// The FLIGHT menu and the flight it sets up: departure and arrival (indices into GetRunways()),
 	// how the flight starts and, for a start in the air, how far out.
 	bool IsFlightMenuVisible() const { return bFlightMenu; }
+	bool IsMapVisible() const { return bMapVisible; }
+	// From the world map: depart from an airport (its best runway), fly to an airport or to a place.
+	void SetDepartureAirport(int32 Airport);
+	void SetArrivalAirport(int32 Airport);
+	void SetPlaceDestination(const FA320Destination& Place);
+	// Back to a circuit: land where the flight departs.
+	void SetLocalFlight();
+	// A place picked on the map (no ATC on such a flight), or none: the arrival airport then.
+	const FA320Destination& GetPlaceDestination() const { return PlaceDestination; }
+	// The runway to use at an airport: one with an ILS, else the first.
+	int32 BestRunway(int32 Airport) const;
+	int32 FindRunway(const TCHAR* Icao, const TCHAR* Ident) const;
 	int32 GetDepRunway() const { return DepRunway; }
 	int32 GetArrRunway() const { return ArrRunway; }
 	A320Scenario GetFlightScenario() const { return FlightScenario; }
@@ -132,6 +152,8 @@ private:
 	int32 FlightDistanceNm = 20;
 	int32 FlightPlan = A320_PLAN_FULL;
 	bool bFlightMenu = true;  // shown at start; closing it keeps the default flight
+	bool bMapVisible = false;
+	FA320Destination PlaceDestination;
 	bool bLessonStart = false;  // ResetScenario for a lesson: its own flight plan
 	double FieldElevationFt = 0.0;  // the first airport's, the flat world's zero
 

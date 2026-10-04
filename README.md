@@ -8,8 +8,13 @@ working PFD, ND and E/WD. A FLIGHT menu at start picks the airports and how the 
   FlightGear) with its A320 model, plus a simplified Airbus **Normal Law** fly-by-wire.
   That includes load-factor and roll-rate control, flight-path and bank hold, auto-trim
   through the THS, protections (bank, pitch and alpha) and the flare law.
-- **Airports:** EETN runway 08/26 (ILS both ways) and EEKE runway 17/35 (ILS 17), at their real
-  coordinates and elevations, with PAPI, approach and edge lights and runway markings.
+- **Airports:** Estonia's seven public airports from the eAIP, at their real coordinates and
+  elevations, with PAPI, approach and edge lights, runway markings, and taxiways and aprons from
+  OpenStreetMap: Tallinn EETN (ILS 08 and 26), Tartu EETU (ILS 26), Kuressaare EEKE (ILS 17),
+  Pärnu EEPU, Kärdla EEKA, and the 600 m grass strips of Ruhnu EERU and Kihnu EEKU.
+- **World map** (F12): all of Estonia, zoom, move, search towns and airports, pick the departure
+  and the destination (an airport, a town or any point), the route and the aircraft. See
+  [World map](#world-map).
 - **Scenery:** real terrain from open data, satellite imagery on real elevation:
   - **All of Estonia:** about 20 m per pixel, islands included.
   - **Around Tallinn:** 80 × 80 km at about 10 m per pixel.
@@ -137,6 +142,7 @@ Other scripts:
 | Pause / sim rate | P / = | Start |
 | Cockpit ↔ outside view | C; right-drag to look around, middle-click to reset | Back |
 | Flight menu | F11: departure and arrival, cold and dark / lined up / in the air, distance, lessons | |
+| World map | F12: wheel to zoom, drag to move, click to select, type to search, Enter to fly | |
 | Scenarios | F5 lined up, Shift+F5 cold and dark, F4 in the air, F6 10 NM final, F7 4 NM final, F9 other runway direction | |
 | Lessons | F3 | |
 | Autopilot / autothrust | A (AP1), Shift+A (AP2) / T (A/THR; levers in CL: Ins) | |
@@ -302,6 +308,7 @@ The ILS data is the published one (Estonian eAIP, EETN AD 2.19, AIRAC 2026-10-01
 | 08 | IIB | 108.30 | 080° | 3°, RDH 54 ft |
 | 26 | ILK | 109.30 | 260° | 3°, RDH 54 ft |
 | EEKE 17 | IWA | 109.90 | 171° | 3°, RDH 52 ft (EEKE AD 2.19) |
+| EETU 26 | IUM | 108.50 | 257° | 3°, RDH 47 ft (EETU AD 2.19) |
 
 EEKE runway 35 has no ILS: the ARRIVAL page lists it as NO ILS, for a visual approach.
 
@@ -320,6 +327,15 @@ phraseology:
 | Tallinn Radar | 127.905 | Radar contact, vectors to the ILS, approach clearance |
 | Tallinn Handling | 131.905 | After landing |
 | Kuressaare Information (AFIS) | 118.055 | EEKE: relays the IFR clearance, reports the runway free |
+| Tartu Information (AFIS; ATIS 123.130) | 133.905 | EETU, as Kuressaare |
+| Pärnu Information (AFIS) | 135.305 | EEPU, as Kuressaare |
+| Kärdla Information (AFIS) | 133.405 | EEKA, as Kuressaare |
+| Ruhnu Radio | 118.055 | EERU, as Kuressaare |
+| Kihnu Traffic | 135.305 | EEKU has no ATS: you announce yourself, nobody answers |
+
+At Kihnu, Tallinn Radar gives the IFR clearance itself ("call me airborne"); you announce
+"departing runway 22" on Kihnu Traffic and call Radar once airborne. Arriving there, Radar ends
+its service ("frequency change approved") and you announce your final yourself.
 
 Tallinn Radar works the whole route. Kuressaare has no tower: its AFIS officer gives
 information, not clearances. You hear "runway 17 free, take off at your discretion" and read back
@@ -373,8 +389,9 @@ Your callsign is the MCDU's flight number (INIT page), or SIM320.
 
 The FLIGHT menu opens at start (F11, or FLIGHT at the top right). Everything in it is optional:
 close it to fly the default, lined up on EETN 26.
-- **FROM and TO:** a runway at Tallinn or Kuressaare. The same airport is a local flight; the
-  other one is a route of 95 NM. The MCDU flight plan, the ILS and ATC are set up for it.
+- **FROM and TO:** an airport (by its ICAO code) and a runway. The same airport is a local
+  flight; another is a route (Tallinn to Tartu is 90 NM). The MCDU flight plan, the ILS and ATC
+  are set up for it. CHOOSE ON MAP opens the [world map](#world-map).
 - **START:** cold and dark at the runway, lined up with engines running, in the air, or on final
   at 10 or 4 NM.
 - **DISTANCE:** for a start in the air: 10, 20, 40 or 80 NM from the arrival runway. Beyond 20 NM
@@ -384,6 +401,24 @@ close it to fly the default, lined up on EETN 26.
   wind, a CAT I minimum). NOT ENTERED leaves it to you: INIT FROM/TO, F-PLN DEPARTURE and
   ARRIVAL, PERF. In the air FROM/TO is always set; without the approach inserted no ILS is tuned.
 - **LESSONS:** start a lesson (they are set at Tallinn).
+
+## World map
+
+F12, or MAP at the top: Estonia from the satellite imagery, with the motorways and main roads,
+rivers, lakes and railways from OpenStreetMap; towns, villages, islands and lakes are labelled,
+more as you zoom in.
+- **Move and zoom:** drag with the left mouse button, the mouse wheel zooms at the cursor (or
+  `+` / `-`); AIRCRAFT centres on your position (the yellow arrow).
+- **Search:** click the search box and type a town, village, island, lake, airport name or ICAO
+  code (`parnu` finds Pärnu); Enter or a click on a result goes there.
+- **Select:** click an airport, a label or any point on the map.
+  - **DEPART FROM HERE** (airports): the flight starts there, on its ILS runway if it has one.
+  - **FLY TO HERE:** an airport becomes the arrival, with ATC; a town or a map point makes a free
+    flight without ATC (RADIO can switch it on) with the route on the map and on the ND.
+- **FLY** (or Enter) starts the flight as the FLIGHT menu is set (cold and dark, lined up, in the
+  air...); FLIGHT OPTIONS goes back to that menu.
+- The magenta line is the route, with its distance and magnetic course; you can fly anywhere,
+  there are no borders.
 
 ## Breakup and crash
 
@@ -621,10 +656,9 @@ These are marked `a320-sim:` in `unreal/A320Sim/Content/JSBSim/aircraft/A320/A32
 **Approximations:**
 - ILS data is from the eAIP (see [MCDU](#mcdu-flight-computer)); the antenna positions are
   placed on the extended centreline.
-- Magnetic variation is the nearest airport's (AIP, 2025: 10° E at EETN, 9° E at EEKE).
-- The flight model's ground is at the nearest airport's elevation everywhere. Terrain and
-  buildings are visual only, so over the sea near Tallinn the radio altimeter reads about 130 ft
-  too high.
+- Magnetic variation is the nearest airport's (AIP, 2025: 7 to 12° E).
+- The flight model's ground follows the terrain on a 250 m grid (runways at their exact level);
+  hills and valleys smaller than that, buildings and trees are visual only.
 - The world is flat (Tallinn's tangent plane, heights above sea level); at Kuressaare north is
   turned about 2° in it, which the aircraft, runways and map all follow.
 

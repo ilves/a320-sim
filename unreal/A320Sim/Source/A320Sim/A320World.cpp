@@ -1,6 +1,7 @@
 #include "A320World.h"
 
 #include "A320Terrain.h"
+#include "a320/WorldMap.h"
 
 #include "Components/DirectionalLightComponent.h"
 #include "Components/ExponentialHeightFogComponent.h"
@@ -12,6 +13,10 @@
 #include "Engine/World.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
+#include "HAL/FileManager.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
+#include "ProceduralMeshComponent.h"
 #include "Materials/MaterialInterface.h"
 #include "Math/RandomStream.h"
 #include "UObject/ConstructorHelpers.h"
@@ -156,8 +161,9 @@ UInstancedStaticMeshComponent* AA320World::AddInstanced(UStaticMesh* Mesh, const
 	return C;
 }
 
-void AA320World::Build(const TArray<A320RunwayInfo>& Runways)
+void AA320World::Build(const TArray<A320RunwayInfo>& Runways, const TArray<A320AirportInfo>& Airports)
 {
+	auto LevelOf = [&Airports](const A320RunwayInfo& R) { return Airports.IsValidIndex(R.airport) ? Airports[R.airport].elevationM : R.elevationM; };
 	if (Runways.Num() == 0)
 	{
 		return;
@@ -183,12 +189,12 @@ void AA320World::Build(const TArray<A320RunwayInfo>& Runways)
 		}
 		if (bFirstOfAirport)
 		{
-			BuildPavedRunway(Runways[i]);
+			BuildPavedRunway(Runways[i], LevelOf(Runways[i]));
 			if (!Terrain.bLoaded && Runways[i].airport != Runways[0].airport)
 			{
 				// Without scenery, a grass field under the other airports at their elevation.
 				const FVector Mid((Runways[i].startNorthM + Runways[i].endNorthM) / 2.0,
-					(Runways[i].startEastM + Runways[i].endEastM) / 2.0, Runways[i].elevationM - 0.5);
+					(Runways[i].startEastM + Runways[i].endEastM) / 2.0, LevelOf(Runways[i]) - 0.5);
 				AddMesh(Shapes.Cube, Mid, 0.0, FVector(30000.0, 30000.0, 1.0), Grass);
 			}
 		}
@@ -198,19 +204,20 @@ void AA320World::Build(const TArray<A320RunwayInfo>& Runways)
 	PapiShown.Init(-1, Runways.Num() * 4);
 	for (int32 i = 0; i < Runways.Num(); ++i)
 	{
-		BuildRunwayDirection(Runways[i], i);
+		BuildRunwayDirection(Runways[i], i, LevelOf(Runways[i]));
 	}
+	BuildAirportLayouts();
 	if (!Terrain.bLoaded)
 	{
 		BuildSurroundings(Runways[0]);  // the real terrain has the real lake, city, forests and buildings
 	}
 }
 
-void AA320World::BuildPavedRunway(const A320RunwayInfo& R0)
+void AA320World::BuildPavedRunway(const A320RunwayInfo& R0, double LevelM)
 {
 	const double Course = R0.gridCourseDeg;
 	const double LengthM = FVector2D(R0.endNorthM - R0.startNorthM, R0.endEastM - R0.startEastM).Size();
-	const FRunwayFrame Paved(R0.startNorthM, R0.startEastM, Course, R0.elevationM);
+	const FRunwayFrame Paved(R0.startNorthM, R0.startEastM, Course, LevelM);
 	AddMesh(Shapes.Cube, Paved.At(LengthM / 2.0, 0.0, RunwayTopM - 0.1), Course, FVector(LengthM, R0.widthM, 0.2), Asphalt);
 
 	// Centreline (30 m dashes, 20 m gaps) and edge lines along the whole runway.
@@ -232,11 +239,11 @@ void AA320World::BuildPavedRunway(const A320RunwayInfo& R0)
 	}
 }
 
-void AA320World::BuildRunwayDirection(const A320RunwayInfo& Runway, int32 Index)
+void AA320World::BuildRunwayDirection(const A320RunwayInfo& Runway, int32 Index, double LevelM)
 {
 	const double Course = Runway.gridCourseDeg;
 	const double HalfWidth = Runway.widthM / 2.0;
-	const FRunwayFrame Thr(Runway.thresholdNorthM, Runway.thresholdEastM, Course, Runway.elevationM);
+	const FRunwayFrame Thr(Runway.thresholdNorthM, Runway.thresholdEastM, Course, LevelM);
 	const double PaintZ = (RunwayTopM + PaintTopM) / 2.0;
 	const double PaintH = PaintTopM - RunwayTopM;
 	auto AddPaint = [&](double X, double Y, double Length, double Width)
@@ -289,7 +296,7 @@ void AA320World::BuildRunwayDirection(const A320RunwayInfo& Runway, int32 Index)
 
 	// PAPI left of the runway at the glideslope origin; the inner unit is 15 m from the
 	// edge, units 9 m apart. Boxes are oversized so they read from a few miles out.
-	const FRunwayFrame Gs(Runway.gsOriginNorthM, Runway.gsOriginEastM, Course, Runway.elevationM);
+	const FRunwayFrame Gs(Runway.gsOriginNorthM, Runway.gsOriginEastM, Course, LevelM);
 	for (int32 i = 0; i < 4; ++i)
 	{
 		const double Y = -(HalfWidth + 15.0 + (3 - i) * 9.0);
@@ -369,5 +376,128 @@ void AA320World::UpdatePapi(int32 RunwayIndex, const int PapiWhite[4])
 		}
 		PapiShown[Slot] = PapiWhite[i];
 		PapiLights[Slot]->SetMaterial(0, Shapes.Tint(this, PapiWhite[i] ? LightWhite : LightRed));
+	}
+}
+
+void AA320World::BuildAirportLayouts()
+{
+	const FString Dir = FPaths::Combine(FPaths::ProjectContentDir(), TEXT("Airports"));
+	TArray<FString> Files;
+	IFileManager::Get().FindFiles(Files, *FPaths::Combine(Dir, TEXT("*.txt")), true, false);
+	if (Files.Num() == 0)
+	{
+		return;
+	}
+	// Taxiways just below the runways (so a runway crossing shows the runway), aprons below them.
+	const FLinearColor TaxiAsphalt(0.06f, 0.06f, 0.065f);
+	const FLinearColor TaxiYellow(0.85f, 0.65f, 0.05f);
+	constexpr double TaxiTopM = 0.035, ApronTopM = 0.025, LineTopM = 0.045;
+	UInstancedStaticMeshComponent* Segments = AddInstanced(Shapes.Cube, TaxiAsphalt);
+	UInstancedStaticMeshComponent* Joints = AddInstanced(Shapes.Cylinder, TaxiAsphalt);
+	UInstancedStaticMeshComponent* Lines = AddInstanced(Shapes.Cube, TaxiYellow);
+	auto ParsePoints = [](const FString& Text)
+	{
+		TArray<FVector2D> Points;  // X north, Y east
+		TArray<FString> Pairs;
+		Text.ParseIntoArray(Pairs, TEXT(";"), true);
+		for (const FString& Pair : Pairs)
+		{
+			FString N, E;
+			if (Pair.Split(TEXT(","), &N, &E))
+			{
+				Points.Add(FVector2D(FCString::Atod(*N), FCString::Atod(*E)));
+			}
+		}
+		return Points;
+	};
+	for (const FString& File : Files)
+	{
+		TArray<FString> LinesOfFile;
+		if (!FFileHelper::LoadFileToStringArray(LinesOfFile, *FPaths::Combine(Dir, File)))
+		{
+			continue;
+		}
+		double Level = 0.0;
+		for (const FString& Line : LinesOfFile)
+		{
+			FString Key, Value;
+			if (Line.StartsWith(TEXT("#")) || !Line.Split(TEXT("="), &Key, &Value))
+			{
+				continue;
+			}
+			TArray<FString> Fields;
+			Value.ParseIntoArray(Fields, TEXT("|"), false);
+			if (Key == TEXT("level"))
+			{
+				Level = FCString::Atod(*Value);
+			}
+			else if (Key == TEXT("taxiway") && Fields.Num() >= 3)
+			{
+				const double WidthM = FMath::Max(FCString::Atod(*Fields[1]), 3.0);
+				const TArray<FVector2D> Points = ParsePoints(Fields[2]);
+				for (int32 i = 0; i < Points.Num(); ++i)
+				{
+					// Round joints so bends and junctions have no gaps.
+					Joints->AddInstance(FTransform(FRotator::ZeroRotator,
+						FVector(Points[i].X, Points[i].Y, Level + TaxiTopM - 0.1) * 100.0, FVector(WidthM, WidthM, 0.2)));
+					if (i == 0)
+					{
+						continue;
+					}
+					const FVector2D A = Points[i - 1], B = Points[i];
+					const double Len = FVector2D::Distance(A, B);
+					if (Len < 0.1)
+					{
+						continue;
+					}
+					const double Yaw = FMath::RadiansToDegrees(FMath::Atan2(B.Y - A.Y, B.X - A.X));
+					const FVector2D Mid = (A + B) / 2.0;
+					Segments->AddInstance(FTransform(FRotator(0.0, Yaw, 0.0), FVector(Mid.X, Mid.Y, Level + TaxiTopM - 0.1) * 100.0,
+						FVector(Len, WidthM, 0.2)));
+					Lines->AddInstance(FTransform(FRotator(0.0, Yaw, 0.0), FVector(Mid.X, Mid.Y, Level + LineTopM - 0.01) * 100.0,
+						FVector(Len, 0.3, 0.02)));
+				}
+			}
+			else if (Key == TEXT("apron") && Fields.Num() >= 2)
+			{
+				const TArray<FVector2D> Points = ParsePoints(Fields[1]);
+				std::vector<a320::geom::Vec2> Poly;  // x east, y north: the triangulation's plane
+				for (const FVector2D& P : Points)
+				{
+					Poly.push_back({P.Y, P.X});
+				}
+				const std::vector<int> Tris = a320::worldmap::triangulate(Poly);
+				if (Tris.empty())
+				{
+					continue;
+				}
+				TArray<FVector> Vertices;
+				TArray<FVector> Normals;
+				TArray<FVector2D> Uvs;
+				for (const FVector2D& P : Points)
+				{
+					Vertices.Add(FVector(P.X, P.Y, Level + ApronTopM) * 100.0);
+					Normals.Add(FVector::UpVector);
+					Uvs.Add(FVector2D::ZeroVector);
+				}
+				TArray<int32> Triangles;
+				for (size_t t = 0; t + 2 < Tris.size(); t += 3)
+				{
+					// Counter-clockwise seen from above (east right, north up): the face points up.
+					const a320::geom::Vec2& A = Poly[static_cast<size_t>(Tris[t])];
+					const a320::geom::Vec2& B = Poly[static_cast<size_t>(Tris[t + 1])];
+					const a320::geom::Vec2& C = Poly[static_cast<size_t>(Tris[t + 2])];
+					const bool bCcw = (B.x - A.x) * (C.y - A.y) - (B.y - A.y) * (C.x - A.x) > 0.0;
+					Triangles.Append({Tris[t], bCcw ? Tris[t + 1] : Tris[t + 2], bCcw ? Tris[t + 2] : Tris[t + 1]});
+				}
+				UProceduralMeshComponent* Apron = NewObject<UProceduralMeshComponent>(this);
+				Apron->SetupAttachment(Root);
+				Apron->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+				Apron->SetCastShadow(false);
+				Apron->CreateMeshSection(0, Vertices, Triangles, Normals, Uvs, TArray<FColor>(), TArray<FProcMeshTangent>(), false);
+				Apron->SetMaterial(0, Shapes.Tint(this, Concrete));
+				Apron->RegisterComponent();
+			}
+		}
 	}
 }

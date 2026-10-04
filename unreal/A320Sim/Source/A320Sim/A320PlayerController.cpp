@@ -372,6 +372,62 @@ void AA320PlayerController::TypeIntoMcdu(AA320Aircraft& Aircraft)
 	}
 }
 
+bool AA320PlayerController::IsMapTypingKey(const FKey& Key)
+{
+	static const FKey Keys[] = {EKeys::A, EKeys::B, EKeys::C, EKeys::D, EKeys::E, EKeys::F, EKeys::G, EKeys::H, EKeys::I,
+		EKeys::J, EKeys::K, EKeys::L, EKeys::M, EKeys::N, EKeys::O, EKeys::P, EKeys::Q, EKeys::R, EKeys::S, EKeys::T,
+		EKeys::U, EKeys::V, EKeys::W, EKeys::X, EKeys::Y, EKeys::Z, EKeys::Zero, EKeys::One, EKeys::Two, EKeys::Three,
+		EKeys::Four, EKeys::Five, EKeys::Six, EKeys::Seven, EKeys::Eight, EKeys::Nine, EKeys::SpaceBar, EKeys::Hyphen,
+		EKeys::BackSpace, EKeys::Slash, EKeys::Comma, EKeys::Period, EKeys::Equals};
+	for (const FKey& K : Keys)
+	{
+		if (K == Key)
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+void AA320PlayerController::TypeIntoMapSearch(AA320Hud& Hud, AA320Aircraft& Aircraft)
+{
+	static const FKey Letters[] = {EKeys::A, EKeys::B, EKeys::C, EKeys::D, EKeys::E, EKeys::F, EKeys::G, EKeys::H, EKeys::I,
+		EKeys::J, EKeys::K, EKeys::L, EKeys::M, EKeys::N, EKeys::O, EKeys::P, EKeys::Q, EKeys::R, EKeys::S, EKeys::T,
+		EKeys::U, EKeys::V, EKeys::W, EKeys::X, EKeys::Y, EKeys::Z};
+	static const FKey Digits[] = {EKeys::Zero, EKeys::One, EKeys::Two, EKeys::Three, EKeys::Four, EKeys::Five, EKeys::Six,
+		EKeys::Seven, EKeys::Eight, EKeys::Nine};
+	for (int32 i = 0; i < 26; ++i)
+	{
+		if (WasInputKeyJustPressed(Letters[i]))
+		{
+			Hud.MapType(static_cast<TCHAR>('a' + i));
+		}
+	}
+	for (int32 i = 0; i < 10; ++i)
+	{
+		if (WasInputKeyJustPressed(Digits[i]))
+		{
+			Hud.MapType(static_cast<TCHAR>('0' + i));
+		}
+	}
+	if (WasInputKeyJustPressed(EKeys::SpaceBar))
+	{
+		Hud.MapType(TEXT(' '));
+	}
+	if (WasInputKeyJustPressed(EKeys::Hyphen))
+	{
+		Hud.MapType(TEXT('-'));
+	}
+	if (WasInputKeyJustPressed(EKeys::BackSpace))
+	{
+		Hud.MapBackspace();
+	}
+	if (WasInputKeyJustPressed(EKeys::Enter))
+	{
+		Hud.MapEnter(Aircraft);
+	}
+}
+
 void AA320PlayerController::PlayerTick(float DeltaTime)
 {
 	Super::PlayerTick(DeltaTime);
@@ -428,6 +484,7 @@ void AA320PlayerController::PlayerTick(float DeltaTime)
 		{EKeys::Tab, EA320Command::McduToggle},
 		{EKeys::F10, EA320Command::RadioToggle},
 		{EKeys::F11, EA320Command::FlightMenu},
+		{EKeys::F12, EA320Command::MapToggle},
 		{EKeys::Hyphen, EA320Command::SoundToggle},
 		{EKeys::Gamepad_FaceButton_Bottom, EA320Command::GearToggle},
 		{EKeys::Gamepad_LeftShoulder, EA320Command::FlapsUp},
@@ -444,9 +501,16 @@ void AA320PlayerController::PlayerTick(float DeltaTime)
 	{
 		TypeIntoMcdu(*Aircraft);
 	}
+	// The world map's search box takes the letter and digit keys while it is active.
+	AA320Hud* MapHud = Cast<AA320Hud>(GetHUD());
+	const bool bMapTyping = Aircraft->IsMapVisible() && MapHud && MapHud->IsMapSearchActive() && !bMcduTyping;
+	if (bMapTyping)
+	{
+		TypeIntoMapSearch(*MapHud, *Aircraft);
+	}
 	// With the RADIO window open (and the MCDU closed), 1-6 pick an ATC reply instead of FCU keys.
 	static const FKey ReplyKeys[] = {EKeys::One, EKeys::Two, EKeys::Three, EKeys::Four, EKeys::Five, EKeys::Six};
-	const bool bRadioReplies = Aircraft->IsRadioVisible() && !bMcduTyping;
+	const bool bRadioReplies = Aircraft->IsRadioVisible() && !bMcduTyping && !bMapTyping;
 	if (bRadioReplies)
 	{
 		int32 Reply = 0;
@@ -461,7 +525,7 @@ void AA320PlayerController::PlayerTick(float DeltaTime)
 	}
 	for (const FKeyCommand& Binding : Bindings)
 	{
-		if (bMcduTyping && IsMcduTypingKey(Binding.Key))
+		if ((bMcduTyping && IsMcduTypingKey(Binding.Key)) || (bMapTyping && IsMapTypingKey(Binding.Key)))
 		{
 			continue;
 		}
@@ -483,11 +547,15 @@ void AA320PlayerController::PlayerTick(float DeltaTime)
 		}
 	}
 
-	if (Aircraft->IsFlightMenuVisible() && WasInputKeyJustPressed(EKeys::Enter))
+	if ((Aircraft->IsFlightMenuVisible() || (Aircraft->IsMapVisible() && !bMapTyping)) && WasInputKeyJustPressed(EKeys::Enter))
 	{
 		Aircraft->ExecuteCommand(EA320Command::FlightGo, false);
 	}
-	if (WasInputKeyJustPressed(EKeys::Escape) && Aircraft->IsFlightMenuVisible())
+	if (WasInputKeyJustPressed(EKeys::Escape) && Aircraft->IsMapVisible())
+	{
+		Aircraft->ExecuteCommand(EA320Command::MapToggle, false);  // Esc closes the map first
+	}
+	else if (WasInputKeyJustPressed(EKeys::Escape) && Aircraft->IsFlightMenuVisible())
 	{
 		Aircraft->ExecuteCommand(EA320Command::FlightMenu, false);  // Esc closes the FLIGHT menu first
 	}
@@ -515,7 +583,7 @@ void AA320PlayerController::PlayerTick(float DeltaTime)
 	const FKey NumLeft = bMcduTyping ? EKeys::Invalid : EKeys::NumPadFour, NumRight = bMcduTyping ? EKeys::Invalid : EKeys::NumPadSix;
 	const double PitchTarget = Gain * KeyAxis(EKeys::Up, EKeys::Down, NumUp, NumDown);
 	const double RollTarget = Gain * KeyAxis(EKeys::Left, EKeys::Right, NumLeft, NumRight);
-	const double PedalTarget = bMcduTyping ? 0.0 : KeyAxis(EKeys::Q, EKeys::E, EKeys::Z, EKeys::X);
+	const double PedalTarget = bMcduTyping || bMapTyping ? 0.0 : KeyAxis(EKeys::Q, EKeys::E, EKeys::Z, EKeys::X);
 	KeyStickPitch = MoveTowards(KeyStickPitch, PitchTarget, 3.0 * DeltaTime);
 	KeyStickRoll = MoveTowards(KeyStickRoll, RollTarget, 3.0 * DeltaTime);
 	KeyPedals = MoveTowards(KeyPedals, PedalTarget, 2.0 * DeltaTime);
@@ -526,7 +594,7 @@ void AA320PlayerController::PlayerTick(float DeltaTime)
 	Inputs.StickPitch = KeyStickPitch - Deadzone(GetInputAnalogKeyState(EKeys::Gamepad_LeftY));
 	Inputs.StickRoll = KeyStickRoll + Deadzone(GetInputAnalogKeyState(EKeys::Gamepad_LeftX));
 	Inputs.Pedals = KeyPedals + Deadzone(GetInputAnalogKeyState(EKeys::Gamepad_RightX));
-	Inputs.Brakes = FMath::Max3(IsInputKeyDown(EKeys::B) && !bMcduTyping ? 1.0 : 0.0,
+	Inputs.Brakes = FMath::Max3(IsInputKeyDown(EKeys::B) && !bMcduTyping && !bMapTyping ? 1.0 : 0.0,
 		IsInputKeyDown(EKeys::Gamepad_FaceButton_Right) ? 1.0 : 0.0,
 		(double)GetInputAnalogKeyState(EKeys::Gamepad_LeftTriggerAxis));
 	Inputs.ThrustRate = (IsInputKeyDown(EKeys::PageUp) ? 0.4 : 0.0) - (IsInputKeyDown(EKeys::PageDown) ? 0.4 : 0.0)
@@ -538,19 +606,60 @@ void AA320PlayerController::PlayerTick(float DeltaTime)
 	float MouseX = 0.0f, MouseY = 0.0f;
 	const bool bHasMouse = GetMousePosition(MouseX, MouseY);
 	const FVector2D Mouse(MouseX, MouseY);
-	const AA320Hud* Hud = Cast<AA320Hud>(GetHUD());
+	AA320Hud* Hud = Cast<AA320Hud>(GetHUD());
+	const bool bOnMap = bHasMouse && Hud && Aircraft->IsMapVisible() && Hud->IsOverMap(Mouse);
+	if (bOnMap && WasInputKeyJustPressed(EKeys::MouseScrollUp))
+	{
+		Hud->MapZoom(1.0 / 1.25, Mouse);
+	}
+	if (bOnMap && WasInputKeyJustPressed(EKeys::MouseScrollDown))
+	{
+		Hud->MapZoom(1.25, Mouse);
+	}
 	if (bHasMouse && Hud && WasInputKeyJustPressed(EKeys::LeftMouseButton))
 	{
-		// Pushbuttons and switches first (pop-up panels sit on top), then levers to drag.
+		// Pushbuttons and switches first (pop-up panels sit on top), then levers to drag, but not
+		// through a window.
 		const EA320Command Clicked = Hud->CommandAt(Mouse);
-		DraggedLever = Clicked == EA320Command::None ? Hud->LeverAt(Mouse) : EA320Lever::None;
-		if (Clicked == EA320Command::McduKey)
+		DraggedLever = Clicked == EA320Command::None && !Hud->IsOverButton(Mouse) ? Hud->LeverAt(Mouse) : EA320Lever::None;
+		if (AA320Hud::IsMapCommand(Clicked))
+		{
+			Hud->MapCommand(Clicked, Hud->ParamAt(Mouse), *Aircraft);
+		}
+		else if (Clicked == EA320Command::None && bOnMap)
+		{
+			bMapDragging = true;
+			MapDragPixels = 0.0;
+			LastMapMouse = Mouse;
+		}
+		else if (Clicked == EA320Command::McduKey)
 		{
 			Aircraft->McduKey(Hud->ParamAt(Mouse));
 		}
 		else if (Clicked != EA320Command::None && !HandleJoystickCommand(Clicked, Hud->ParamAt(Mouse)))
 		{
 			Aircraft->ExecuteCommand(Clicked, bShift, Hud->ParamAt(Mouse));
+		}
+	}
+	if (bMapDragging && Hud)
+	{
+		if (bHasMouse && IsInputKeyDown(EKeys::LeftMouseButton))
+		{
+			const FVector2D Delta = Mouse - LastMapMouse;
+			MapDragPixels += Delta.Size();
+			if (MapDragPixels > 4.0)
+			{
+				Hud->MapPan(Delta);
+			}
+			LastMapMouse = Mouse;
+		}
+		else
+		{
+			if (MapDragPixels <= 4.0 && bHasMouse)
+			{
+				Hud->MapClick(Mouse);
+			}
+			bMapDragging = false;
 		}
 	}
 	if (DraggedLever != EA320Lever::None)

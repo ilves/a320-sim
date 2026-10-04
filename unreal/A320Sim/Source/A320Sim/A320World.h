@@ -32,7 +32,8 @@ public:
 	virtual void Tick(float DeltaSeconds) override;
 	virtual void EndPlay(const EEndPlayReason::Type Reason) override;
 
-	void Build(const TArray<A320RunwayInfo>& Runways);
+	// Runways sit at their airport's level (A320AirportInfo.elevationM), where the terrain is flattened.
+	void Build(const TArray<A320RunwayInfo>& Runways, const TArray<A320AirportInfo>& Airports);
 	// papiWhite: left to right as seen on approach.
 	void UpdatePapi(int32 RunwayIndex, const int PapiWhite[4]);
 
@@ -41,8 +42,10 @@ private:
 		const FLinearColor& Color);
 	UStaticMeshComponent* AddMesh(UStaticMesh* Mesh, const FTransform& Transform, const FLinearColor& Color);
 	UInstancedStaticMeshComponent* AddInstanced(UStaticMesh* Mesh, const FLinearColor& Color);
-	void BuildPavedRunway(const A320RunwayInfo& Runway);
-	void BuildRunwayDirection(const A320RunwayInfo& Runway, int32 Index);
+	void BuildPavedRunway(const A320RunwayInfo& Runway, double LevelM);
+	void BuildRunwayDirection(const A320RunwayInfo& Runway, int32 Index, double LevelM);
+	// Taxiways and aprons from Content/Airports/<ICAO>.txt (tools/make_terrain.py, OpenStreetMap).
+	void BuildAirportLayouts();
 	void BuildSurroundings(const A320RunwayInfo& Runway);
 
 	UPROPERTY() TObjectPtr<USceneComponent> Root;
