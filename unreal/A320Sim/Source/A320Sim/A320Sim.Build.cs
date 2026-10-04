@@ -8,7 +8,7 @@ public class A320Sim : ModuleRules
 		// Each file keeps its own colour constants; unity blobs would make them shadow each other.
 		bUseUnity = false;
 		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore" });
-		PrivateDependencyModuleNames.AddRange(new string[] { "RenderCore", "A320Core" });
+		PrivateDependencyModuleNames.AddRange(new string[] { "RenderCore", "A320Core", "ImageWrapper", "ProceduralMeshComponent" });
 		if (Target.Platform == UnrealTargetPlatform.Win64)
 		{
 			// DirectInput: USB joysticks, throttle quadrants, pedals and FCU panels (128 buttons each).

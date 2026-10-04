@@ -1,5 +1,7 @@
 #include "A320World.h"
 
+#include "A320Terrain.h"
+
 #include "Components/DirectionalLightComponent.h"
 #include "Components/ExponentialHeightFogComponent.h"
 #include "Components/InstancedStaticMeshComponent.h"
@@ -7,7 +9,9 @@
 #include "Components/SkyLightComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
+#include "Materials/MaterialInterface.h"
 #include "Math/RandomStream.h"
+#include "UObject/ConstructorHelpers.h"
 
 namespace
 {
@@ -53,6 +57,10 @@ AA320World::AA320World()
 {
 	PrimaryActorTick.bCanEverTick = false;
 	Shapes.LoadInConstructor();
+	// The 3D widget material: opaque, unlit, one texture. Terrain fallback where no material compiler exists.
+	static ConstructorHelpers::FObjectFinder<UMaterialInterface> UnlitFinder(
+		TEXT("/Engine/EngineMaterials/Widget3DPassThrough_Opaque.Widget3DPassThrough_Opaque"));
+	UnlitTextureMaterial = UnlitFinder.Object;
 
 	Root = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
 	// Static so the static scenery can attach; movable lights may attach to a static parent.
@@ -118,9 +126,13 @@ void AA320World::Build(const TArray<A320RunwayInfo>& Runways)
 		return;
 	}
 
-	// Terrain: grass to 40 km, with the Baltic to the north (Tallinn Bay, ~6 km).
-	AddMesh(Shapes.Cube, FVector(0.0, 0.0, -0.5), 0.0, FVector(80000.0, 80000.0, 1.0), Grass);
-	AddMesh(Shapes.Cube, FVector(24000.0, 0.0, -0.45), 0.0, FVector(34000.0, 80000.0, 1.0), Water);
+	const FA320TerrainResult Terrain = A320Terrain::Build(this, Root, Shapes, UnlitTextureMaterial);
+	if (!Terrain.bLoaded)
+	{
+		// Flat stand-in: grass to 40 km, with the Baltic to the north (Tallinn Bay, ~6 km).
+		AddMesh(Shapes.Cube, FVector(0.0, 0.0, -0.5), 0.0, FVector(80000.0, 80000.0, 1.0), Grass);
+		AddMesh(Shapes.Cube, FVector(24000.0, 0.0, -0.45), 0.0, FVector(34000.0, 80000.0, 1.0), Water);
+	}
 
 	// The paved surface, once, from the first direction's start to its end.
 	const A320RunwayInfo& R0 = Runways[0];
@@ -153,7 +165,10 @@ void AA320World::Build(const TArray<A320RunwayInfo>& Runways)
 	{
 		BuildRunwayDirection(Runways[i], i);
 	}
-	BuildSurroundings(R0);
+	if (!Terrain.bLoaded)
+	{
+		BuildSurroundings(R0);  // the real terrain has the real lake, city, forests and buildings
+	}
 }
 
 void AA320World::BuildRunwayDirection(const A320RunwayInfo& Runway, int32 Index)

@@ -11,11 +11,13 @@
 class UDirectionalLightComponent;
 class UExponentialHeightFogComponent;
 class UInstancedStaticMeshComponent;
+class UMaterialInterface;
 class USkyAtmosphereComponent;
 class USkyLightComponent;
 class UStaticMeshComponent;
 
-// Sky, sun, terrain and the airport, built at runtime from the core's runway data.
+// Sky, sun, terrain and the airport, built at runtime from the core's runway data. The terrain is
+// the real one when Content/Terrain exists (see A320Terrain.h), otherwise flat grass and water.
 // The world is flat: X north, Y east, Z up from field elevation (cm).
 UCLASS()
 class AA320World : public AActor
@@ -44,5 +46,6 @@ private:
 	UPROPERTY() TObjectPtr<UExponentialHeightFogComponent> Fog;
 	UPROPERTY() TArray<TObjectPtr<UStaticMeshComponent>> PapiLights;  // 4 per runway direction
 	UPROPERTY() FA320Shapes Shapes;
+	UPROPERTY() TObjectPtr<UMaterialInterface> UnlitTextureMaterial;
 	TArray<int32> PapiShown;
 };
