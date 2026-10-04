@@ -610,6 +610,30 @@ How the sim uses the data:
 The simulation runs at a fixed 120 Hz, decoupled from the frame rate. Pausing stops sim time
 while rendering and the cockpit keep running.
 
+### Map data
+
+`tools/make_map.py` builds `Content/Map/`, the data of the world map, from the scenery imagery
+(no new downloads) and OpenStreetMap. Run `make_terrain.py` first.
+- **Tiles:** 512 px JPEGs in the same flat world as the terrain, north up, in three levels:
+  `L0` 102.4 km (200 m per pixel, 3 × 5 tiles over 57.25–60.03° N, 20.6–29.2° E), `L1` 51.2 km
+  and `L2` 25.6 km (50 m per pixel). Open sea is left out at `L1` and `L2`.
+- **Style:** darkened satellite imagery and a dark blue sea, with the land border, coastline,
+  lakes, rivers, roads and railways drawn in, more of them at the finer levels. No text: the game
+  draws the names.
+- **`map.txt`:** the grid origin, the levels, one line per tile file and the attribution.
+- **`places.txt`:** cities, towns, villages (not hamlets), islands and lakes with their
+  Estonian names, positions in metres and a rank for decluttering labels. No airports.
+
+- **Map data:** © OpenStreetMap contributors (ODbL), through the Overpass API.
+
+```
+python tools/make_map.py                  # caches OpenStreetMap in build/terrain-cache/map
+python tools/make_map.py --offline --levels 2 --quality 85
+```
+
+Other options: `--supersample`, `--no-places` and `--preview DIR` (see `--help`). A layer no
+Overpass server delivers is left out and named in `map.txt`; a later run fills it in.
+
 ### Tests
 
 ```
