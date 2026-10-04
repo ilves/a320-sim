@@ -393,6 +393,7 @@ void AA320PlayerController::PlayerTick(float DeltaTime)
 	KeyPedals = MoveTowards(KeyPedals, PedalTarget, 2.0 * DeltaTime);
 
 	Joystick.Poll(DeltaTime);
+	WingFlex.Tick(*Aircraft, DeltaTime);
 	FA320FlightInputs Inputs;
 	Inputs.StickPitch = KeyStickPitch - Deadzone(GetInputAnalogKeyState(EKeys::Gamepad_LeftY));
 	Inputs.StickRoll = KeyStickRoll + Deadzone(GetInputAnalogKeyState(EKeys::Gamepad_LeftX));

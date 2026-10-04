@@ -199,15 +199,24 @@ TCA Quadrant Add-On Airbus Edition:
 The levers then move the sim's flaps and speedbrake levers with them. Rudder trim is not
 simulated yet.
 
-**FCU and EFIS panels** (e.g. WingFlex A320 FCU, Winwing FCU): their buttons and knobs are game
-controller buttons, so assign them on the BUTTONS page. That covers AP1, AP2, A/THR, LOC,
-APPR, the SPD/HDG/ALT/V/S knobs (turn, pull, V/S push) and the ALT 100/1000 switch. On the
-EFIS it covers LS, the ND mode and range selectors.
-- The panel's own displays and lights are driven by its maker's software (WingFlex Bridge,
-  SimAppPro) from MSFS or X-Plane, so they don't show this sim's values. The FCU strip on
-  screen shows them.
-- Leave the bridge software running if it needs to be: the sim reads the panel without
-  taking it over.
+**WingFlex FCU Cube and EFIS Cube:** the sim talks to them directly over USB, so nothing
+needs assigning:
+- **Buttons and knobs:** AP1, AP2, A/THR, LOC and APPR. The SPD, HDG, ALT and V/S knobs turn
+  the targets, HDG/ALT/V/S pull, and V/S push levels off. ALT steps 100 or 1000 ft with the
+  100/1000 switch. On the EFIS: LS, the ND mode and range knobs, and MASTER WARN/CAUT.
+- **Lights and displays:** the AP1, AP2, A/THR, LOC and APPR lights. The SPD, HDG, ALT and V/S
+  windows show the sim's targets, with dashes where the real FCU shows them (HDG on the
+  localizer, V/S outside V/S mode). The EFIS shows LS and flashing MASTER WARN/CAUT, and the
+  baro window shows STD.
+- The panels' own brightness knobs set the brightness.
+- **Close WingFlex Bridge while flying this sim,** or both programs drive the displays. The
+  setup panel (F2) shows "WingFlex panels: FCU Cube EFIS Cube" when they are found.
+- The protocol comes from MobiFlight's open-source WingFlex drivers (MIT licence). It is for
+  the FCU Cube (USB ID A316:C787) and EFIS Cube (A516:C987).
+
+**Other FCU and EFIS panels** (e.g. Winwing): their buttons and knobs are game controller
+buttons, so assign them on the BUTTONS page. Their displays and lights are driven by their
+maker's software, so they don't show this sim's values; the FCU strip on screen does.
 
 **Cold and dark start (Shift + F5).**
 1. Press **O** to open the overhead panel. Press APU **MASTER SW**, then **START**.
@@ -337,6 +346,8 @@ The flight tests fly the real JSBSim A320 with a scripted pilot:
   file (including older files);
 - flaps and speedbrake levers: detent calibration (a backwards lever, the ARM position), and
   the button assignments and command list;
+- the WingFlex FCU and EFIS Cube USB reports: buttons, knob clicks, lights, displays and
+  negative V/S;
 - throttle quadrants: detent calibration (including a backwards axis and reverse), devices
   kept by name, and automatic quadrant set-up;
 - cockpit systems: a cold-and-dark start (APU, starter, light-off, crossbleed, shutdown),

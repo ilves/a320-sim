@@ -1439,6 +1439,13 @@ void AA320Hud::DrawJoystickPanel(const AA320PlayerController& Controller)
 		Text(TEXT("No joystick found. Plug it in (it is picked up within 5 s) or press RESCAN."), LeftX, RowY, Amber, 0, 0);
 		RowY += LineH;
 	}
+	const FA320WingFlex& Panels = Controller.GetWingFlex();
+	if (Panels.HasFcu() || Panels.HasEfis())
+	{
+		Text(FString::Printf(TEXT("WingFlex panels: %s%s  (buttons, knobs, lights and displays work directly; close WingFlex Bridge)"),
+			Panels.HasFcu() ? TEXT("FCU Cube ") : TEXT(""), Panels.HasEfis() ? TEXT("EFIS Cube") : TEXT("")), LeftX, RowY, Cyan, 0, 0);
+		RowY += LineH;
+	}
 	for (int32 D = 0; D < Devices.Num(); ++D)
 	{
 		const TCHAR* RoleText = D == StickDevice ? TEXT("   [stick]") : (D == ThrottleDevice ? TEXT("   [throttle]") : TEXT(""));

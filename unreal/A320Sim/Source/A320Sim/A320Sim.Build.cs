@@ -13,6 +13,8 @@ public class A320Sim : ModuleRules
 		{
 			// DirectInput: USB joysticks, throttle quadrants, pedals and FCU panels (128 buttons each).
 			PublicSystemLibraries.AddRange(new string[] { "dinput8.lib", "dxguid.lib" });
+			// USB HID: WingFlex FCU and EFIS Cube lights and displays.
+			PublicSystemLibraries.AddRange(new string[] { "hid.lib", "setupapi.lib" });
 		}
 	}
 }

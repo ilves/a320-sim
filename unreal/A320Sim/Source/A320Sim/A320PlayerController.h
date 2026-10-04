@@ -5,6 +5,7 @@
 
 #include "A320Commands.h"
 #include "A320Joystick.h"
+#include "A320WingFlex.h"
 
 #include "A320PlayerController.generated.h"
 
@@ -21,6 +22,7 @@ public:
 	virtual void PlayerTick(float DeltaTime) override;
 
 	const FA320Joystick& GetJoystick() const { return Joystick; }
+	const FA320WingFlex& GetWingFlex() const { return WingFlex; }
 	bool IsJoystickPanelVisible() const { return bJoystickPanel; }
 	bool IsJoystickButtonsPage() const { return bJoystickButtonsPage; }
 
@@ -34,6 +36,7 @@ private:
 	FVector2D LastMouse = FVector2D::ZeroVector;
 	EA320Lever DraggedLever = EA320Lever::None;
 	FA320Joystick Joystick;
+	FA320WingFlex WingFlex;
 	bool bJoystickPanel = false;
 	bool bJoystickButtonsPage = false;
 	bool bAltStep1000 = false;  // FCU ALT knob step, from a hardware 100/1000 switch
