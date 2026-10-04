@@ -23,6 +23,7 @@ the ILS and land, from a glass cockpit with a working PFD, ND and E/WD.
     lever, engine masters, ENG MODE selector and parking brake.
   - Centre panel: gear lever and the AUTO/BRK pushbuttons.
   - A pop-up overhead panel: APU, APU bleed, exterior lights and signs.
+  - A pop-up **MCDU** (Tab), see [MCDU](#mcdu-flight-computer).
 - **Autopilot and autothrust** through the FCU: HDG, LOC, APPR with **autoland** (LOC*, LOC,
   G/S*, G/S, LAND, FLARE, ROLL OUT), OPEN CLIMB/DESCENT, V/S, ALT capture and hold, and SPEED
   autothrust with RETARD.
@@ -133,6 +134,7 @@ Other scripts:
 | FCU modes | U fly the HDG, 9 climb/descend to ALT (LVL/CH), 0 hold V/S | |
 | Sound on/off, silence master warning | - (minus), M or click MASTER WARN | |
 | Overhead panel | O | |
+| MCDU | Tab (type on the keyboard while it's open, Backspace = CLR, Esc closes) | |
 | Joystick setup | F2 | |
 | Cold and dark | Shift + F5 | |
 | Help overlay | H or F1 | |
@@ -237,6 +239,60 @@ maker's software, so they don't show this sim's values; the FCU strip on screen 
 5. Before takeoff: set the flaps to 1, **ARM** the spoilers, set **AUTO/BRK MAX**, and switch
    the lights on (strobe, landing, nose T.O).
 
+## MCDU (flight computer)
+
+Press **Tab**, or MCDU at the top right. It works like the A320's MCDU:
+- Type into the scratchpad, on the keyboard or the MCDU's keypad.
+- Put the entry into a field with the line select key next to it (the `-` buttons beside the
+  screen).
+- Error messages appear in the scratchpad, for example NOT IN DATA BASE or FORMAT ERROR.
+  CLR removes the message, then deletes characters.
+- CLR on an empty scratchpad, then a line select key, deletes that field.
+
+**Land on another runway (switch the ILS):**
+1. Press **F-PLN**, then the destination line (LSK 3L) to open LAT REV FROM EETN.
+2. Press **ARRIVAL>** and pick the approach, for example `<ILS08`. It shows in yellow
+   (temporary).
+3. Press **INSERT\*** (LSK 6R).
+
+The FMGC tunes the ILS by itself:
+- **On the ground:** the departure runway's ILS.
+- **After takeoff:** the arrival's ILS, so a takeoff on 26 with ILS08 inserted retunes to IIB
+  108.30 once airborne.
+- **On the displays:** the PFD (bottom left), the ND and the FMA follow the change.
+
+**Pages:**
+
+| Key | Page |
+|---|---|
+| F-PLN | Origin and destination with their runways, distance to go. LSK 1L opens DEPARTURE, LSK 3L ARRIVAL |
+| RAD NAV | The tuned ILS (small font = auto-tuned). Type `ILK`, `109.30` or `ILK/109.30` at LSK 3L to tune it yourself, CLR to go back to auto. LSK 4L sets the course |
+| PERF | On the ground: TAKE OFF, with V1/VR/V2, FLAPS/THS, FLEX TO TEMP and THR RED/ACC. In the air: APPR, with QNH, temperature, wind, minimums (BARO or RADIO) and LDG CONF |
+| INIT | Flight number, cost index and cruise level |
+| PROG | Flight phase, bearing and distance to the runway, tuned ILS and DME |
+
+**What the entries do:**
+- **V-speeds:** V1/VR/V2 drive the PFD markers and the V1 and ROTATE calls. Empty fields fall
+  back to computed speeds, shown small next to the labels; LSK with an empty scratchpad copies
+  one in.
+- **Minimums:** RADIO (DH) or BARO (MDA) adds the HUNDRED ABOVE and MINIMUM calls, and shows DH
+  or BARO on the FMA.
+- **VAPP:** computed as VLS + 5 kt, or more with a headwind from the entered wind. You can
+  overwrite it.
+- **Display only:** FLEX TO TEMP, FLAPS/THS and QNH are shown but don't change thrust or the
+  altimeter yet.
+- **Not in this sim:** VORs, ADFs, SIDs/STARs and DIR TO.
+
+The ILS data is the published one (Estonian eAIP, EETN AD 2.19, AIRAC 2026-10-01):
+
+| Runway | ILS | Frequency | Course | Glide path |
+|---|---|---|---|---|
+| 08 | IIB | 108.30 | 080° | 3°, RDH 54 ft |
+| 26 | ILK | 109.30 | 260° | 3°, RDH 54 ft |
+
+The DME is co-located with the glide path antenna, as at EETN, so it reads the distance to
+the touchdown zone.
+
 ## First flight
 
 **Takeoff (F5).** You start lined up on runway 26 in CONF 1+F, with the parking brake set.
@@ -326,6 +382,7 @@ core/                        engine-independent C++17, compiled into A320Core.dl
   src/Ils.cpp                localizer and glideslope from the runway geometry (ICAO Annex 10 sectors), PAPI
   src/Airport.cpp            EETN runway data, runway-aligned frames
   src/Systems.cpp            flaps/1+F logic, thrust detents, VLS/VFE/VMAX, warnings, callouts
+  src/Mcdu.cpp               MCDU pages and entries; the crew's data in Fms.h tunes the ILS
   src/Autopilot.cpp          FCU modes, autopilot guidance, autothrust, autoland
   src/Audio.cpp              cockpit sound synthesis and mixing (engines, airflow, chimes, callouts)
   tests/                     unit tests plus scripted JSBSim flights through the C API
@@ -425,7 +482,7 @@ These are marked `a320-sim:` in `unreal/A320Sim/Content/JSBSim/aircraft/A320/A32
 ## Limitations and next steps
 
 **Not yet built:**
-- managed (FMS) modes, a flight plan, alpha floor and the flight directors;
+- managed (FMS) speed and NAV modes, SIDs/STARs and DIR TO, and the flight directors;
 - go-around (TOGA during an approach: SRS and GA TRK);
 - weather radar and TCAS;
 - trees as 3D objects (forests are in the imagery only), and buildings beyond 20 km;
@@ -434,9 +491,9 @@ These are marked `a320-sim:` in `unreal/A320Sim/Content/JSBSim/aircraft/A320/A32
 - failures.
 
 **Approximations:**
-- ILS frequencies and idents are not in the data yet. The glideslope uses standard values
-  (3°, 50 ft threshold crossing height); verify them against the Estonian AIP.
-- Magnetic variation is fixed at 9.5° E.
+- ILS data is from the eAIP (see [MCDU](#mcdu-flight-computer)); the antenna positions are
+  placed on the extended centreline.
+- Magnetic variation is fixed at 10° E (AIP, 2025).
 - The flight model's ground is at field elevation everywhere. Terrain and buildings are visual
   only, so over the sea the radio altimeter reads about 130 ft too high.
 

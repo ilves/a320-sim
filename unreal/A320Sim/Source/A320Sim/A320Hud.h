@@ -50,6 +50,8 @@ private:
 	void DrawPedestal(const AA320Aircraft& Aircraft, double X, double Y, double W, double H);
 	void DrawSimBar(const AA320Aircraft& Aircraft);
 	void DrawOverhead(const AA320Aircraft& Aircraft);
+	// The MCDU pop-up: its 14 x 24 screen, line select keys, page keys and keypad.
+	void DrawMcdu(const AA320Aircraft& Aircraft);
 	void DrawJoystickPanel(const class AA320PlayerController& Controller);
 	// First-start progress (shader/asset compilation) instead of a black screen; also logs
 	// progress lines and "READY" for the launcher window (scripts/play.ps1).

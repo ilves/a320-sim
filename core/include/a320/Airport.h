@@ -7,8 +7,11 @@
 
 namespace a320 {
 
-// Standard ILS values; verify against the AIP (AD 2.19) before relying on them.
+// One ILS as published in the AIP (AD 2.19). The DME is co-located with the glide path antenna.
 struct IlsSpec {
+  std::string ident;            // "ILK"
+  double frequencyMHz = 0.0;    // localizer; the glide path is paired with it
+  double courseMagDeg = 0.0;    // published localizer course
   double glideslopeDeg = 3.0;
   double thresholdCrossingHeightFt = 50.0;
   double localizerBeyondEndM = 300.0;
@@ -36,7 +39,8 @@ struct Airport {
   const Runway* find(const std::string& ident) const;
 };
 
-// Lennart Meri Tallinn (EETN), runway 08/26, from OurAirports (public domain).
+// Lennart Meri Tallinn (EETN), runway 08/26, from OurAirports (public domain); ILS data from
+// the Estonian eAIP, EETN AD 2.19 (AIRAC 2026-10-01).
 Airport makeTallinn();
 
 struct RunwayPoint {

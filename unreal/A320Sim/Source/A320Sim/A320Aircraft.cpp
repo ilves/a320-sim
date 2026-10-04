@@ -201,9 +201,34 @@ void AA320Aircraft::Tick(float DeltaSeconds)
 	UpdateExteriorLights();
 	if (World)
 	{
-		World->UpdatePapi(State.ilsRunwayIndex, State.papiWhite);
+		for (int32 i = 0; i < Runways.Num() && i < 4; ++i)
+		{
+			World->UpdatePapi(i, State.papiRunway[i]);
+		}
 	}
 	PumpAudio(DeltaSeconds);
+}
+
+void AA320Aircraft::McduKey(int32 Key)
+{
+	if (Sim)
+	{
+		a320_audio_event(Sim, A320_SOUND_CLICK);
+		a320_mcdu_key(Sim, Key);
+		a320_get_state(Sim, &State);  // the PFD and ND show a new ILS or minimums at once
+	}
+}
+
+void AA320Aircraft::GetMcduDisplay(A320McduDisplay& Out) const
+{
+	if (Sim)
+	{
+		a320_mcdu_get_display(Sim, &Out);
+	}
+	else
+	{
+		FMemory::Memzero(Out);
+	}
 }
 
 void AA320Aircraft::StartAudio()
@@ -316,6 +341,7 @@ void AA320Aircraft::ExecuteCommand(EA320Command Command, bool bLarge)
 		}
 		break;
 	case EA320Command::OverheadToggle: bOverheadVisible = !bOverheadVisible; break;
+	case EA320Command::McduToggle: bMcduVisible = !bMcduVisible; break;
 	case EA320Command::NdModeToggle:
 		// EFIS mode selector: ARC -> ROSE NAV -> ROSE LS.
 		NdMode = NdMode == A320_ND_ARC ? A320_ND_ROSE_NAV : (NdMode == A320_ND_ROSE_NAV ? A320_ND_ROSE_LS : A320_ND_ARC);

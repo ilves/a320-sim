@@ -33,13 +33,14 @@ IlsSignal Ils::receive(const Enu& aircraft) const {
 
   const double toLocX = locX_ - p.x;  // > 0 while the antenna is ahead
   const double horizToLoc = std::hypot(toLocX, p.y);
-  s.dmeNm = std::sqrt(horizToLoc * horizToLoc + p.z * p.z) / kNmToM;
+  s.locRangeNm = std::sqrt(horizToLoc * horizToLoc + p.z * p.z) / kNmToM;
   s.locDeviationDeg = std::atan2(p.y, toLocX) * kRadToDeg;
-  s.locValid = toLocX > 0.0 && locInCoverage(s.locDeviationDeg, s.dmeNm);
+  s.locValid = toLocX > 0.0 && locInCoverage(s.locDeviationDeg, s.locRangeNm);
   s.locDots = -s.locDeviationDeg / locHalfSectorDeg_ * kLocDotsFullScale;
 
   const double toGsX = gsX_ - p.x;
   const double horizToGs = std::hypot(toGsX, p.y);
+  s.dmeNm = std::sqrt(horizToGs * horizToGs + p.z * p.z) / kNmToM;
   s.gsElevationDeg = std::atan2(p.z, horizToGs) * kRadToDeg;
   const double gsAzimuthDeg = std::atan2(p.y, toGsX) * kRadToDeg;
   s.gsValid = toGsX > 0.0 && std::fabs(gsAzimuthDeg) <= 8.0 && horizToGs <= 10.0 * kNmToM &&

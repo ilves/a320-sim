@@ -360,7 +360,7 @@ ApOutput Autopilot::update(const ApInput& in) {
 
   if (lat_ == A320_LAT_ROLLOUT || vert_ == A320_VERT_FLARE) {
     // Track the centreline on the localizer: dots -> metres at the current range.
-    const double yM = -in.locDots * in.locDegPerDot * kDegToRad * in.dmeNm * kNmToM;
+    const double yM = -in.locDots * in.locDegPerDot * kDegToRad * in.locRangeNm * kNmToM;
     out.pedals = clamp(-0.03 * yM - 0.2 * wrap180(in.headingTrueDeg - in.ilsCourseTrueDeg), -1.0, 1.0);
     if (vert_ == A320_VERT_FLARE) out.pedals = clamp(out.pedals, -0.3, 0.3);
     out.stickRoll = lat_ == A320_LAT_ROLLOUT ? 0.0 : clamp(0.06 * (lateralBank(in) - in.bankDeg), -0.6, 0.6);

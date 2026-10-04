@@ -167,12 +167,15 @@ class TakeoffCallouts {
 
 class Callouts {
  public:
-  // Returns the callout text for this step, or nullptr.
-  const char* update(double radioAltFt, bool onGround, double thrustLever);
-  void reset() { previousFt_ = -1.0; }
+  // Returns the callout text for this step, or nullptr. Approach minimums from the MCDU (-1 =
+  // none) add "HUNDRED ABOVE" and "MINIMUM": DH on the radio altimeter, MDA on the altimeter.
+  const char* update(double radioAltFt, bool onGround, double thrustLever, double altitudeFt = 0.0, int dhFt = -1,
+                     int mdaFt = -1);
+  void reset() { previousFt_ = previousAltFt_ = -1.0; }
 
  private:
   double previousFt_ = -1.0;
+  double previousAltFt_ = -1.0;
 };
 
 }  // namespace a320

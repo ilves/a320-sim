@@ -44,6 +44,9 @@ private:
 	// Joystick setup commands are handled here; everything else goes to the aircraft.
 	// Param: the command index for JoyBindSet / JoyBindClear.
 	bool HandleJoystickCommand(EA320Command Command, int32 Param = 0);
+	// MCDU keyboard entry while the MCDU is open.
+	bool IsMcduTypingKey(const FKey& Key) const;
+	void TypeIntoMcdu(class AA320Aircraft& Aircraft);
 	// One hardware button's command (see a320::joy::commandCatalog) for this frame.
 	void ApplyHardwareCommand(class AA320Aircraft* Aircraft, struct FA320FlightInputs& Inputs, const FString& Name,
 		int32 Presses, bool bReleased, bool bDown);

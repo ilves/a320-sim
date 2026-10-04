@@ -61,11 +61,14 @@ Airport makeTallinn() {
   a.name = "Tallinn Lennart Meri";
   a.reference = {(e08.latDeg + e26.latDeg) / 2.0, (e08.lonDeg + e26.lonDeg) / 2.0,
                  131.0 * kFtToM};
-  // Approximate 2026 value (WMM); runway 26 at 270.2 true reads 261 magnetic.
-  a.magneticVariationDeg = 9.5;
+  // AIP: 10 E (2025); runway 26 at 270.2 true is the published localizer course 260.
+  a.magneticVariationDeg = 10.0;
   const LocalFrame f(a.reference);
   a.runways.push_back(makeDirection(f, e08, e26, widthM));
   a.runways.push_back(makeDirection(f, e26, e08, widthM));
+  // Localizer antennas from the AIP coordinates, measured along the centreline past the far end.
+  a.runways[0].ils = {"IIB", 108.30, 80.0, 3.0, 54.0, 336.0};
+  a.runways[1].ils = {"ILK", 109.30, 260.0, 3.0, 54.0, 262.0};
   return a;
 }
 

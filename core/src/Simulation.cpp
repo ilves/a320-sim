@@ -32,7 +32,9 @@ constexpr double kElevatorToThs = 1.5 / 3.5;
 }  // namespace
 
 Simulation::Simulation(Airport airport)
-    : airport_(std::move(airport)), frame_(airport_.reference) {}
+    : airport_(std::move(airport)), frame_(airport_.reference) {
+  for (const Runway& r : airport_.runways) ilsAll_.emplace_back(frame_, r);
+}
 
 Simulation::~Simulation() = default;
 
@@ -65,7 +67,7 @@ bool Simulation::reset(A320Scenario scenario, int runwayIndex) {
   if (!fdm_ || airport_.runways.empty()) return false;
   runwayIndex_ = clamp(runwayIndex, 0, static_cast<int>(airport_.runways.size()) - 1);
   const Runway& rw = airport_.runways[runwayIndex_];
-  ils_ = std::make_unique<Ils>(frame_, rw);
+  const Ils& rwIls = ils();
 
   controls_ = A320Controls{};
   controls_.gearDown = 1;
@@ -95,7 +97,7 @@ bool Simulation::reset(A320Scenario scenario, int runwayIndex) {
   double speedKt = 0.0;
   RunwayPoint start;
   if (onRunway) {
-    start = {-ils_->axes().displacementM() + kLineupDistanceM, 0.0, 0.0};
+    start = {-rwIls.axes().displacementM() + kLineupDistanceM, 0.0, 0.0};
     controls_.parkBrake = 1;
     flaps_.setLever(1, 0.0);  // CONF 1+F for takeoff
   } else if (intercept) {
@@ -106,12 +108,12 @@ bool Simulation::reset(A320Scenario scenario, int runwayIndex) {
     speedKt = 220.0;
   } else {
     const double distM = (scenario == A320_SCENARIO_FINAL_10NM ? 10.0 : 4.0) * kNmToM;
-    start = ils_->glidepathPoint(-distM);
+    start = rwIls.glidepathPoint(-distM);
     flaps_.setLever(scenario == A320_SCENARIO_FINAL_10NM ? 3 : 4, 200.0);
     speedKt = scenario == A320_SCENARIO_FINAL_10NM ? 160.0 : 150.0;
   }
   controls_.flapsLever = flaps_.lever();
-  const GeoPos pos = frame_.toGeo(ils_->axes().toEnu(start));
+  const GeoPos pos = frame_.toGeo(rwIls.axes().toEnu(start));
   double thsDeg = 0.0;
 
   try {
@@ -130,7 +132,7 @@ bool Simulation::reset(A320Scenario scenario, int runwayIndex) {
     } else {
       ic->SetAltitudeASLFtIC(pos.altM * kMToFt);
       ic->SetVcalibratedKtsIC(speedKt);
-      ic->SetFlightPathAngleDegIC(intercept ? 0.0 : -ils_->glideslopeDeg());
+      ic->SetFlightPathAngleDegIC(intercept ? 0.0 : -rwIls.glideslopeDeg());
     }
 
     fdm_->ResetToInitialConditions(0);
@@ -177,6 +179,15 @@ bool Simulation::reset(A320Scenario scenario, int runwayIndex) {
     }
   }
   fbw_.reset(onRunway ? PitchLaw::Ground : PitchLaw::Flight, 0.0, thsDeg);
+  // A new flight: on the runway the departure is loaded; in the air, the arrival to this runway.
+  fms_ = Fms{};
+  if (onRunway) {
+    fms_.depRunway = runwayIndex_;
+  } else {
+    fms_.arrRunway = runwayIndex_;
+    fms_.flown = true;
+  }
+  mcdu_.reset();
   clock_.resetTime();
   refreshState();
   wasOnGround_ = state_.onGround != 0;
@@ -318,10 +329,11 @@ ApInput Simulation::apInput() const {
   in.gsValid = s.gsValid != 0;
   in.locDots = s.locDots;
   in.gsDots = s.gsDots;
-  in.dmeNm = s.dmeNm;
+  in.locRangeNm = ilsSignal_.locRangeNm;
   in.ilsCourseTrueDeg = s.ilsCourseDeg;
-  in.glideslopeDeg = ils_ ? ils_->glideslopeDeg() : 3.0;
-  in.locDegPerDot = ils_ ? ils_->locHalfSectorDeg() / 2.0 : 0.8;
+  const Ils* tuned = tunedIls_ >= 0 ? &ilsAll_[static_cast<size_t>(tunedIls_)] : nullptr;
+  in.glideslopeDeg = tuned ? tuned->glideslopeDeg() : 3.0;
+  in.locDegPerDot = tuned ? tuned->locHalfSectorDeg() / 2.0 : 0.8;
   in.magneticVariationDeg = airport_.magneticVariationDeg;
   in.pilotStickPitch = controls_.stickPitch;
   in.pilotStickRoll = controls_.stickRoll;
@@ -332,6 +344,17 @@ ApInput Simulation::apInput() const {
   in.currentThrottle = throttle_;
   in.dtS = clock_.stepS();
   return in;
+}
+
+void Simulation::mcduKey(int key) {
+  McduContext ctx{airport_, frame_, state_, fms_, weightLbs_};
+  mcdu_.press(key, ctx);
+}
+
+void Simulation::mcduDisplay(A320McduDisplay& out) const {
+  Fms fms = fms_;  // rendering never changes the crew's data
+  McduContext ctx{airport_, frame_, state_, fms, weightLbs_};
+  mcdu_.render(ctx, out);
 }
 
 void Simulation::fcuCommand(A320FcuCommand cmd) {
@@ -568,16 +591,41 @@ void Simulation::refreshState() {
   s.vmaxKt = lim.vmaxKt;
   s.vfeNextKt = lim.vfeNextKt;
 
-  s.ilsRunwayIndex = runwayIndex_;
-  s.ilsCourseDeg = airport_.runways[runwayIndex_].trueCourseDeg;
-  const IlsSignal sig = ils_->receive(enu);
-  s.locValid = sig.locValid ? 1 : 0;
-  s.gsValid = sig.gsValid ? 1 : 0;
-  s.locDots = sig.locDots;
-  s.gsDots = sig.gsDots;
-  s.dmeNm = sig.dmeNm;
-  const PapiState papi = computePapi(*ils_, enu);
-  for (int i = 0; i < 4; ++i) s.papiWhite[i] = papi.white[i] ? 1 : 0;
+  // FMGC radio tuning: after takeoff the arrival ILS replaces the departure runway's.
+  if (!s.onGround && lastAirborneS_ > 5.0) fms_.flown = true;
+  const int runways = static_cast<int>(airport_.runways.size());
+  tunedIls_ = fms_.tunedIls() < runways ? fms_.tunedIls() : -1;
+  s.depRunwayIndex = fms_.depRunway;
+  s.arrRunwayIndex = fms_.arrRunway;
+  s.ilsRunwayIndex = tunedIls_;
+  s.ilsManual = fms_.manualIls >= 0 ? 1 : 0;
+  ilsSignal_ = IlsSignal{};
+  if (tunedIls_ >= 0) {
+    const Runway& r = airport_.runways[static_cast<size_t>(tunedIls_)];
+    s.ilsCourseDeg = r.trueCourseDeg;
+    s.ilsCourseMagDeg = fms_.manualCrsMagDeg >= 0.0 ? fms_.manualCrsMagDeg : r.ils.courseMagDeg;
+    s.ilsFreqMHz = r.ils.frequencyMHz;
+    std::snprintf(s.ilsIdent, sizeof(s.ilsIdent), "%s", r.ils.ident.c_str());
+    ilsSignal_ = ilsAll_[static_cast<size_t>(tunedIls_)].receive(enu);
+  } else {
+    s.ilsCourseDeg = s.ilsCourseMagDeg = s.ilsFreqMHz = 0.0;
+    s.ilsIdent[0] = '\0';
+  }
+  s.locValid = ilsSignal_.locValid ? 1 : 0;
+  s.gsValid = ilsSignal_.gsValid ? 1 : 0;
+  s.locDots = ilsSignal_.locDots;
+  s.gsDots = ilsSignal_.gsDots;
+  s.dmeNm = tunedIls_ >= 0 ? ilsSignal_.dmeNm : 0.0;
+  for (int i = 0; i < runways && i < 4; ++i) {
+    const PapiState papi = computePapi(ilsAll_[static_cast<size_t>(i)], enu);
+    for (int k = 0; k < 4; ++k) s.papiRunway[i][k] = papi.white[k] ? 1 : 0;
+  }
+  const int papiOf = tunedIls_ >= 0 ? tunedIls_ : runwayIndex_;
+  for (int k = 0; k < 4; ++k) s.papiWhite[k] = papiOf < 4 ? s.papiRunway[papiOf][k] : 0;
+  weightLbs_ = weightLbs;
+  s.dhFt = fms_.dhFt;
+  s.mdaFt = fms_.mdaFt;
+  s.vappKt = computeVapp(fms_, computeConfigSpeeds(weightLbs), airport_);
 
   WarningInput w;
   w.onGround = s.onGround != 0;
@@ -599,9 +647,11 @@ void Simulation::refreshState() {
   if (!takeoffCallouts_.rolling() && s.onGround && s.groundSpeedKt < 30.0) {
     const SpeedLimits takeoff = computeSpeedLimits(s.flapsLever, s.onePlusF != 0, s.flapDeg, weightLbs, true, true);
     const TakeoffSpeeds speeds = computeTakeoffSpeeds(takeoff.vsKt);
-    s.v1Kt = speeds.v1Kt;
-    s.vrKt = speeds.vrKt;
-    s.v2Kt = speeds.v2Kt;
+    // The crew's MCDU entries win; the computed values stand in for any left empty.
+    s.vSpeedsEntered = fms_.v1Kt > 0.0 && fms_.vrKt > 0.0 && fms_.v2Kt > 0.0;
+    s.v1Kt = fms_.v1Kt > 0.0 ? fms_.v1Kt : speeds.v1Kt;
+    s.vrKt = fms_.vrKt > 0.0 ? fms_.vrKt : speeds.vrKt;
+    s.v2Kt = fms_.v2Kt > 0.0 ? fms_.v2Kt : speeds.v2Kt;
   }
   const TakeoffSpeeds speeds{s.v1Kt, s.vrKt, s.v2Kt};
   const char* takeoffCall =
@@ -609,7 +659,8 @@ void Simulation::refreshState() {
   if (takeoffCall) {
     std::snprintf(s.callout, sizeof(s.callout), "%s", takeoffCall);
     ++s.calloutSeq;
-  } else if (const char* text = callouts_.update(s.radioAltFt, s.onGround != 0, forwardLever)) {
+  } else if (const char* text = callouts_.update(s.radioAltFt, s.onGround != 0, forwardLever, s.altitudeFt,
+                                                 fms_.dhFt, fms_.mdaFt)) {
     std::snprintf(s.callout, sizeof(s.callout), "%s", text);
     ++s.calloutSeq;
   }
@@ -617,7 +668,17 @@ void Simulation::refreshState() {
   airborneS_ = s.onGround ? 0.0 : airborneS_ + clock_.stepS();
   // A skip of a few feet after touchdown is the same landing, not a new one.
   if (s.onGround && !wasOnGround_ && lastAirborneS_ > 3.0) {
-    const RunwayPoint p = ils_->axes().fromEnu(enu);
+    // Measured on the runway direction the aircraft is landing on.
+    size_t landed = static_cast<size_t>(runwayIndex_);
+    double best = 1e9;
+    for (size_t i = 0; i < airport_.runways.size(); ++i) {
+      const double d = std::fabs(std::remainder(s.headingTrueDeg - airport_.runways[i].trueCourseDeg, 360.0));
+      if (d < best) {
+        best = d;
+        landed = i;
+      }
+    }
+    const RunwayPoint p = ilsAll_[landed].axes().fromEnu(enu);
     s.touchdownFpm = s.verticalSpeedFpm;
     s.touchdownDistanceM = p.x;
     s.touchdownCenterlineM = p.y;

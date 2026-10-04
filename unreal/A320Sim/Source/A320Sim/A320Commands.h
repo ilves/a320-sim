@@ -98,6 +98,9 @@ enum class EA320Command : uint8
 	JoyBindClear,
 	FcuVsPush,
 	ApDisconnect,
+	// MCDU pop-up; McduKey buttons carry the key code (A320McduKey or an ASCII character).
+	McduToggle,
+	McduKey,
 };
 
 // Levers dragged with the mouse; the value is the handle position, 0 at the top of its slot.

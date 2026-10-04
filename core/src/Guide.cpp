@@ -40,20 +40,21 @@ const GuideStep kIlsAutoland[] = {
      "(ROSE LS). [Key: L]",
      "PFD: magenta localizer diamond at the bottom, glideslope diamond on the right. ND: course pointer and "
      "deviation bar.",
-     "LS only changes the display; the ILS is tuned automatically for the runway. A diamond shows where the beam is, "
-     "so fly towards it.",
+     "LS only changes the display; the FMGC tunes the ILS of the arrival in the MCDU flight plan. A diamond shows "
+     "where the beam is, so fly towards it.",
      "In MSFS check the ILS frequency and course on the MCDU RAD NAV page. LS and the ND mode knob are on the EFIS "
      "panel.",
      {A320_GT_EFIS_LS, A320_GT_EFIS_ND_MODE}, false,
      [](const A320State&, const A320Controls& c) { return c.efisLs != 0 && c.ndMode == A320_ND_ROSE_LS; }},
     {"APPROACH PREPARATION", "Check the ILS",
-     "On the ND, check the ILS (runway 26), its course and the distance (DME). Then press NEXT.",
-     "The course arrow points along the runway, and the deviation bar sits to one side: you are not on the beam "
-     "yet.",
-     "Pilots verify the identifier, course and frequency before trusting an ILS: a wrong course would make LOC "
-     "capture fail.",
-     "In MSFS this is on the ND and the MCDU RAD NAV page.",
-     {A320_GT_ND}, true, nullptr},
+     "Open the MCDU (MCDU at the top, or Tab) and press RAD NAV: ILS ILK/109.30, CRS 260 for runway 26. Compare "
+     "with the PFD (bottom left) and the ND, then press NEXT.",
+     "The same ident ILK and course 260 on the MCDU, PFD and ND. The deviation bar sits to one side: you are not on "
+     "the beam yet.",
+     "Pilots verify the identifier, course and frequency before trusting an ILS. A different runway is chosen on the "
+     "MCDU: F-PLN, the destination (LSK3L), ARRIVAL>, the approach, INSERT.",
+     "Same pages in the MSFS A320neo MCDU (RAD NAV, F-PLN > ARRIVAL).",
+     {A320_GT_MCDU, A320_GT_ND}, true, nullptr},
     {"INTERCEPT", "Slow down: SPD 180",
      "Turn the SPD knob on the FCU down to 180 kt: click - next to the SPD window. [Keys: 1, Shift = 10 kt]",
      "The blue speed target on the PFD speed tape moves to 180. A/THR reduces thrust, and the FMA still shows "

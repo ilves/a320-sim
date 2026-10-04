@@ -12,7 +12,7 @@ struct ApInput {
   double headingTrueDeg = 0.0, trackTrueDeg = 0.0, bankDeg = 0.0;
   bool onGround = true;
   bool locValid = false, gsValid = false;
-  double locDots = 0.0, gsDots = 0.0, dmeNm = 0.0;
+  double locDots = 0.0, gsDots = 0.0, locRangeNm = 0.0;
   double ilsCourseTrueDeg = 0.0, glideslopeDeg = 3.0, locDegPerDot = 0.8;
   double magneticVariationDeg = 0.0;
   double pilotStickPitch = 0.0, pilotStickRoll = 0.0;  // for instinctive disconnect

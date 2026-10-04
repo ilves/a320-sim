@@ -212,6 +212,10 @@ void AA320Hud::DrawHUD()
 		{
 			DrawOverhead(*Aircraft);
 		}
+		if (Aircraft->IsMcduVisible())
+		{
+			DrawMcdu(*Aircraft);
+		}
 	}
 	DrawSimBar(*Aircraft);
 	if (const AA320PlayerController* A320PC = Cast<AA320PlayerController>(PC))
@@ -471,13 +475,16 @@ void AA320Hud::DrawPfd(const AA320Aircraft& Aircraft, double X, double Y, double
 		{
 			Diamond(GsX, CY - FMath::Clamp(St.gsDots, -2.3, 2.3) * Dot);
 		}
-		const TArray<A320RunwayInfo>& Runways = Aircraft.GetRunways();
-		if (Runways.IsValidIndex(St.ilsRunwayIndex))
+		// ILS identification as on the PFD: ident (or frequency), course, DME.
+		if (St.ilsFreqMHz > 0.0)
 		{
-			const A320RunwayInfo& Rw = Runways[St.ilsRunwayIndex];
-			Text(FString::Printf(TEXT("ILS %s"), UTF8_TO_TCHAR(Rw.ident)), X + 0.02 * S, Y + 0.84 * S, Magenta, 0, 0);
-			Text(FString::Printf(TEXT("%03d"), FMath::RoundToInt(Wrap360(Rw.trueCourseDeg - MagVar))), X + 0.02 * S, Y + 0.89 * S, Magenta, 0, 0);
+			Text(FString::Printf(TEXT("%s %.2f"), UTF8_TO_TCHAR(St.ilsIdent), St.ilsFreqMHz), X + 0.02 * S, Y + 0.84 * S, Magenta, 0, 0);
+			Text(FString::Printf(TEXT("%03d"), (FMath::RoundToInt(St.ilsCourseMagDeg) + 359) % 360 + 1), X + 0.02 * S, Y + 0.89 * S, Magenta, 0, 0);
 			Text(FString::Printf(TEXT("%.1fNM"), St.dmeNm), X + 0.02 * S, Y + 0.94 * S, Magenta, 0, 0);
+		}
+		else
+		{
+			Text(TEXT("NO ILS TUNED"), X + 0.02 * S, Y + 0.89 * S, Amber, 0, 0);
 		}
 	}
 
@@ -581,7 +588,7 @@ void AA320Hud::DrawNd(const AA320Aircraft& Aircraft, double X, double Y, double 
 	{
 		// ROSE LS: the ILS course pointer, the deviation bar (where the localizer is, 2 dots each
 		// side) and the glideslope scale on the right, as on the PFD.
-		const double CourseA = Wrap180(Wrap360(St.ilsCourseDeg - MagVar) - MagHdg);
+		const double CourseA = Wrap180(St.ilsCourseMagDeg - MagHdg);
 		const double ARad = FMath::DegreesToRadians(CourseA);
 		const FVector2D Dir(FMath::Sin(ARad), -FMath::Cos(ARad));
 		const FVector2D Right(FMath::Cos(ARad), FMath::Sin(ARad));
@@ -626,7 +633,7 @@ void AA320Hud::DrawNd(const AA320Aircraft& Aircraft, double X, double Y, double 
 		}
 		if (Runways.IsValidIndex(St.ilsRunwayIndex))
 		{
-			Text(FString::Printf(TEXT("CRS %03d"), FMath::RoundToInt(Wrap360(St.ilsCourseDeg - MagVar))), X + S - 0.03 * S, Y + 0.09 * S, Magenta, 0, 2);
+			Text(FString::Printf(TEXT("CRS %03d"), (FMath::RoundToInt(St.ilsCourseMagDeg) + 359) % 360 + 1), X + S - 0.03 * S, Y + 0.09 * S, Magenta, 0, 2);
 		}
 		if (!St.locValid)
 		{
@@ -642,7 +649,7 @@ void AA320Hud::DrawNd(const AA320Aircraft& Aircraft, double X, double Y, double 
 	Text(FString::Printf(TEXT("GS %d  TAS %d"), FMath::RoundToInt(St.groundSpeedKt), FMath::RoundToInt(St.tasKt)), X + 0.03 * S, Y + 0.04 * S, White, 0, 0);
 	if (Aircraft.IsLsOn() && Runways.IsValidIndex(St.ilsRunwayIndex))
 	{
-		Text(FString::Printf(TEXT("ILS %s  %.1f NM"), UTF8_TO_TCHAR(Runways[St.ilsRunwayIndex].ident), St.dmeNm), X + S - 0.03 * S, Y + 0.04 * S, Magenta, 0, 2);
+		Text(FString::Printf(TEXT("%s %.2f  %.1f NM"), UTF8_TO_TCHAR(St.ilsIdent), St.ilsFreqMHz, St.dmeNm), X + S - 0.03 * S, Y + 0.04 * S, Magenta, 0, 2);
 	}
 	Text(FString::Printf(TEXT("%s  %d NM"), bLs ? TEXT("ROSE LS") : (bRose ? TEXT("ROSE NAV") : TEXT("ARC")), Aircraft.GetNdRangeNm()),
 		X + 0.03 * S, Y + 0.96 * S, Cyan, 0, 0);
@@ -896,6 +903,7 @@ void AA320Hud::DrawHelp()
 		TEXT("Joystick       F2 (or JOYSTICK, top right): pick axes with LEARN; trigger = AP disconnect, hat = look"),
 		TEXT("Autopilot      A AP1,  Shift+A AP2,  T A/THR (thrust levers in CL: Ins),  K APPR (autoland),  J LOC"),
 		TEXT("Lessons        F3 (or LESSONS, top right): step-by-step guides, e.g. ILS approach and autoland"),
+		TEXT("MCDU           Tab (or MCDU, top right): arrival ILS, RAD NAV, PERF; type on the keyboard, Backspace = CLR"),
 		TEXT("FCU            1/2 SPD,  3/4 HDG,  5/6 ALT,  7/8 V/S  (Shift = x10);  U fly HDG,  9 climb/descend to ALT,  0 hold V/S"),
 		TEXT("Sound          - (minus) on/off,  M silence master warning"),
 		TEXT("Takeoff        N (release brake), Home (TOGA), rotate ~150 kt with Down arrow, G at positive climb"),
@@ -1080,6 +1088,19 @@ void AA320Hud::DrawFma(const A320State& St, double X, double Y, double S)
 	}
 	Mode(3, Cat, X + 0.7 * S, 0.18 * S, White);
 	Text(CatDetail, X + 0.7 * S, Row2, White, 0, 1);
+	// Third line: the minimums from the MCDU PERF APPR page.
+	if (bAppr && St.dhFt > 0)
+	{
+		Text(FString::Printf(TEXT("DH %d"), St.dhFt), X + 0.7 * S, Row2 + (Row2 - Row1), Cyan, 0, 1);
+	}
+	else if (bAppr && St.mdaFt > 0)
+	{
+		Text(FString::Printf(TEXT("BARO %d"), St.mdaFt), X + 0.7 * S, Row2 + (Row2 - Row1), Cyan, 0, 1);
+	}
+	else if (bAppr && St.dhFt == 0)
+	{
+		Text(TEXT("NO DH"), X + 0.7 * S, Row2 + (Row2 - Row1), Cyan, 0, 1);
+	}
 
 	// Column 5: engagement status.
 	Mode(4, St.ap1Engaged && St.ap2Engaged ? TEXT("AP1+2") : (St.ap1Engaged ? TEXT("AP1") : (St.ap2Engaged ? TEXT("AP2") : TEXT(""))),
@@ -1092,6 +1113,15 @@ void AA320Hud::DrawFma(const A320State& St, double X, double Y, double S)
 
 EA320Lever AA320Hud::LeverAt(const FVector2D& ScreenPos) const
 {
+	// Only called when no button was hit, so a containing button is a pop-up panel's background
+	// (the MCDU sits over the pedestal): no lever behind it.
+	for (const FButton& Button : Buttons)
+	{
+		if (Button.Box.IsInside(ScreenPos))
+		{
+			return EA320Lever::None;
+		}
+	}
 	for (const FLeverSlot& Slot : Levers)
 	{
 		if (Slot.Box.IsInside(ScreenPos))
@@ -1302,6 +1332,7 @@ void AA320Hud::DrawSimBar(const AA320Aircraft& Aircraft)
 		{FString::Printf(TEXT("SIM x%d"), FMath::Max(1, FMath::RoundToInt(St.simRate))), EA320Command::SimRateCycle, St.simRate > 1.0},
 		{Aircraft.IsCockpitView() ? TEXT("VIEW: CKPT") : TEXT("VIEW: EXT"), EA320Command::ViewToggle, false},
 		{TEXT("OVERHEAD"), EA320Command::OverheadToggle, Aircraft.IsOverheadVisible()},
+		{TEXT("MCDU"), EA320Command::McduToggle, Aircraft.IsMcduVisible()},
 		{TEXT("JOYSTICK"), EA320Command::JoystickPanel, false},
 		{Aircraft.IsSoundOn() ? TEXT("SOUND ON") : TEXT("SOUND OFF"), EA320Command::SoundToggle, !Aircraft.IsSoundOn()},
 		{TEXT("HELP"), EA320Command::HelpToggle, Aircraft.IsHelpVisible()},
@@ -1318,6 +1349,10 @@ void AA320Hud::DrawSimBar(const AA320Aircraft& Aircraft)
 	double BX = W - Count * (BW + Gap) - 8.0 * Scale;
 	for (const FItem& Item : Items)
 	{
+		if (Item.Command == EA320Command::McduToggle && !Aircraft.IsMcduVisible())
+		{
+			MarkTarget(A320_GT_MCDU, BX, 8.0 * Scale, BW, BH);  // the open MCDU marks itself
+		}
 		AddButton(BX, 8.0 * Scale, BW, BH, Item.Label, Item.Command, Item.bLit);
 		BX += BW + Gap;
 	}
@@ -1387,6 +1422,123 @@ void AA320Hud::DrawOverhead(const AA320Aircraft& Aircraft)
 
 	Text(TEXT("Cold start: APU MASTER SW, START, wait for AVAIL, APU BLEED; ENG MODE IGN/START, ENG 1 then ENG 2 ON; ENG MODE NORM."),
 		OX + OW / 2.0, OY + OH - 0.03 * H, FLinearColor(0.8f, 0.85f, 0.9f), 0, 1);
+}
+
+void AA320Hud::DrawMcdu(const AA320Aircraft& Aircraft)
+{
+	A320McduDisplay D;
+	Aircraft.GetMcduDisplay(D);
+	const double W = Canvas->ClipX, H = Canvas->ClipY;
+	// On the right, over the E/WD side, in the unit's tall proportions.
+	const double MH = H * 0.9, MW = FMath::Min(MH * 0.62, W * 0.42);
+	const double MX = W - MW - 0.01 * W, MY = 0.05 * H;
+	Fill(MX, MY, MW, MH, FLinearColor(0.16f, 0.17f, 0.19f, 0.98f));
+	MarkTarget(A320_GT_MCDU, MX, MY, MW, MH);
+	Buttons.Add({FBox2D(FVector2D(MX, MY), FVector2D(MX + MW, MY + MH)), EA320Command::None});  // swallows clicks
+	Frame(MX, MY, MW, MH, FLinearColor(0.5f, 0.52f, 0.55f), 2.0);
+	AddButton(MX + MW - 0.07 * MW, MY + 0.005 * MH, 0.06 * MW, 0.03 * MH, TEXT("X"), EA320Command::McduToggle, false);
+
+	// Screen: 24 columns x 14 rows, one cell per character.
+	const double Pad = 0.02 * MW, LskW = 0.07 * MW, Gap = 0.015 * MW;
+	const double SX = MX + Pad + LskW + Gap, SW = MW - 2.0 * (Pad + LskW + Gap);
+	const double SY = MY + 0.04 * MH, SH = SW * 0.8;
+	Fill(SX, SY, SW, SH, Screen);
+	Frame(SX, SY, SW, SH, Grey, 1.0);
+	const double CellW = SW / A320_MCDU_COLS, CellH = SH / A320_MCDU_ROWS;
+	const FLinearColor Colors[] = {White, Cyan, Green, Amber, Magenta, Yellow};
+	const int32 ColorCount = static_cast<int32>(UE_ARRAY_COUNT(Colors));
+	for (int32 Row = 0; Row < A320_MCDU_ROWS; ++Row)
+	{
+		for (int32 Col = 0; Col < A320_MCDU_COLS; ++Col)
+		{
+			const ANSICHAR Ch = D.text[Row][Col];
+			if (Ch == ' ' || Ch == '\0')
+			{
+				continue;
+			}
+			const FLinearColor& Color = Colors[FMath::Min<int32>(D.color[Row][Col], ColorCount - 1)];
+			const double CX = SX + (Col + 0.5) * CellW, CY = SY + (Row + 0.5) * CellH;
+			if (Ch == '#')
+			{
+				Frame(CX - 0.38 * CellW, CY - 0.36 * CellH, 0.76 * CellW, 0.72 * CellH, Amber, 1.0);  // entry box
+				continue;
+			}
+			const TCHAR Glyph = Ch == '`' ? TEXT('\u00B0') : static_cast<TCHAR>(Ch);
+			Text(FString(1, &Glyph), CX, CY, Color, D.small[Row][Col] ? 0 : 1, 1);
+		}
+	}
+
+	// Line select keys beside the data lines (rows 2, 4 .. 12).
+	const double LskH = 1.3 * CellH;
+	for (int32 Lsk = 0; Lsk < 6; ++Lsk)
+	{
+		const double KY = SY + (2 * Lsk + 2.5) * CellH - LskH / 2.0;
+		AddButton(MX + Pad, KY, LskW, LskH, TEXT("-"), EA320Command::McduKey, false, A320_MCDU_LSK1L + Lsk);
+		AddButton(MX + MW - Pad - LskW, KY, LskW, LskH, TEXT("-"), EA320Command::McduKey, false, A320_MCDU_LSK1R + Lsk);
+	}
+
+	// Page keys (as on the unit), then the keypad.
+	struct FKeyDef
+	{
+		const TCHAR* Label;
+		int32 Key;
+	};
+	const FKeyDef PageKeys[] = {
+		{TEXT("DIR"), A320_MCDU_DIR}, {TEXT("PROG"), A320_MCDU_PROG}, {TEXT("PERF"), A320_MCDU_PERF},
+		{TEXT("INIT"), A320_MCDU_INIT}, {TEXT("DATA"), A320_MCDU_DATA}, {TEXT(""), 0},
+		{TEXT("F-PLN"), A320_MCDU_FPLN}, {TEXT("RAD NAV"), A320_MCDU_RADNAV}, {TEXT("FUEL PRED"), A320_MCDU_FUELPRED},
+		{TEXT("SEC F-PLN"), A320_MCDU_SECFPLN}, {TEXT("ATC COMM"), A320_MCDU_ATCCOMM}, {TEXT("MENU"), A320_MCDU_MENU},
+		{TEXT("AIRPORT"), A320_MCDU_AIRPORT}, {TEXT(""), 0}, {TEXT(""), 0},
+		{TEXT("UP"), A320_MCDU_UP}, {TEXT("NEXT PAGE"), A320_MCDU_NEXTPAGE}, {TEXT("DOWN"), A320_MCDU_DOWN},
+	};
+	const double KeysTop = SY + SH + 0.02 * MH;
+	const double PkW = (MW - 2.0 * Pad) / 6.0, PkH = 0.045 * MH;
+	const int32 PageKeyCount = static_cast<int32>(UE_ARRAY_COUNT(PageKeys));
+	for (int32 i = 0; i < PageKeyCount; ++i)
+	{
+		if (PageKeys[i].Key == 0)
+		{
+			continue;
+		}
+		const double KX = MX + Pad + (i % 6) * PkW, KY = KeysTop + (i / 6) * (PkH + 0.006 * MH);
+		AddButton(KX + 2.0, KY, PkW - 4.0, PkH, PageKeys[i].Label, EA320Command::McduKey, false, PageKeys[i].Key);
+	}
+
+	// Keypad: digits on the left, letters and CLR on the right.
+	const double PadTop = KeysTop + 3.0 * (PkH + 0.006 * MH) + 0.015 * MH;
+	const double KeyH = FMath::Min(0.045 * MH, (MY + MH - 0.035 * MH - PadTop) / 6.0 - 0.006 * MH);
+	const double KeyW = (MW - 2.0 * Pad) / 8.4;
+	const TCHAR* Digits[] = {TEXT("1"), TEXT("2"), TEXT("3"), TEXT("4"), TEXT("5"), TEXT("6"), TEXT("7"), TEXT("8"), TEXT("9"),
+		TEXT("."), TEXT("0"), TEXT("+/-")};
+	const int32 DigitCount = static_cast<int32>(UE_ARRAY_COUNT(Digits));
+	for (int32 i = 0; i < DigitCount; ++i)
+	{
+		const int32 Code = i == 11 ? A320_MCDU_PLUSMINUS : static_cast<int32>(Digits[i][0]);
+		const double KX = MX + Pad + (i % 3) * KeyW, KY = PadTop + (i / 3) * (KeyH + 0.006 * MH);
+		AddButton(KX + 2.0, KY, KeyW - 4.0, KeyH, Digits[i], EA320Command::McduKey, false, Code);
+	}
+	const double LettersX = MX + Pad + 3.4 * KeyW;
+	for (int32 i = 0; i < 30; ++i)
+	{
+		FString Label;
+		int32 Code = 0;
+		if (i < 26)
+		{
+			Label = FString::Chr(static_cast<TCHAR>('A' + i));
+			Code = 'A' + i;
+		}
+		else
+		{
+			const TCHAR* Extra[] = {TEXT("SP"), TEXT("/"), TEXT("OVFY"), TEXT("CLR")};
+			const int32 ExtraCodes[] = {' ', '/', A320_MCDU_OVFY, A320_MCDU_CLR};
+			Label = Extra[i - 26];
+			Code = ExtraCodes[i - 26];
+		}
+		const double KX = LettersX + (i % 5) * KeyW, KY = PadTop + (i / 5) * (KeyH + 0.006 * MH);
+		AddButton(KX + 2.0, KY, KeyW - 4.0, KeyH, Label, EA320Command::McduKey, false, Code);
+	}
+	Text(TEXT("Keyboard types here   Backspace = CLR   Tab / Esc closes"), MX + MW / 2.0, MY + MH - 0.015 * MH,
+		FLinearColor(0.75f, 0.8f, 0.85f), 0, 1);
 }
 
 void AA320Hud::DrawJoystickPanel(const AA320PlayerController& Controller)

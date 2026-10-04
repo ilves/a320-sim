@@ -13,7 +13,8 @@ struct IlsSignal {
   double gsDots = 0.0;
   double locDeviationDeg = 0.0;  // aircraft angle off course seen from the LOC antenna, + = right
   double gsElevationDeg = 0.0;   // aircraft elevation angle seen from the G/S origin
-  double dmeNm = 0.0;            // slant range to the localizer antenna
+  double dmeNm = 0.0;            // slant range to the DME, co-located with the glide path antenna
+  double locRangeNm = 0.0;       // slant range to the localizer antenna (beam width in metres)
 };
 
 // Geometry of one ILS, derived from the runway (ICAO Annex 10 sector definitions).

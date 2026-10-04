@@ -131,6 +131,14 @@ void a320_fcu_command(A320Sim* sim, A320FcuCommand command) {
   if (sim) sim->sim.fcuCommand(command);
 }
 
+void a320_mcdu_key(A320Sim* sim, int key) {
+  if (sim) sim->sim.mcduKey(key);
+}
+
+void a320_mcdu_get_display(const A320Sim* sim, A320McduDisplay* display) {
+  if (sim && display) sim->sim.mcduDisplay(*display);
+}
+
 void a320_fcu_set_targets(A320Sim* sim, double spdKt, double hdgMagDeg, double altFt, double vsFpm) {
   if (sim) sim->sim.setFcuTargets(spdKt, hdgMagDeg, altFt, vsFpm);
 }

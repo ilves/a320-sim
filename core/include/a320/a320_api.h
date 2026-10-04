@@ -21,7 +21,7 @@
 extern "C" {
 #endif
 
-#define A320_API_VERSION 7
+#define A320_API_VERSION 8
 
 typedef enum A320Scenario {
   A320_SCENARIO_RUNWAY = 0,     /* lined up, engines idle, CONF 1+F, park brake set */
@@ -170,7 +170,7 @@ typedef struct A320State {
   double elevatorNorm, aileronNorm, rudderNorm;
   double thsDeg; /* trimmable horizontal stabiliser, negative = nose up */
 
-  /* ILS auto-tuned to the active runway. */
+  /* ILS tuned by the FMGC (MCDU RAD NAV / arrival): runway index, -1 = none. */
   int ilsRunwayIndex;
   int locValid, gsValid;
   double locDots, gsDots, dmeNm, ilsCourseDeg;
@@ -209,8 +209,20 @@ typedef struct A320State {
   uint32_t hintSeq;
   char hint[256];
 
-  /* Takeoff speeds for the current weight and flaps, frozen once the takeoff roll starts. */
+  /* Takeoff speeds, frozen once the takeoff roll starts: the MCDU entries, else computed for the
+   * current weight and flaps. */
   double v1Kt, vrKt, v2Kt;
+
+  /* MCDU / FMGC (API 8). */
+  int vSpeedsEntered;             /* V1/VR/V2 come from the MCDU PERF TAKE OFF page */
+  int depRunwayIndex, arrRunwayIndex; /* -1 = none */
+  char ilsIdent[8];
+  double ilsFreqMHz;              /* 0 = no ILS tuned */
+  double ilsCourseMagDeg;         /* RAD NAV CRS: entered, else the published course */
+  int ilsManual;                  /* tuned on RAD NAV rather than automatically */
+  int papiRunway[4][4];           /* PAPI of every runway direction (index < a320_runway_count) */
+  int dhFt, mdaFt;                /* approach minimums from PERF APPR, -1 = none */
+  double vappKt;                  /* approach speed for the landing configuration */
 } A320State;
 
 typedef struct A320RunwayInfo {
@@ -273,6 +285,7 @@ typedef enum A320GuideTarget {
   A320_GT_FCU_LOC, A320_GT_FCU_APPR, A320_GT_EFIS_LS, A320_GT_EFIS_ND_MODE,
   A320_GT_THRUST_LEVERS, A320_GT_FLAPS, A320_GT_GEAR, A320_GT_SPOILERS, A320_GT_AUTOBRAKE,
   A320_GT_PARK_BRAKE,
+  A320_GT_MCDU,
   A320_GT_COUNT
 } A320GuideTarget;
 typedef enum A320GuideText {
@@ -306,6 +319,54 @@ A320_API void a320_guide_back(A320Sim* sim);
 A320_API void a320_guide_get_status(const A320Sim* sim, A320GuideStatus* status);
 /* Something that needs attention now (e.g. "the autopilot is off"), or "". */
 A320_API const char* a320_guide_alert(const A320Sim* sim);
+
+/* MCDU: the Airbus multipurpose control and display unit (flight plan, radio nav, performance).
+ * Keys are ASCII characters ('A'-'Z', '0'-'9', '.', '/', ' ', '+', '-') or A320McduKey. */
+#define A320_MCDU_ROWS 14
+#define A320_MCDU_COLS 24
+
+typedef enum A320McduKey {
+  A320_MCDU_LSK1L = 256, /* LSK1L..LSK6L = 256..261 */
+  A320_MCDU_LSK1R = 262, /* LSK1R..LSK6R = 262..267 */
+  A320_MCDU_DIR = 268,
+  A320_MCDU_PROG,
+  A320_MCDU_PERF,
+  A320_MCDU_INIT,
+  A320_MCDU_DATA,
+  A320_MCDU_FPLN,
+  A320_MCDU_RADNAV,
+  A320_MCDU_FUELPRED,
+  A320_MCDU_SECFPLN,
+  A320_MCDU_ATCCOMM,
+  A320_MCDU_MENU,
+  A320_MCDU_AIRPORT,
+  A320_MCDU_NEXTPAGE,
+  A320_MCDU_UP,
+  A320_MCDU_DOWN,
+  A320_MCDU_CLR,
+  A320_MCDU_OVFY,
+  A320_MCDU_PLUSMINUS
+} A320McduKey;
+
+typedef enum A320McduColor {
+  A320_MCDU_WHITE = 0,
+  A320_MCDU_CYAN,    /* crew entries and selectable values */
+  A320_MCDU_GREEN,   /* active data */
+  A320_MCDU_AMBER,   /* required entries, messages that need action */
+  A320_MCDU_MAGENTA, /* constraints */
+  A320_MCDU_YELLOW   /* temporary flight plan */
+} A320McduColor;
+
+/* Row 0 is the title, rows 1-12 alternate small labels and data lines (LSK n is row 2n), row 13
+ * is the scratchpad. '#' is the amber entry box, '`' the degree sign. */
+typedef struct A320McduDisplay {
+  char text[A320_MCDU_ROWS][A320_MCDU_COLS + 1];
+  uint8_t color[A320_MCDU_ROWS][A320_MCDU_COLS];
+  uint8_t small[A320_MCDU_ROWS][A320_MCDU_COLS];
+} A320McduDisplay;
+
+A320_API void a320_mcdu_key(A320Sim* sim, int key);
+A320_API void a320_mcdu_get_display(const A320Sim* sim, A320McduDisplay* display);
 
 A320_API const char* a320_warning_text(uint32_t warningBit);
 A320_API const char* a320_flap_config_name(int flapsLever, int onePlusF);

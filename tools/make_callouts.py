@@ -30,6 +30,8 @@ CALLOUTS = {
     "v_one": "vee one",
     "rotate": "rotate",
     "positive_climb": "positive climb",
+    "hundred_above": "hundred above",
+    "minimum": "minimum",
 }
 RATE = 22050
 OUT_DIR = os.path.join(os.path.dirname(__file__), "..", "unreal", "A320Sim", "Content", "Sounds")

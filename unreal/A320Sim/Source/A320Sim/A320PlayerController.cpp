@@ -298,6 +298,80 @@ void AA320PlayerController::ApplyJoystickButtons(AA320Aircraft* Aircraft, FA320F
 	}
 }
 
+namespace
+{
+	struct FMcduTypingKey
+	{
+		FKey Key;
+		int32 Code;
+	};
+
+	// Keyboard keys that type into the MCDU scratchpad (letters, digits, '.', '/', space, CLR).
+	const TArray<FMcduTypingKey>& McduTypingKeys()
+	{
+		static TArray<FMcduTypingKey> Keys;
+		if (Keys.Num() == 0)
+		{
+			const FKey Letters[] = {EKeys::A, EKeys::B, EKeys::C, EKeys::D, EKeys::E, EKeys::F, EKeys::G, EKeys::H, EKeys::I,
+				EKeys::J, EKeys::K, EKeys::L, EKeys::M, EKeys::N, EKeys::O, EKeys::P, EKeys::Q, EKeys::R, EKeys::S, EKeys::T,
+				EKeys::U, EKeys::V, EKeys::W, EKeys::X, EKeys::Y, EKeys::Z};
+			int32 Code = 'A';
+			for (const FKey& Letter : Letters)
+			{
+				Keys.Add({Letter, Code++});
+			}
+			const FKey Digits[] = {EKeys::Zero, EKeys::One, EKeys::Two, EKeys::Three, EKeys::Four, EKeys::Five, EKeys::Six,
+				EKeys::Seven, EKeys::Eight, EKeys::Nine};
+			Code = '0';
+			for (const FKey& Digit : Digits)
+			{
+				Keys.Add({Digit, Code++});
+			}
+			const FKey NumPad[] = {EKeys::NumPadZero, EKeys::NumPadOne, EKeys::NumPadTwo, EKeys::NumPadThree, EKeys::NumPadFour,
+				EKeys::NumPadFive, EKeys::NumPadSix, EKeys::NumPadSeven, EKeys::NumPadEight, EKeys::NumPadNine};
+			Code = '0';
+			for (const FKey& Digit : NumPad)
+			{
+				Keys.Add({Digit, Code++});
+			}
+			Keys.Add({EKeys::Period, '.'});
+			Keys.Add({EKeys::Decimal, '.'});
+			Keys.Add({EKeys::Slash, '/'});
+			Keys.Add({EKeys::Divide, '/'});
+			Keys.Add({EKeys::SpaceBar, ' '});
+			Keys.Add({EKeys::Hyphen, '-'});
+			Keys.Add({EKeys::Subtract, '-'});
+			Keys.Add({EKeys::Add, '+'});
+			Keys.Add({EKeys::BackSpace, A320_MCDU_CLR});
+			Keys.Add({EKeys::Delete, A320_MCDU_CLR});
+		}
+		return Keys;
+	}
+}
+
+bool AA320PlayerController::IsMcduTypingKey(const FKey& Key) const
+{
+	for (const FMcduTypingKey& Typing : McduTypingKeys())
+	{
+		if (Typing.Key == Key)
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+void AA320PlayerController::TypeIntoMcdu(AA320Aircraft& Aircraft)
+{
+	for (const FMcduTypingKey& Typing : McduTypingKeys())
+	{
+		if (WasInputKeyJustPressed(Typing.Key))
+		{
+			Aircraft.McduKey(Typing.Code);
+		}
+	}
+}
+
 void AA320PlayerController::PlayerTick(float DeltaTime)
 {
 	Super::PlayerTick(DeltaTime);
@@ -351,6 +425,7 @@ void AA320PlayerController::PlayerTick(float DeltaTime)
 		{EKeys::F2, EA320Command::JoystickPanel},
 		{EKeys::F3, EA320Command::GuideMenu},
 		{EKeys::F4, EA320Command::ResetApproach},
+		{EKeys::Tab, EA320Command::McduToggle},
 		{EKeys::Hyphen, EA320Command::SoundToggle},
 		{EKeys::Gamepad_FaceButton_Bottom, EA320Command::GearToggle},
 		{EKeys::Gamepad_LeftShoulder, EA320Command::FlapsUp},
@@ -361,8 +436,18 @@ void AA320PlayerController::PlayerTick(float DeltaTime)
 		{EKeys::Gamepad_Special_Left, EA320Command::ViewToggle},
 	};
 	const bool bShift = IsInputKeyDown(EKeys::LeftShift) || IsInputKeyDown(EKeys::RightShift);
+	// With the MCDU open the keyboard types into its scratchpad; those keys don't fly the aircraft.
+	const bool bMcduTyping = Aircraft->IsMcduVisible();
+	if (bMcduTyping)
+	{
+		TypeIntoMcdu(*Aircraft);
+	}
 	for (const FKeyCommand& Binding : Bindings)
 	{
+		if (bMcduTyping && IsMcduTypingKey(Binding.Key))
+		{
+			continue;
+		}
 		if (WasInputKeyJustPressed(Binding.Key) && !HandleJoystickCommand(Binding.Command))
 		{
 			// Shift+F5: cold and dark instead of lined up with engines running.
@@ -372,7 +457,11 @@ void AA320PlayerController::PlayerTick(float DeltaTime)
 		}
 	}
 
-	if (WasInputKeyJustPressed(EKeys::Escape) && GetWorld()->WorldType == EWorldType::Game)
+	if (WasInputKeyJustPressed(EKeys::Escape) && bMcduTyping)
+	{
+		Aircraft->ExecuteCommand(EA320Command::McduToggle, false);  // Esc closes the MCDU first
+	}
+	else if (WasInputKeyJustPressed(EKeys::Escape) && GetWorld()->WorldType == EWorldType::Game)
 	{
 		ConsoleCommand(TEXT("quit"));
 		return;
@@ -387,9 +476,12 @@ void AA320PlayerController::PlayerTick(float DeltaTime)
 	};
 	const double Gain = bShift ? 1.0 : 0.5;
 	// Up arrow pushes the stick forward (nose down), as in every flight sim.
-	const double PitchTarget = Gain * KeyAxis(EKeys::Up, EKeys::Down, EKeys::NumPadEight, EKeys::NumPadTwo);
-	const double RollTarget = Gain * KeyAxis(EKeys::Left, EKeys::Right, EKeys::NumPadFour, EKeys::NumPadSix);
-	const double PedalTarget = KeyAxis(EKeys::Q, EKeys::E, EKeys::Z, EKeys::X);
+	// While the MCDU is open the numpad types; the arrow keys still fly.
+	const FKey NumUp = bMcduTyping ? EKeys::Invalid : EKeys::NumPadEight, NumDown = bMcduTyping ? EKeys::Invalid : EKeys::NumPadTwo;
+	const FKey NumLeft = bMcduTyping ? EKeys::Invalid : EKeys::NumPadFour, NumRight = bMcduTyping ? EKeys::Invalid : EKeys::NumPadSix;
+	const double PitchTarget = Gain * KeyAxis(EKeys::Up, EKeys::Down, NumUp, NumDown);
+	const double RollTarget = Gain * KeyAxis(EKeys::Left, EKeys::Right, NumLeft, NumRight);
+	const double PedalTarget = bMcduTyping ? 0.0 : KeyAxis(EKeys::Q, EKeys::E, EKeys::Z, EKeys::X);
 	KeyStickPitch = MoveTowards(KeyStickPitch, PitchTarget, 3.0 * DeltaTime);
 	KeyStickRoll = MoveTowards(KeyStickRoll, RollTarget, 3.0 * DeltaTime);
 	KeyPedals = MoveTowards(KeyPedals, PedalTarget, 2.0 * DeltaTime);
@@ -400,7 +492,7 @@ void AA320PlayerController::PlayerTick(float DeltaTime)
 	Inputs.StickPitch = KeyStickPitch - Deadzone(GetInputAnalogKeyState(EKeys::Gamepad_LeftY));
 	Inputs.StickRoll = KeyStickRoll + Deadzone(GetInputAnalogKeyState(EKeys::Gamepad_LeftX));
 	Inputs.Pedals = KeyPedals + Deadzone(GetInputAnalogKeyState(EKeys::Gamepad_RightX));
-	Inputs.Brakes = FMath::Max3(IsInputKeyDown(EKeys::B) ? 1.0 : 0.0,
+	Inputs.Brakes = FMath::Max3(IsInputKeyDown(EKeys::B) && !bMcduTyping ? 1.0 : 0.0,
 		IsInputKeyDown(EKeys::Gamepad_FaceButton_Right) ? 1.0 : 0.0,
 		(double)GetInputAnalogKeyState(EKeys::Gamepad_LeftTriggerAxis));
 	Inputs.ThrustRate = (IsInputKeyDown(EKeys::PageUp) ? 0.4 : 0.0) - (IsInputKeyDown(EKeys::PageDown) ? 0.4 : 0.0)
@@ -418,7 +510,11 @@ void AA320PlayerController::PlayerTick(float DeltaTime)
 		// Pushbuttons and switches first (pop-up panels sit on top), then levers to drag.
 		const EA320Command Clicked = Hud->CommandAt(Mouse);
 		DraggedLever = Clicked == EA320Command::None ? Hud->LeverAt(Mouse) : EA320Lever::None;
-		if (Clicked != EA320Command::None && !HandleJoystickCommand(Clicked, Hud->ParamAt(Mouse)))
+		if (Clicked == EA320Command::McduKey)
+		{
+			Aircraft->McduKey(Hud->ParamAt(Mouse));
+		}
+		else if (Clicked != EA320Command::None && !HandleJoystickCommand(Clicked, Hud->ParamAt(Mouse)))
 		{
 			Aircraft->ExecuteCommand(Clicked, bShift);
 		}

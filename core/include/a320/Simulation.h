@@ -2,13 +2,16 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "a320/Airport.h"
 #include "a320/Audio.h"
 #include "a320/Autopilot.h"
 #include "a320/FlyByWire.h"
+#include "a320/Fms.h"
 #include "a320/Geo.h"
 #include "a320/Ils.h"
+#include "a320/Mcdu.h"
 #include "a320/SimClock.h"
 #include "a320/Systems.h"
 #include "a320/a320_api.h"
@@ -43,8 +46,14 @@ class Simulation {
   SimClock& clock() { return clock_; }
   const Airport& airport() const { return airport_; }
   const LocalFrame& frame() const { return frame_; }
-  const Ils& ils() const { return *ils_; }
+  // The scenario runway's ILS (where the aircraft was placed); the tuned one is tunedIls().
+  const Ils& ils() const { return ilsAll_[static_cast<size_t>(runwayIndex_)]; }
   int activeRunway() const { return runwayIndex_; }
+  int tunedIls() const { return tunedIls_; }
+
+  void mcduKey(int key);
+  void mcduDisplay(A320McduDisplay& out) const;
+  Fms& fms() { return fms_; }
 
  private:
   double trimAirborne();
@@ -59,8 +68,13 @@ class Simulation {
   Airport airport_;
   LocalFrame frame_;
   std::unique_ptr<JSBSim::FGFDMExec> fdm_;
-  std::unique_ptr<Ils> ils_;
+  std::vector<Ils> ilsAll_;  // one per runway direction
   int runwayIndex_ = 0;
+  int tunedIls_ = -1;
+  IlsSignal ilsSignal_;
+  Fms fms_;
+  Mcdu mcdu_;
+  double weightLbs_ = 0.0;
   SimClock clock_;
   FlyByWire fbw_;
   FlapsSystem flaps_;

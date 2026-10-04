@@ -69,6 +69,9 @@ public:
 	bool IsNdRose() const { return NdMode != A320_ND_ARC; }
 	int32 GetNdMode() const { return NdMode; }  // A320_ND_*
 	bool IsGuideMenuVisible() const { return bGuideMenu; }
+	bool IsMcduVisible() const { return bMcduVisible; }
+	void McduKey(int32 Key);
+	void GetMcduDisplay(A320McduDisplay& Out) const;
 	A320GuideStatus GetGuideStatus() const;
 	FString GetGuideAlert() const;
 
@@ -105,6 +108,7 @@ private:
 	bool bOverheadVisible = false;
 	int32 NdMode = A320_ND_ARC;
 	bool bGuideMenu = false;
+	bool bMcduVisible = false;
 	int32 AudioRate = 44100;
 	TArray<int16> AudioScratch;
 	int32 NdRangeNm = 10;

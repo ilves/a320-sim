@@ -240,7 +240,8 @@ const char* TakeoffCallouts::update(bool onGround, double iasKt, double thrustLe
   return nullptr;
 }
 
-const char* Callouts::update(double radioAltFt, bool onGround, double thrustLever) {
+const char* Callouts::update(double radioAltFt, bool onGround, double thrustLever, double altitudeFt, int dhFt,
+                             int mdaFt) {
   struct Callout { double ft; const char* text; };
   static const Callout kCallouts[] = {
       {2500.0, "TWO THOUSAND FIVE HUNDRED"}, {1000.0, "ONE THOUSAND"}, {500.0, "FIVE HUNDRED"},
@@ -248,8 +249,18 @@ const char* Callouts::update(double radioAltFt, bool onGround, double thrustLeve
       {20.0, "TWENTY"}, {10.0, "TEN"}};
 
   const double prev = previousFt_;
+  const double prevAlt = previousAltFt_;
   previousFt_ = radioAltFt;
+  previousAltFt_ = altitudeFt;
   if (prev < 0.0 || onGround || radioAltFt >= prev) return nullptr;
+  // Minimums come first; DH 0 ("NO DH") has no calls.
+  const bool useDh = dhFt > 0;
+  const double minimum = useDh ? dhFt : mdaFt;
+  const double now = useDh ? radioAltFt : altitudeFt, before = useDh ? prev : prevAlt;
+  if ((useDh || mdaFt > 0) && before > 0.0 && now < before) {
+    if (before > minimum + 100.0 && now <= minimum + 100.0) return "HUNDRED ABOVE";
+    if (before > minimum && now <= minimum) return "MINIMUM";
+  }
   // Manual landing: "RETARD" replaces "TWENTY" while the thrust levers are above idle.
   if (prev > 20.0 && radioAltFt <= 20.0 && thrustLever > 0.02) return "RETARD";
   for (const Callout& c : kCallouts) {

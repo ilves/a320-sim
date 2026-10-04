@@ -63,8 +63,8 @@ TEST(ils_on_glidepath_is_centred) {
     CHECK_NEAR(s.locDots, 0.0, 1e-6);
     CHECK_NEAR(s.gsDots, 0.0, 1e-6);
   }
-  // Glidepath crosses the threshold at 50 ft.
-  CHECK_NEAR(ils.glidepathPoint(0.0).z, 50.0 * kFtToM, 1e-6);
+  // Glidepath crosses the threshold at the AIP's 54 ft RDH.
+  CHECK_NEAR(ils.glidepathPoint(0.0).z, 54.0 * kFtToM, 1e-6);
 }
 
 TEST(ils_deviation_signs_and_scale) {
@@ -88,7 +88,9 @@ TEST(ils_deviation_signs_and_scale) {
   const double z1dot = horiz * std::tan((3.0 - 0.36) * kDegToRad);
   CHECK_NEAR(ils.receive(ils.axes().toEnu({x, 0.0, z1dot})).gsDots, 1.0, 0.01);
 
-  CHECK_NEAR(right.dmeNm, (ils.localizerX() - x) / kNmToM, 0.05);
+  CHECK_NEAR(right.locRangeNm, (ils.localizerX() - x) / kNmToM, 0.05);
+  // The DME sits with the glide path antenna, so it reads range to the touchdown zone.
+  CHECK_NEAR(right.dmeNm, (ils.glideslopeOriginX() - x) / kNmToM, 0.05);
 }
 
 TEST(ils_coverage) {
