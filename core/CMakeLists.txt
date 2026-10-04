@@ -70,7 +70,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 endif()
 
 install(TARGETS A320Core RUNTIME DESTINATION bin LIBRARY DESTINATION bin ARCHIVE DESTINATION lib)
-install(FILES include/a320/a320_api.h include/a320/Geometry2D.h include/a320/JoystickMapping.h include/a320/WingFlexReports.h include/a320/RadioTuning.h DESTINATION include/a320)
+install(FILES include/a320/a320_api.h include/a320/Geometry2D.h include/a320/JoystickMapping.h include/a320/WingFlexReports.h include/a320/RadioTuning.h include/a320/WorldMap.h DESTINATION include/a320)
 
 if(A320_BUILD_TESTS)
   enable_testing()
