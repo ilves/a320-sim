@@ -91,6 +91,8 @@ private:
 	void LeverSlot(double X, double Y, double W, double H, EA320Lever Lever);
 	void DrawFcu(const AA320Aircraft& Aircraft, double X, double Y, double W, double H);
 	void DrawFma(const A320State& St, double X, double Y, double S);
+	// Rain running over the windscreen in the cockpit view (the part of the screen above Top).
+	void DrawWindscreenRain(const AA320Aircraft& Aircraft, double W, double Top);
 	void AddButton(double X, double Y, double W, double H, const FString& Label, EA320Command Command, bool bLit, int32 Param = 0);
 	void DrawOverlays(const AA320Aircraft& Aircraft);
 	void DrawHelp();

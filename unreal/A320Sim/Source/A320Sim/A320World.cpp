@@ -12,6 +12,7 @@
 #include "Engine/StaticMesh.h"
 #include "Engine/World.h"
 #include "GameFramework/Pawn.h"
+#include "Camera/PlayerCameraManager.h"
 #include "GameFramework/PlayerController.h"
 #include "HAL/FileManager.h"
 #include "Misc/FileHelper.h"
@@ -64,7 +65,7 @@ namespace
 
 AA320World::AA320World()
 {
-	// Ticks only to stream the terrain around the aircraft, also while the sim is paused.
+	// Ticks to stream the terrain around the aircraft and move the weather with the camera, also paused.
 	PrimaryActorTick.bCanEverTick = true;
 	PrimaryActorTick.bStartWithTickEnabled = true;
 	PrimaryActorTick.bTickEvenWhenPaused = true;
@@ -96,17 +97,17 @@ AA320World::AA320World()
 
 	Fog = CreateDefaultSubobject<UExponentialHeightFogComponent>(TEXT("Fog"));
 	Fog->SetupAttachment(Root);
+	Fog->SetMobility(EComponentMobility::Movable);
 	Fog->SetFogDensity(0.004f);
 	Fog->SetFogHeightFalloff(0.05f);
+
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> PlaneFinder(TEXT("/Engine/BasicShapes/Plane.Plane"));
+	PlaneMesh = PlaneFinder.Object;
 }
 
 void AA320World::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
-	if (!TerrainStreamer)
-	{
-		return;
-	}
 	// The aircraft is the pawn; before it is possessed, the aircraft that spawned this world.
 	const APlayerController* Controller = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr;
 	const AActor* Viewer = Controller ? Controller->GetPawn() : nullptr;
@@ -114,9 +115,14 @@ void AA320World::Tick(float DeltaSeconds)
 	{
 		Viewer = GetOwner();
 	}
-	if (Viewer)
+	if (TerrainStreamer && Viewer)
 	{
 		TerrainStreamer->Tick(Viewer->GetActorLocation());
+	}
+	// The weather follows the camera (the chase camera is 70 m behind the aircraft).
+	if (Controller && Controller->PlayerCameraManager)
+	{
+		TickWeather(DeltaSeconds, Controller->PlayerCameraManager->GetCameraLocation());
 	}
 }
 
@@ -144,7 +150,8 @@ UStaticMeshComponent* AA320World::AddMesh(UStaticMesh* Mesh, const FTransform& T
 	C->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	C->SetupAttachment(Root);
 	C->SetRelativeTransform(Transform);
-	C->SetMaterial(0, Shapes.Tint(this, Color));
+	const bool bLight = Color.Equals(LightWhite) || Color.Equals(LightRed) || Color.Equals(LightGreen);
+	C->SetMaterial(0, bLight ? Glow(Color) : Shapes.Tint(this, Color));
 	C->RegisterComponent();
 	return C;
 }
@@ -169,6 +176,7 @@ void AA320World::Build(const TArray<A320RunwayInfo>& Runways, const TArray<A320A
 		return;
 	}
 
+	BuildWeather();
 	const FA320TerrainResult Terrain = A320Terrain::Build(this, Root, Shapes, UnlitTextureMaterial);
 	TerrainStreamer = Terrain.Streamer;
 	if (!Terrain.bLoaded)
@@ -375,7 +383,7 @@ void AA320World::UpdatePapi(int32 RunwayIndex, const int PapiWhite[4])
 			continue;
 		}
 		PapiShown[Slot] = PapiWhite[i];
-		PapiLights[Slot]->SetMaterial(0, Shapes.Tint(this, PapiWhite[i] ? LightWhite : LightRed));
+		PapiLights[Slot]->SetMaterial(0, Glow(PapiWhite[i] ? LightWhite : LightRed));
 	}
 }
 

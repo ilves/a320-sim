@@ -18,6 +18,10 @@ struct ApInput {
   double magneticVariationDeg = 0.0;
   bool navValid = false;           // the flight plan has a leg to fly (Lnav)
   double navTrackTrueDeg = 0.0;    // the track it asks for
+  bool pathValid = false;          // managed descent: a descent path to an altitude constraint
+  double pathAltFt = 0.0;          // the path's altitude here
+  double pathDeg = 3.0;
+  double cstAltFt = 0.0;           // the next altitude constraint ahead, 0 = none
   double pilotStickPitch = 0.0, pilotStickRoll = 0.0;  // for instinctive disconnect
   double thrustLever = 0.0;    // pilot's lever; autothrust works below it, up to CL
   double alphaDeg = 0.0;
@@ -47,6 +51,8 @@ class Autopilot {
   void setFpa(double fpaDeg);
   // NAV armed for the takeoff: it engages at 30 ft (a flight plan with a departure).
   void armNav(bool armed) { navArmed_ = armed; }
+  // CLB armed for the takeoff: it engages at 1500 ft (a flight plan with a departure).
+  void armClb(bool armed) { clbArmed_ = armed; }
   ApOutput update(const ApInput& in);
 
   bool apEngaged() const { return ap1_ || ap2_; }
@@ -87,7 +93,10 @@ class Autopilot {
   A320LatMode lat_ = A320_LAT_NONE;
   A320VertMode vert_ = A320_VERT_NONE;
   A320AthrMode athrMode_ = A320_ATHR_OFF;
-  bool locArmed_ = false, gsArmed_ = false, navArmed_ = false;
+  bool locArmed_ = false, gsArmed_ = false, navArmed_ = false, clbArmed_ = false;
+  double capAlt_ = 3000.0;  // what ALT*, ALT, ALT CST* and ALT CST capture and hold
+  // DES: down to the FCU altitude, or the constraint ahead if that is higher.
+  double desFloor(const ApInput& in) const;
   double spd_ = 160.0, hdg_ = 0.0, alt_ = 3000.0, vs_ = 0.0, fpa_ = 0.0;
   bool trkFpa_ = false;
   std::string hint_;  // a formatted hint, returned by command()

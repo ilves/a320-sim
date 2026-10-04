@@ -412,6 +412,8 @@ void FA320WingFlex::SendOutputs(const AA320Aircraft& Aircraft, double Now)
 		const bool bNav = St.latMode == A320_LAT_NAV || (St.armed & A320_ARMED_NAV);
 		O.hdgDashed = bNav || St.latMode == A320_LAT_LOC_STAR || St.latMode == A320_LAT_LOC || St.latMode == A320_LAT_ROLLOUT;
 		O.hdgManaged = bNav;
+		O.altManaged = St.vertMode == A320_VERT_CLB || St.vertMode == A320_VERT_DES || St.vertMode == A320_VERT_ALT_CST ||
+			St.vertMode == A320_VERT_ALT_CST_STAR || (St.armed & A320_ARMED_CLB);
 		O.vsDashed = St.vertMode != A320_VERT_VS && St.vertMode != A320_VERT_FPA;
 		O.trkFpa = St.fcuTrkFpa != 0;
 		O.spd = static_cast<uint16>(FMath::Clamp(FMath::RoundToInt(St.fcuSpdKt), 0, 999));

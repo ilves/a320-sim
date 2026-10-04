@@ -62,6 +62,7 @@ class AudioEngine {
   Params p_;
   double whinePhase_ = 0.0, corePhase_ = 0.0, apuPhase_ = 0.0;
   float roar1_ = 0, roar2_ = 0, wind1_ = 0, wind2_ = 0, rumble1_ = 0, rumble2_ = 0, buffet_ = 0;
+  float rainAmp_ = 0, rainLp_ = 0, rainDrop_ = 0;  // rain on the windscreen: hiss and drops
   uint32_t rng_ = 0x12345678u;
 
   bool synced_ = false;

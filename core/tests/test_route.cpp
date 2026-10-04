@@ -216,3 +216,76 @@ TEST(hdg_push_engages_nav_in_the_air) {
   CHECK(state(sim).latMode == A320_LAT_HDG);
   a320_destroy(sim);
 }
+
+// Tallinn 08 to Tartu managed: CLB from 1500 ft to FL090, T/D ahead, DES on the path from it down
+// to the approach's constraint (ALT CST), then the ILS.
+TEST(managed_climb_and_descent) {
+  char err[256] = {0};
+  A320Sim* sim = a320_create(A320_DATA_DIR, err, sizeof(err));
+  if (!sim) { CHECK(false); return; }
+  a320_start_flight(sim, A320_SCENARIO_RUNWAY, runway(sim, "EETN", "08"), runway(sim, "EETU", "26"), 0.0, A320_PLAN_FULL);
+  A320State s = state(sim);
+  CHECK(s.armed & A320_ARMED_CLB);
+  a320_fcu_set_targets(sim, 250.0, s.fcuHdgMagDeg, 9000.0, 0.0);
+  A320Controls c;
+  a320_get_controls(sim, &c);
+  c.parkBrake = 0;
+  c.thrustLever = 1.0;
+  int stage = 0;
+  bool clbAt1500 = false, todHint = false, desSeen = false, cstSeen = false, apprArmed = false;
+  double todAtCruiseNm = 0.0, maxDevFt = 0.0, desS = 0.0, altAtCfFt = 0.0, t = 0.0;
+  for (; t < 3000.0 && stage < 5; t += kDt) {
+    a320_set_controls(sim, &c);
+    a320_update(sim, kDt);
+    a320_get_state(sim, &s);
+    if (stage == 0) {
+      c.stickPitch = s.iasKt > s.vrKt && s.radioAltFt < 400.0 ? std::fmax(-0.3, std::fmin(0.7, 0.12 * (12.0 - s.pitchDeg))) : 0.0;
+      if (!s.onGround && s.radioAltFt > 400.0) {
+        c.stickPitch = 0.0;
+        c.gearDown = 0;
+        a320_fcu_command(sim, A320_FCU_AP1);
+        stage = 1;
+      }
+    } else if (stage == 1 && s.vertMode == A320_VERT_CLB) {
+      clbAt1500 = s.radioAltFt > 1400.0 && s.radioAltFt < 1800.0;
+      c.thrustLever = 0.75;
+      c.flapsLever = 0;
+      a320_fcu_command(sim, A320_FCU_ATHR);
+      stage = 2;
+    } else if (stage == 2 && s.vertMode == A320_VERT_ALT && s.altitudeFt > 8800.0) {
+      todAtCruiseNm = s.todDistanceNm;
+      stage = 3;
+    } else if (stage == 3) {
+      // The FCU altitude below the constraint (2300 ft): DES stops at the constraint, ALT CST.
+      if (!todHint && std::strstr(s.hint, "T/D REACHED")) {
+        todHint = true;
+        a320_fcu_set_targets(sim, 220.0, s.fcuHdgMagDeg, 2000.0, 0.0);
+        a320_fcu_command(sim, A320_FCU_ALT_PUSH);
+      }
+      if (s.vertMode == A320_VERT_DES) {
+        desSeen = true;
+        desS += kDt;
+        if (desS > 60.0) maxDevFt = std::fmax(maxDevFt, std::fabs(s.altitudeFt - s.descentPathAltFt));
+      }
+      if (s.vertMode == A320_VERT_ALT_CST || s.vertMode == A320_VERT_ALT_CST_STAR) cstSeen = true;
+      if (std::strncmp(s.toWaypoint, "FF", 2) == 0 && altAtCfFt == 0.0) altAtCfFt = s.altitudeFt;
+      if (s.routeActive >= a320_route_count(sim) - 4 && !apprArmed) {
+        a320_fcu_command(sim, A320_FCU_APPR);
+        apprArmed = true;
+      }
+      if (s.vertMode == A320_VERT_GS) stage = 5;
+    }
+  }
+  std::printf("  CLB at 1500 ft %d; at FL090 T/D %.1f NM ahead; T/D REACHED %d; DES %d, %.0f ft off the path at most;"
+              " ALT CST %d, %.0f ft at CF; then %s/%s at %.1f NM after %.0f s\n",
+              clbAt1500, todAtCruiseNm, todHint, desSeen, maxDevFt, cstSeen, altAtCfFt, a320_lat_mode_name(s.latMode),
+              a320_vert_mode_name(s.vertMode), s.dmeNm, t);
+  CHECK(clbAt1500);
+  CHECK(todAtCruiseNm > 20.0);  // 6700 ft at 318 ft/NM before the constraint
+  CHECK(todHint && desSeen);
+  CHECK(maxDevFt < 250.0);
+  CHECK(cstSeen && std::fabs(altAtCfFt - 2300.0) < 100.0);
+  CHECK(s.vertMode == A320_VERT_GS);
+  CHECK(std::strcmp(a320_vert_mode_name(A320_VERT_ALT_CST), "ALT CST") == 0);
+  a320_destroy(sim);
+}

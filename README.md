@@ -44,9 +44,12 @@ working PFD, ND and E/WD. A FLIGHT menu at start picks the airports and how the 
     hardware FCU switch with it; the PFD shows the flight path vector ("bird").
   - **NAV** along the flight plan's route (see [Route and NAV](#route-and-nav)): armed on the
     ground, it engages at 30 ft; in the air HDG push engages it. LOC and G/S capture from it.
-  - Knob pushes: HDG push is NAV (without a route it holds the present heading, wings level);
-    ALT push levels off at the present altitude, since managed climb/descent is not built; V/S
-    push levels off with V/S 0 (FPA 0).
+  - **CLB and DES** (managed vertical) along the route: CLB is armed for the takeoff and
+    engages at 1500 ft; ALT push gives CLB up or DES down to the FCU altitude. DES flies a 3°
+    path to the approach's altitude constraint and levels there (ALT CST).
+  - Knob pushes: HDG push is NAV, ALT push CLB or DES (without a route they hold the present
+    heading, wings level, and level off at the present altitude); V/S push levels off with V/S 0
+    (FPA 0).
   - AP1 and AP2: both engage only with LOC or APPR armed (CAT 3 DUAL), as on the aircraft.
   - The PFD's flight mode annunciator boxes a new mode for 10 s and shows CAT 3 SINGLE/DUAL.
   - Speed protection: A/THR and the autopilot never fly slower than VLS or faster than VMAX,
@@ -410,6 +413,14 @@ close it to fly the default, lined up on EETN 26.
   level, departure and arrival, PERF TAKE OFF (V-speeds, 1/UP0.0, FLEX 50) and PERF APPR (QNH,
   wind, a CAT I minimum). NOT ENTERED leaves it to you: INIT FROM/TO, F-PLN DEPARTURE and
   ARRIVAL, PERF. In the air FROM/TO is always set; without the approach inserted no ILS is tuned.
+- **WEATHER:** SUNNY, CLOUDS (broken 2500-4500 ft), RAIN (overcast 1200-6000 ft, 4 km) or FOG
+  (300 m in a 200 ft deep bank: the runway shows up on short final), and DAY or NIGHT. It
+  changes at once, in flight too, and stays for the next flights; the ATIS reports it.
+  - **Clouds** are a deck you can fly through: inside it the view closes in (white-out in the
+    overcast), above it the sun is out.
+  - **Rain** falls below the cloud base, runs over the windscreen in the cockpit view (up the
+    glass with speed) and is heard.
+  - **Night:** a moonlit sky, dark ground, and the runway, approach and PAPI lights glowing.
 - **LESSONS:** start a lesson (they are set at Tallinn).
 
 ## World map
@@ -450,8 +461,20 @@ departure and arrival runways) and the flight plan gets a route the autopilot ca
 - **On the displays:** the ND draws the legs still to fly in green with the TO waypoint in white,
   and its name, bearing and distance at the top right; the map draws the whole route. The HDG
   window shows dashes and the managed dot in NAV.
-- **Vertical:** set the altitudes yourself (ALT, LVL/CH, V/S): managed climb and descent are not
-  built. A route of 100 NM wants its descent from about 45 NM out.
+- **Vertical (managed):** set the cruise altitude in the ALT window before takeoff (FL090 is
+  9000): CLB, armed on the ground (cyan), engages at 1500 ft and climbs to it with climb thrust
+  (THR CLB), holding the selected speed.
+  - **T/D:** the top of descent is on the ND (a white arrow, T/D): from there a 3° path leads
+    down to the approach's constraint (CF, the magenta altitude on the F-PLN). Passing it, the
+    sim says "T/D REACHED".
+  - **DES:** set the ALT window lower (the constraint, or lower still) and push the ALT knob
+    (Shift+9, Shift-click on LVL/CH, or your panel). DES follows the path (a magenta dot on the
+    PFD's altitude tape shows where it is), A/THR holds the speed. Pushed early, it comes down at
+    1000 ft/min until it meets the path.
+  - **ALT CST:** DES stops at the constraint even with a lower FCU altitude, until the ILS takes
+    over (APPR). The ALT window shows the managed dot in CLB and DES.
+  - Not built: managed speed (set it yourself, e.g. 250 kt below 10 000 ft, 220 kt from the
+    descent), speed and altitude constraints on the departure, and a deceleration point.
 - A circuit (the same airport) and a free flight to a town have no route.
 - The points come from `tools/make_navdata.py`, which turns ENR 4.4 (AIRAC 2026-10-01) into
   `core/src/NavData.cpp`; run it again for a new AIRAC (`--airac`).
@@ -690,7 +713,8 @@ The flight tests fly the real JSBSim A320 with a scripted pilot:
 - the autopilot: OP CLB with ALT capture, a HDG turn, a V/S descent with capture, TRK in a
   40 kt crosswind, an FPA descent with capture, the HDG/ALT/V/S pushes, a route from the
   departure and arrival, NAV from 30 ft along Tallinn 08 to Tartu onto the ILS 26 (downwind and
-  base), HDG push to NAV in the air, LOC
+  base), HDG push to NAV in the air, managed CLB from 1500 ft and DES from T/D on the path to ALT
+  CST then G/S, the weather on the ATIS and the rain's sound, LOC
   intercept from a heading, instinctive disconnect, and a full autoland to a stop;
 - the audio engine: WAV loading, engine level following thrust, pause, callouts, and the
   master warning and its acknowledgment;
@@ -733,13 +757,13 @@ These are marked `a320-sim:` in `unreal/A320Sim/Content/JSBSim/aircraft/A320/A32
 ## Limitations and next steps
 
 **Not yet built:**
-- managed (FMS) speed and vertical modes, the published SIDs/STARs, DIR TO, and the flight
+- managed (FMS) speed, the published SIDs/STARs, DIR TO, and the flight
   directors;
 - go-around (TOGA during an approach: SRS and GA TRK);
 - weather radar and TCAS;
 - trees as 3D objects (forests are in the imagery only), and buildings in the villages;
 - a 3D clickable cockpit;
-- wind and low visibility (the core takes a steady wind, `a320_set_wind`; only the tests use it);
+- wind (the core takes a steady wind, `a320_set_wind`; only the tests use it), and lit towns at night;
 - failures.
 
 **Approximations:**

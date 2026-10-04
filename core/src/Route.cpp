@@ -282,6 +282,40 @@ void Lnav::guide(const Route& route, const Aircraft& a) {
   desiredDeg_ = wrap360(course + clamp(-xtkM_ / 40.0, -45.0, 45.0));
 }
 
+double Lnav::alongToM(const Route& route, int index, double groundSpeedKt) const {
+  if (!valid_ || index < active_) return 0.0;
+  double m = toDistM_;
+  const double gsMps = std::max(groundSpeedKt, 140.0) * kKtToMps;
+  const double radius = gsMps * gsMps / (9.81 * std::tan(25.0 * kDegToRad));
+  for (size_t i = static_cast<size_t>(active_) + 1; i <= static_cast<size_t>(index) && i < route.points.size(); ++i) {
+    const P2 a{route.points[i - 1].n, route.points[i - 1].e}, b{route.points[i].n, route.points[i].e};
+    m += dist(a, b);
+    // The turn at the waypoint before this leg: two leads saved, the arc flown instead.
+    const P2 before = i >= 2 && static_cast<int>(i) - 1 > active_ ? P2{route.points[i - 2].n, route.points[i - 2].e} : P2{fromN_, fromE_};
+    const double turn = std::min(std::fabs(wrap180(courseDeg(a, b) - courseDeg(before, a))), 150.0) * kDegToRad;
+    const double lead = std::min(radius * std::tan(turn / 2.0), 7.0 * kNmToM);
+    m -= 2.0 * lead - lead / std::max(std::tan(turn / 2.0), 1e-6) * turn;
+  }
+  return m;
+}
+
+bool Lnav::pointAlong(const Route& route, const Aircraft& a, double distM, double& northM, double& eastM) const {
+  if (!valid_) return false;
+  P2 from{a.northM, a.eastM};
+  for (size_t i = static_cast<size_t>(active_); i < route.points.size(); ++i) {
+    const P2 to{route.points[i].n, route.points[i].e};
+    const double len = dist(from, to);
+    if (distM <= len && len > 0.0) {
+      northM = from.n + (to.n - from.n) * distM / len;
+      eastM = from.e + (to.e - from.e) * distM / len;
+      return true;
+    }
+    distM -= len;
+    from = to;
+  }
+  return false;
+}
+
 double Lnav::remainingM(const Route& route) const {
   if (!valid_) return 0.0;
   double m = toDistM_;

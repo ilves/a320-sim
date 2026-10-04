@@ -257,6 +257,42 @@ void a320_fcu_set_fpa(A320Sim* sim, double fpaDeg) {
   if (sim) sim->sim.setFcuFpa(fpaDeg);
 }
 
+void a320_set_weather(A320Sim* sim, int weather) {
+  if (sim) sim->sim.setWeather(weather);
+}
+
+int a320_weather_info(int weather, A320WeatherInfo* out) {
+  if (!out || weather < 0 || weather >= A320_WEATHER_COUNT) return 0;
+  *out = A320WeatherInfo{};
+  switch (weather) {
+    case A320_WEATHER_SUNNY:
+      out->visibilityM = 30000.0;
+      std::snprintf(out->name, sizeof(out->name), "SUNNY");
+      break;
+    case A320_WEATHER_CLOUDS:
+      out->visibilityM = 15000.0;
+      out->cloudBaseFt = 2500.0;
+      out->cloudTopFt = 4500.0;
+      out->cloudCover = 0.65;
+      std::snprintf(out->name, sizeof(out->name), "CLOUDS");
+      break;
+    case A320_WEATHER_RAIN:
+      out->visibilityM = 4000.0;
+      out->cloudBaseFt = 1200.0;
+      out->cloudTopFt = 6000.0;
+      out->cloudCover = 1.0;
+      out->rain = 1;
+      std::snprintf(out->name, sizeof(out->name), "RAIN");
+      break;
+    default:
+      out->visibilityM = 300.0;
+      out->fogTopFt = 200.0;
+      std::snprintf(out->name, sizeof(out->name), "FOG");
+      break;
+  }
+  return 1;
+}
+
 void a320_set_wind(A320Sim* sim, double fromTrueDeg, double kt) {
   if (sim) sim->sim.setWind(fromTrueDeg, kt);
 }

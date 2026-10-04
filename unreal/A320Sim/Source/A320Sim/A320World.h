@@ -9,7 +9,10 @@
 
 #include "A320World.generated.h"
 
+class APostProcessVolume;
 class UDirectionalLightComponent;
+class UMaterialInstanceDynamic;
+class UTexture2D;
 class UExponentialHeightFogComponent;
 class UInstancedStaticMeshComponent;
 class UMaterialInterface;
@@ -36,6 +39,9 @@ public:
 	void Build(const TArray<A320RunwayInfo>& Runways, const TArray<A320AirportInfo>& Airports);
 	// papiWhite: left to right as seen on approach.
 	void UpdatePapi(int32 RunwayIndex, const int PapiWhite[4]);
+	// The weather (A320Weather, a320_weather_info) and day or night: the sun or the moon, the sky
+	// light, the fog, a cloud deck, rain around the camera, and the exposure (A320WorldWeather.cpp).
+	void SetWeather(int32 InWeather, bool bInNight);
 
 private:
 	UStaticMeshComponent* AddMesh(UStaticMesh* Mesh, const FVector& CentreM, double YawDeg, const FVector& SizeM,
@@ -47,6 +53,11 @@ private:
 	// Taxiways and aprons from Content/Airports/<ICAO>.txt (tools/make_terrain.py, OpenStreetMap).
 	void BuildAirportLayouts();
 	void BuildSurroundings(const A320RunwayInfo& Runway);
+	// Runway, approach and PAPI lights: unlit, so they shine at night and in fog.
+	UMaterialInterface* Glow(const FLinearColor& Color);
+	void BuildWeather();
+	void TickWeather(float DeltaSeconds, const FVector& CameraCm);
+	void MakeCloudTexture(double Cover);
 
 	UPROPERTY() TObjectPtr<USceneComponent> Root;
 	UPROPERTY() TObjectPtr<USkyAtmosphereComponent> Sky;
@@ -57,6 +68,19 @@ private:
 	UPROPERTY() FA320Shapes Shapes;
 	UPROPERTY() TObjectPtr<UMaterialInterface> UnlitTextureMaterial;
 	TArray<int32> PapiShown;
+	UPROPERTY() TMap<uint32, TObjectPtr<UMaterialInstanceDynamic>> GlowCache;
+	UPROPERTY() TArray<TObjectPtr<UTexture2D>> GlowTextures;
+	UPROPERTY() TObjectPtr<UStaticMesh> PlaneMesh;
+	UPROPERTY() TObjectPtr<APostProcessVolume> Exposure;
+	UPROPERTY() TArray<TObjectPtr<UStaticMeshComponent>> CloudSheets;  // the deck's underside and top
+	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> CloudMaterial;
+	UPROPERTY() TObjectPtr<UTexture2D> CloudTexture;
+	UPROPERTY() TObjectPtr<UInstancedStaticMeshComponent> Rain;
+	int32 Weather = 0;
+	bool bNight = false;
+	A320WeatherInfo WeatherInfo{};
+	double ClearFogDensity = 0.002;  // the fog outside the clouds; in them it closes in
+	double RainFallCm = 0.0;
 	// Streams terrain tiles and buildings around the aircraft each tick; null without streamed data.
 	TSharedPtr<FA320TerrainStreamer> TerrainStreamer;
 };

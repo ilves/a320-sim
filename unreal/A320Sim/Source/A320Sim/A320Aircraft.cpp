@@ -189,6 +189,7 @@ void AA320Aircraft::BeginPlay()
 	{
 		World->Build(Runways, Airports);
 	}
+	ApplyWeather();
 
 	ResetScenario(A320_SCENARIO_RUNWAY);
 	ApplyView();
@@ -387,6 +388,18 @@ void AA320Aircraft::AdjustFcu(double DSpd, double DHdg, double DAlt, double DVs)
 	{
 		a320_fcu_set_targets(Sim, State.fcuSpdKt + DSpd, State.fcuHdgMagDeg + DHdg, State.fcuAltFt + DAlt, State.fcuVsFpm + DVs);
 		a320_get_state(Sim, &State);
+	}
+}
+
+void AA320Aircraft::ApplyWeather()
+{
+	if (Sim)
+	{
+		a320_set_weather(Sim, Weather);  // the ATIS and the rain's sound
+	}
+	if (World)
+	{
+		World->SetWeather(Weather, bNight);
 	}
 }
 
@@ -668,6 +681,8 @@ void AA320Aircraft::ExecuteCommand(EA320Command Command, bool bLarge, int32 Para
 	case EA320Command::FlightStart: FlightScenario = static_cast<A320Scenario>(Param); break;
 	case EA320Command::FlightDistance: FlightDistanceNm = FMath::Clamp(Param, 8, 150); break;
 	case EA320Command::FlightPlan: FlightPlan = Param == A320_PLAN_EMPTY ? A320_PLAN_EMPTY : A320_PLAN_FULL; break;
+	case EA320Command::WeatherSet: Weather = FMath::Clamp(Param, 0, A320_WEATHER_COUNT - 1); ApplyWeather(); break;
+	case EA320Command::NightSet: bNight = Param != 0; ApplyWeather(); break;
 	case EA320Command::FlightDepAirport: SetDepartureAirport(Param); break;
 	case EA320Command::FlightArrAirport: SetArrivalAirport(Param); break;
 	case EA320Command::MapToggle:

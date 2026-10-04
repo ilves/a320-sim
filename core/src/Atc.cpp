@@ -178,8 +178,10 @@ int Atc::atisRunway() const { return phase_ <= A320_ATC_PHASE_DEPARTURE ? depRun
 void Atc::reset(const World& world, A320Scenario scenario, int depRunway, int arrRunway, A320Controls& controls,
                 uint32_t seed, int utcMinutes) {
   const bool enabled = enabled_;
+  const int weather = weather_;
   *this = Atc{};
   enabled_ = enabled;
+  weather_ = weather;
   depRunway_ = depRunway;
   runway_ = arrRunway;
   const int depAirport = world.runways[static_cast<size_t>(depRunway)].airport;
@@ -329,8 +331,25 @@ void Atc::update(const AtcContext& ctx) {
             "This is " + atisName + ", information " + spell(letter) + ", time " + spell(time) + ".");
       w.add("Runway in use " + rwy + ". Expect ILS approach.", "Runway in use " + spell(rwy) + ". Expect I L S approach.");
       w.add("Transition level 60.", "Transition level " + spell("60") + ".");
-      w.add("Wind calm. Visibility 10 kilometres or more, no significant cloud.",
-            "Wind calm. Visibility one zero kilometres or more, no significant cloud.");
+      switch (weather_) {
+        case A320_WEATHER_CLOUDS:
+          w.add("Wind calm. Visibility 10 kilometres or more, broken 2500 feet.",
+                "Wind calm. Visibility one zero kilometres or more, broken two thousand five hundred feet.");
+          break;
+        case A320_WEATHER_RAIN:
+          w.add("Wind calm. Visibility 4000 metres, moderate rain, overcast 1200 feet.",
+                "Wind calm. Visibility four thousand metres, moderate rain, overcast one thousand two hundred feet.");
+          break;
+        case A320_WEATHER_FOG:
+          w.add("Low visibility procedures in operation. Wind calm. Visibility 300 metres, fog, vertical visibility 100 feet.",
+                "Low visibility procedures in operation. Wind calm. Visibility three hundred metres, fog, vertical "
+                "visibility one hundred feet.");
+          break;
+        default:
+          w.add("Wind calm. Visibility 10 kilometres or more, no significant cloud.",
+                "Wind calm. Visibility one zero kilometres or more, no significant cloud.");
+          break;
+      }
       w.add("Temperature 15, dew point 9. QNH 1013.", "Temperature one five, dew point niner. Q N H one zero one three.");
       w.add("Acknowledge information " + letter + " on first contact.",
             "Acknowledge information " + spell(letter) + " on first contact.");

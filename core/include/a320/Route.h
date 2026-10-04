@@ -61,6 +61,11 @@ class Lnav {
   double toDistanceM() const { return toDistM_; }
   double toBearingGridDeg() const { return toBrgDeg_; }
   double remainingM(const Route& route) const;  // along the route to its last point
+  // Along the route from the aircraft to waypoint index (the active one or later), the fly-by
+  // turns' arcs counted instead of their corners.
+  double alongToM(const Route& route, int index, double groundSpeedKt) const;
+  // The point distM along the route from the aircraft; false past its end.
+  bool pointAlong(const Route& route, const Aircraft& a, double distM, double& northM, double& eastM) const;
 
  private:
   void startLeg(const Route& route, int to, double fromN, double fromE, bool direct = false);

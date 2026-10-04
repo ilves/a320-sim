@@ -52,6 +52,7 @@ class Simulation {
   void setFcuTargets(double spdKt, double hdgMagDeg, double altFt, double vsFpm);
   void setFcuFpa(double fpaDeg);
   void setWind(double fromTrueDeg, double kt);
+  void setWeather(int weather);
   AudioEngine& audio() { return audio_; }
   void update(double realDtS);
   // One fixed step regardless of pause; used by update() and by tests.
@@ -108,6 +109,21 @@ class Simulation {
   // A new route from the MCDU's FROM/TO and runways (a flight start, or the crew's changes).
   void rebuildRoute();
   Lnav::Aircraft lnavAircraft() const;
+  // The managed descent: a 3 degree path ending at the next altitude constraint, and its top of
+  // descent from the cruise altitude.
+  struct Vnav {
+    bool valid = false;
+    double pathAltFt = 0.0;
+    int cstFt = 0;
+    bool todValid = false;
+    double todNm = 0.0, todN = 0.0, todE = 0.0;
+  };
+  Vnav vnav_;
+  // The distance to the constraint the path is drawn from, filtered: sequencing a fly-by turn
+  // would make the path jump.
+  double pathNm_ = -1.0;
+  int pathCst_ = -1;
+  void updateVnav();
   Atc atc_;
   double stepTimeS_ = 0.0;
   void updateAtc();
@@ -159,6 +175,7 @@ class Simulation {
   double impactFpm_ = 0.0;
   double groundHeightM_ = 0.0;
   double windFromTrueDeg_ = 0.0, windKt_ = 0.0;
+  int weather_ = A320_WEATHER_SUNNY;
   void applyWind();
   double wreckIasFactor_ = 1.0;  // the flight model's airspeed over the standard atmosphere's, at the breakup
   double groundSetM_ = 1e9;  // what the flight model's ground was last set to

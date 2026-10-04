@@ -41,12 +41,14 @@ class Atc {
   bool message(uint32_t seq, A320AtcMessage& out) const;
   uint32_t lastSeq() const { return seq_; }
   void fillState(A320State& s) const;
+  void setWeather(int weather) { weather_ = weather; }
   std::string callsign(const Fms& fms) const;
   std::string stationName(int khz) const;
   // A tutor remark since the last call, or "".
   std::string takeHint();
 
  private:
+  int weather_ = A320_WEATHER_SUNNY;
   enum class Kind {
     None, Clearance, Takeoff, ContactRadar, Squawk, Heading, Altitude, Approach, ContactTower, Landing, Vacate
   };

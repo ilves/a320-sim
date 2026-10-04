@@ -21,7 +21,7 @@
 extern "C" {
 #endif
 
-#define A320_API_VERSION 14
+#define A320_API_VERSION 15
 
 typedef enum A320Scenario {
   A320_SCENARIO_RUNWAY = 0,     /* lined up, engines idle, CONF 1+F, park brake set */
@@ -41,7 +41,10 @@ typedef enum A320VertMode {
   A320_VERT_NONE = 0, A320_VERT_ALT, A320_VERT_ALT_STAR, A320_VERT_VS, A320_VERT_OP_CLB, A320_VERT_OP_DES,
   A320_VERT_GS, A320_VERT_LAND, A320_VERT_FLARE,
   A320_VERT_GS_STAR, /* glideslope capture, before G/S */
-  A320_VERT_FPA      /* API 13: the selected flight path angle (TRK-FPA reference) */
+  A320_VERT_FPA,     /* API 13: the selected flight path angle (TRK-FPA reference) */
+  /* API 15: managed (with a flight plan's route): CLB to the FCU altitude, DES on the computed
+   * descent path to the next altitude constraint, and the capture and hold of that constraint. */
+  A320_VERT_CLB, A320_VERT_DES, A320_VERT_ALT_CST_STAR, A320_VERT_ALT_CST
 } A320VertMode;
 typedef enum A320AthrMode {
   A320_ATHR_OFF = 0, A320_ATHR_SPEED, A320_ATHR_THR_CLB, A320_ATHR_THR_IDLE, A320_ATHR_RETARD,
@@ -52,6 +55,7 @@ typedef enum A320AthrMode {
 #define A320_ARMED_LOC 2
 #define A320_ARMED_GS 4
 #define A320_ARMED_NAV 8 /* API 14: engages at 30 ft after takeoff, or when the route is reached */
+#define A320_ARMED_CLB 16 /* API 15: engages at 1500 ft after takeoff */
 
 /* FCU pushbuttons and knob pushes/pulls. */
 typedef enum A320FcuCommand {
@@ -66,7 +70,7 @@ typedef enum A320FcuCommand {
   /* API 13. */
   A320_FCU_TRK_FPA,   /* HDG-V/S / TRK-FPA pushbutton: the heading and V/S windows become track and FPA */
   A320_FCU_HDG_PUSH,  /* NAV along the flight plan (armed on the ground); without one, hold the present heading */
-  A320_FCU_ALT_PUSH,  /* managed climb/descent is not simulated: level off at the present altitude */
+  A320_FCU_ALT_PUSH,  /* CLB or DES towards the FCU altitude along the flight plan; without one, level off */
   A320_FCU_VS_PUSH    /* level off: V/S 0 (FPA 0) */
 } A320FcuCommand;
 
@@ -306,6 +310,14 @@ typedef struct A320State {
   double toDistanceNm, toBearingMagDeg;
   double crossTrackNm;      /* right of the active leg positive */
   double routeRemainingNm;  /* along the route to its last point */
+  /* API 15: the managed descent. */
+  int descentPathValid;     /* a route with an altitude constraint ahead */
+  double descentPathAltFt;  /* the 3 degree path's altitude here (ending at the constraint) */
+  int descentConstraintFt;  /* the next altitude constraint ahead, 0 = none */
+  int todValid;             /* the top of descent is ahead */
+  double todDistanceNm;     /* along the route */
+  double todNorthM, todEastM;
+  int weather;              /* A320Weather (API 15) */
 } A320State;
 
 typedef struct A320RunwayInfo {
@@ -384,6 +396,25 @@ A320_API void a320_fcu_command(A320Sim* sim, A320FcuCommand command);
 A320_API void a320_fcu_set_targets(A320Sim* sim, double spdKt, double hdgMagDeg, double altFt, double vsFpm);
 /* The selected flight path angle (API 13), rounded to 0.1 degree, at most 9.9 either way. */
 A320_API void a320_fcu_set_fpa(A320Sim* sim, double fpaDeg);
+/* The weather (API 15). The front end draws it (sky, clouds, fog, rain; day or night is its own
+ * choice); the core reports it on the ATIS and plays the rain. Heights are above the airports. */
+typedef enum A320Weather {
+  A320_WEATHER_SUNNY = 0, /* no significant cloud, 10 km or more */
+  A320_WEATHER_CLOUDS,    /* broken cloud 2500-4500 ft, 10 km or more */
+  A320_WEATHER_RAIN,      /* moderate rain, 4000 m, overcast 1200-6000 ft */
+  A320_WEATHER_FOG,       /* 300 m in fog, 200 ft deep: the sky above is clear */
+  A320_WEATHER_COUNT
+} A320Weather;
+typedef struct A320WeatherInfo {
+  double visibilityM;
+  double cloudBaseFt, cloudTopFt; /* 0 = no layer */
+  double cloudCover;              /* 0..1 */
+  double fogTopFt;                /* 0 = no fog */
+  int rain;
+  char name[16];                  /* "SUNNY", "CLOUDS", "RAIN", "FOG" */
+} A320WeatherInfo;
+A320_API void a320_set_weather(A320Sim* sim, int weather); /* stays for later flights */
+A320_API int a320_weather_info(int weather, A320WeatherInfo* out);
 /* A steady wind (API 13), the direction it blows from (true). It stays for later flights. */
 A320_API void a320_set_wind(A320Sim* sim, double fromTrueDeg, double kt);
 /* The flight plan's waypoints (API 14), built from the MCDU's FROM/TO and runways: the departure

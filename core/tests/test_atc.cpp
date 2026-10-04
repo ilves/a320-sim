@@ -423,3 +423,39 @@ TEST(atc_departure_from_kihnu_without_ats) {
   CHECK(state(sim).atcTakeoffCleared && state(sim).atcMessageSeq == before + 1);  // no answer
   a320_destroy(sim);
 }
+
+// The weather is the ATIS's, stays for the next flight, and rain is heard in the cockpit.
+TEST(weather_on_the_atis_and_in_the_cockpit) {
+  char err[256] = {0};
+  A320Sim* sim = a320_create(A320_DATA_DIR, err, sizeof(err));
+  if (!sim) { CHECK(false); return; }
+  a320_set_weather(sim, A320_WEATHER_FOG);
+  a320_reset(sim, A320_SCENARIO_RUNWAY, runwayIndex(sim, "26"));
+  CHECK(state(sim).weather == A320_WEATHER_FOG);
+  A320Controls c;
+  a320_get_controls(sim, &c);
+  Radio radio;
+  c.com1ActiveKhz = 124880;  // Tallinn Information
+  run(sim, c, 20.0, radio);
+  CHECK(radio.said("Visibility 300 metres, fog"));
+  A320WeatherInfo info;
+  CHECK(a320_weather_info(A320_WEATHER_RAIN, &info) && info.rain && info.cloudBaseFt == 1200.0 && info.visibilityM == 4000.0);
+  CHECK(a320_weather_info(A320_WEATHER_FOG, &info) && info.fogTopFt > 0.0 && std::strcmp(info.name, "FOG") == 0);
+  CHECK(!a320_weather_info(A320_WEATHER_COUNT, &info));
+
+  // Rain: louder than the same scene in sunshine (engines at idle, standing still).
+  auto level = [&](int weather) {
+    a320_set_weather(sim, weather);
+    a320_audio_init(sim, 48000, "");
+    std::vector<int16_t> buf(48000);
+    a320_audio_render(sim, buf.data(), 48000);  // let the levels glide in
+    a320_audio_render(sim, buf.data(), 48000);
+    double sum = 0.0;
+    for (int16_t v : buf) sum += static_cast<double>(v) * v;
+    return std::sqrt(sum / buf.size());
+  };
+  const double sunny = level(A320_WEATHER_SUNNY), rain = level(A320_WEATHER_RAIN);
+  std::printf("  audio RMS: sunny %.0f, rain %.0f\n", sunny, rain);
+  CHECK(rain > sunny * 1.3);
+  a320_destroy(sim);
+}

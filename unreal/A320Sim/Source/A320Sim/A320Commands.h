@@ -140,6 +140,9 @@ enum class EA320Command : uint8
 	FcuTrkFpa,
 	FcuHdgPush,
 	FcuAltPush,
+	// FLIGHT menu: the weather (Param: A320Weather) and day or night (Param 1 = night).
+	WeatherSet,
+	NightSet,
 };
 
 // Levers dragged with the mouse; the value is the handle position, 0 at the top of its slot.

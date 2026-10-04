@@ -39,10 +39,11 @@ void Autopilot::reset(double spdKt, double hdgMagDeg, double altFt) {
   lat_ = A320_LAT_NONE;
   vert_ = A320_VERT_NONE;
   athrMode_ = A320_ATHR_OFF;
-  locArmed_ = gsArmed_ = navArmed_ = false;
+  locArmed_ = gsArmed_ = navArmed_ = clbArmed_ = false;
   spd_ = spdKt;
   hdg_ = wrap360(hdgMagDeg);
   alt_ = altFt;
+  capAlt_ = altFt;
   vs_ = 0.0;
   fpa_ = 0.0;
   trkFpa_ = false;
@@ -52,7 +53,9 @@ void Autopilot::reset(double spdKt, double hdgMagDeg, double altFt) {
 
 int Autopilot::armed() const {
   int bits = 0;
-  if (vert_ == A320_VERT_VS || vert_ == A320_VERT_FPA || vert_ == A320_VERT_OP_CLB || vert_ == A320_VERT_OP_DES) bits |= A320_ARMED_ALT;
+  if (clbArmed_) bits |= A320_ARMED_CLB;
+  if (vert_ == A320_VERT_VS || vert_ == A320_VERT_FPA || vert_ == A320_VERT_CLB || vert_ == A320_VERT_DES ||
+      vert_ == A320_VERT_OP_CLB || vert_ == A320_VERT_OP_DES) bits |= A320_ARMED_ALT;
   if (locArmed_) bits |= A320_ARMED_LOC;
   if (navArmed_) bits |= A320_ARMED_NAV;
   if (gsArmed_) bits |= A320_ARMED_GS;
@@ -82,6 +85,7 @@ void Autopilot::engageCruise() {
   athr_ = true;
   lat_ = A320_LAT_HDG;
   vert_ = A320_VERT_ALT;
+  capAlt_ = alt_;
 }
 
 void Autopilot::disconnectAp() {
@@ -124,8 +128,16 @@ const char* Autopilot::engageAp(bool& self, bool& other, const ApInput& in) {
   return hint;
 }
 
+double Autopilot::desFloor(const ApInput& in) const {
+  return in.cstAltFt > alt_ ? in.cstAltFt : alt_;
+}
+
 void Autopilot::enterVertical(A320VertMode mode, const ApInput& in) {
   if (mode == A320_VERT_GS_STAR) gsIntegral_ = 0.0;
+  if (mode == A320_VERT_ALT_STAR || mode == A320_VERT_ALT) capAlt_ = alt_;
+  if (mode == A320_VERT_ALT_CST_STAR || mode == A320_VERT_ALT_CST) capAlt_ = in.cstAltFt;
+  // A vertical mode the crew picks replaces the takeoff's CLB.
+  if (mode != A320_VERT_CLB && vert_ != A320_VERT_NONE) clbArmed_ = false;
   vert_ = mode;
   fpaIntegral_ = in.flightPathDeg;
   if (mode != A320_VERT_LAND) pathTrim_ = 0.0;  // LAND keeps the glideslope's trim, without a step
@@ -229,9 +241,26 @@ const char* Autopilot::command(A320FcuCommand cmd, const ApInput& in) {
     case A320_FCU_ALT_PUSH: {
       if (landing) return kLandLocked;
       if (onGs) return "ALT: no level-off on the glideslope. Push APPR first to leave the approach.";
+      if (in.navValid && !in.onGround) {
+        // Managed: CLB up to the FCU altitude, DES down the descent path to it (or to a constraint).
+        const double err = alt_ - in.altitudeFt;
+        if (err > 100.0) {
+          enterVertical(A320_VERT_CLB, in);
+          return nullptr;
+        }
+        if (err < -100.0) {
+          if (in.cstAltFt > 0.0 && in.altitudeFt < in.cstAltFt + 100.0)
+            return "DES: already at the altitude constraint ahead. The descent goes on once it is passed.";
+          enterVertical(A320_VERT_DES, in);
+          return in.pathValid && in.altitudeFt < in.pathAltFt - 150.0
+                     ? "DES before the top of descent: 1000 ft/min down until the descent path is met."
+                     : nullptr;
+        }
+        return "ALT: set the altitude to climb or descend to first, then push the knob for CLB or DES.";
+      }
       alt_ = clamp(std::round(in.altitudeFt / 100.0) * 100.0, 100.0, 39000.0);
       enterVertical(std::fabs(alt_ - in.altitudeFt) < 20.0 ? A320_VERT_ALT : A320_VERT_ALT_STAR, in);
-      hint_ = "ALT pushed: managed climb and descent are not simulated, so the autopilot levels off at the present "
+      hint_ = "ALT pushed: no flight plan for a managed climb or descent, so the autopilot levels off at the present "
               "altitude, " + std::to_string(static_cast<int>(alt_)) + " ft. Set a new altitude and pull the knob to go on.";
       return hint_.c_str();
     }
@@ -289,13 +318,34 @@ void Autopilot::updateModes(const ApInput& in) {
     vert_ = A320_VERT_NONE;
   }
 
-  // Altitude capture is always armed in the climb/descent modes.
-  const double altErr = alt_ - in.altitudeFt;
-  const bool towards = (vert_ == A320_VERT_OP_CLB && altErr > 0.0) || (vert_ == A320_VERT_OP_DES && altErr < 0.0) ||
+  // CLB after takeoff at the acceleration altitude, towards a higher FCU altitude.
+  if (clbArmed_ && !in.onGround && in.radioAltFt > 1500.0 && in.navValid) {
+    clbArmed_ = false;
+    if (alt_ > in.altitudeFt + 100.0 && vert_ != A320_VERT_ALT_STAR && vert_ != A320_VERT_ALT) enterVertical(A320_VERT_CLB, in);
+  }
+  if (!in.navValid) clbArmed_ = false;
+  // Without a route the managed modes revert to the open ones.
+  if (!in.navValid && (vert_ == A320_VERT_CLB || vert_ == A320_VERT_DES))
+    vert_ = vert_ == A320_VERT_CLB ? A320_VERT_OP_CLB : A320_VERT_OP_DES;
+
+  // Altitude capture is always armed in the climb/descent modes; DES stops at a constraint above
+  // the FCU altitude (ALT CST).
+  const bool desToCst = vert_ == A320_VERT_DES && in.cstAltFt > alt_;
+  const double target = vert_ == A320_VERT_DES ? desFloor(in) : alt_;
+  const double altErr = target - in.altitudeFt;
+  const bool towards = ((vert_ == A320_VERT_OP_CLB || vert_ == A320_VERT_CLB) && altErr > 0.0) ||
+                       ((vert_ == A320_VERT_OP_DES || vert_ == A320_VERT_DES) && altErr < 0.0) ||
                        ((vert_ == A320_VERT_VS || vert_ == A320_VERT_FPA) && altErr * in.verticalSpeedFpm > 0.0);
   if (towards && std::fabs(altErr) < std::fmax(100.0, std::fabs(in.verticalSpeedFpm) * 0.15))
-    enterVertical(A320_VERT_ALT_STAR, in);
-  if (vert_ == A320_VERT_ALT_STAR && std::fabs(altErr) < 20.0) enterVertical(A320_VERT_ALT, in);
+    enterVertical(desToCst ? A320_VERT_ALT_CST_STAR : A320_VERT_ALT_STAR, in);
+  if (vert_ == A320_VERT_ALT_STAR && std::fabs(capAlt_ - in.altitudeFt) < 20.0) enterVertical(A320_VERT_ALT, in);
+  if (vert_ == A320_VERT_ALT_CST_STAR && std::fabs(capAlt_ - in.altitudeFt) < 20.0) {
+    vert_ = A320_VERT_ALT_CST;
+    fpaIntegral_ = in.flightPathDeg;
+  }
+  // A lower constraint ahead (the one held is behind): DES goes on.
+  if (vert_ == A320_VERT_ALT_CST && in.cstAltFt > 0.0 && in.cstAltFt < capAlt_ - 50.0 && alt_ < capAlt_ - 100.0)
+    enterVertical(A320_VERT_DES, in);
 }
 
 double Autopilot::lateralBank(const ApInput& in) {
@@ -324,11 +374,21 @@ double Autopilot::lateralBank(const ApInput& in) {
 }
 
 double Autopilot::verticalFpa(const ApInput& in) {
-  const double altErr = alt_ - in.altitudeFt;
+  const double altErr = capAlt_ - in.altitudeFt;
   switch (vert_) {
     case A320_VERT_ALT:
+    case A320_VERT_ALT_CST:
       return fpaForVs(clamp(altErr * 4.0, -1000.0, 1000.0), in.tasKt);
+    case A320_VERT_DES: {
+      // On the path: its angle, corrected by how far above it the aircraft is (steeper, up to 2.5
+      // degrees more). Below it (a descent before T/D): 1000 ft/min until the path is met.
+      if (!in.pathValid) return fpaForVs(-1000.0, in.tasKt);
+      const double dev = in.altitudeFt - in.pathAltFt;
+      if (dev < -150.0) return std::fmax(fpaForVs(-1000.0, in.tasKt), -in.pathDeg);
+      return -in.pathDeg - clamp(dev * 0.004, -0.6, 2.5);
+    }
     case A320_VERT_ALT_STAR:
+    case A320_VERT_ALT_CST_STAR:
       return fpaForVs(clamp(altErr * 4.0, -std::fmax(std::fabs(in.verticalSpeedFpm), 300.0),
                             std::fmax(std::fabs(in.verticalSpeedFpm), 300.0)), in.tasKt);
     case A320_VERT_VS:
@@ -336,10 +396,12 @@ double Autopilot::verticalFpa(const ApInput& in) {
     case A320_VERT_FPA:
       return fpa_;
     case A320_VERT_OP_CLB:
+    case A320_VERT_CLB:
     case A320_VERT_OP_DES: {
       // Speed on pitch: faster than target -> pitch up.
-      const double lo = vert_ == A320_VERT_OP_CLB ? 0.5 : -8.0;
-      const double hi = vert_ == A320_VERT_OP_CLB ? 15.0 : 0.0;
+      const bool climb = vert_ != A320_VERT_OP_DES;
+      const double lo = climb ? 0.5 : -8.0;
+      const double hi = climb ? 15.0 : 0.0;
       const double err = in.iasKt - protectedSpeed(in);
       fpaIntegral_ = clamp(fpaIntegral_ + 0.05 * err * in.dtS, lo, hi);
       return clamp(fpaIntegral_ + 0.3 * err, lo, hi);
@@ -374,7 +436,7 @@ double Autopilot::autothrust(const ApInput& in, bool& active) {
   // A/THR works with the levers between idle and CL; at TOGA/FLX the pilot has manual thrust.
   active = athr_ && in.thrustLever > 0.02 && in.thrustLever <= kLeverClimb + 0.03 && !in.onGround;
   if (vert_ == A320_VERT_FLARE && in.radioAltFt < kRetardFt) athrMode_ = A320_ATHR_RETARD;
-  else if (vert_ == A320_VERT_OP_CLB) athrMode_ = A320_ATHR_THR_CLB;
+  else if (vert_ == A320_VERT_OP_CLB || vert_ == A320_VERT_CLB) athrMode_ = A320_ATHR_THR_CLB;
   else if (vert_ == A320_VERT_OP_DES) athrMode_ = A320_ATHR_THR_IDLE;
   else athrMode_ = athr_ ? A320_ATHR_SPEED : A320_ATHR_OFF;
   if (!athr_) athrMode_ = A320_ATHR_OFF;
@@ -440,7 +502,8 @@ ApOutput Autopilot::update(const ApInput& in) {
     const double fpaErr = verticalFpa(in) - in.flightPathDeg;
     // The FBW alone leaves a standing error of a few tenths of a degree (more as the speed
     // changes): the path modes trim it out. LAND keeps its own law into the flare.
-    if (vert_ == A320_VERT_VS || vert_ == A320_VERT_FPA || vert_ == A320_VERT_GS_STAR || vert_ == A320_VERT_GS)
+    if (vert_ == A320_VERT_VS || vert_ == A320_VERT_FPA || vert_ == A320_VERT_DES || vert_ == A320_VERT_GS_STAR ||
+        vert_ == A320_VERT_GS)
       pathTrim_ = clamp(pathTrim_ + 0.25 * clamp(fpaErr, -1.0, 1.0) * in.dtS, -1.5, 1.5);
     out.stickPitch = clamp(0.12 * (fpaErr + pathTrim_), -0.3, 0.3);
   }
@@ -481,6 +544,10 @@ const char* vertModeName(int mode) {
     case A320_VERT_LAND: return "LAND";
     case A320_VERT_FLARE: return "FLARE";
     case A320_VERT_FPA: return "FPA";
+    case A320_VERT_CLB: return "CLB";
+    case A320_VERT_DES: return "DES";
+    case A320_VERT_ALT_CST_STAR: return "ALT CST*";
+    case A320_VERT_ALT_CST: return "ALT CST";
     default: return "";
   }
 }

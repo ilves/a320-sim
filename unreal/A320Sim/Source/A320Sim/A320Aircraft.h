@@ -94,6 +94,8 @@ public:
 	A320Scenario GetFlightScenario() const { return FlightScenario; }
 	int32 GetFlightDistanceNm() const { return FlightDistanceNm; }
 	int32 GetFlightPlan() const { return FlightPlan; }  // A320FlightPlan: how much the MCDU starts with
+	int32 GetWeather() const { return Weather; }  // A320Weather
+	bool IsNight() const { return bNight; }
 	bool IsCockpitView() const { return bCockpitView; }
 	bool IsLsOn() const { return bLsOn; }
 	int32 GetNdRangeNm() const { return NdRangeNm; }
@@ -156,6 +158,10 @@ private:
 	A320Scenario FlightScenario = A320_SCENARIO_RUNWAY;
 	int32 FlightDistanceNm = 20;
 	int32 FlightPlan = A320_PLAN_FULL;
+	// The weather and day or night: kept for every flight until changed, applied at once.
+	int32 Weather = A320_WEATHER_SUNNY;
+	bool bNight = false;
+	void ApplyWeather();
 	bool bFlightMenu = true;  // shown at start; closing it keeps the default flight
 	bool bMapVisible = false;
 	FA320Destination PlaceDestination;

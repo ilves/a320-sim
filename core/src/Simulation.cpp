@@ -405,6 +405,9 @@ ApInput Simulation::apInput() const {
   in.navValid = lnav_.valid();
   // The flat world's grid differs from true north by the meridian convergence.
   in.navTrackTrueDeg = lnav_.desiredGridTrackDeg() - (s.gridHeadingDeg - s.headingTrueDeg);
+  in.pathValid = vnav_.valid;
+  in.pathAltFt = vnav_.pathAltFt;
+  in.cstAltFt = vnav_.cstFt;
   in.pilotStickPitch = controls_.stickPitch;
   in.pilotStickRoll = controls_.stickRoll;
   in.thrustLever = thrustLevers(controls_).forward();
@@ -453,8 +456,71 @@ void Simulation::rebuildRoute() {
   } else {
     lnav_.resync(route_, lnavAircraft());
   }
-  // A departure in the flight plan arms NAV for the takeoff, as a SID does with the FD on.
-  if (onGround) ap_.armNav(route_.hasDeparture);
+  // A departure in the flight plan arms NAV and CLB for the takeoff, as a SID does with the FD on.
+  if (onGround) {
+    ap_.armNav(route_.hasDeparture);
+    ap_.armClb(route_.hasDeparture);
+  }
+  vnav_ = Vnav{};  // no T/D left over from the last route
+  pathNm_ = -1.0;
+  updateVnav();
+}
+
+void Simulation::updateVnav() {
+  const bool todBefore = vnav_.todValid;
+  vnav_ = Vnav{};
+  if (!lnav_.valid() || route_.empty()) return;
+  auto constrained = [&](int i) {
+    const Waypoint& w = route_.points[static_cast<size_t>(i)];
+    return w.kind == A320_WPT_APPROACH && w.altFt > 0;
+  };
+  int cst = -1;
+  for (int i = lnav_.active(); i < static_cast<int>(route_.points.size()) && cst < 0; ++i)
+    if (constrained(i)) cst = i;
+  if (cst < 0) return;
+  constexpr double kPathDeg = 3.0;
+  const double ftPerNm = std::tan(kPathDeg * kDegToRad) * kNmToM * kMToFt;  // 318 ft
+  // Between two constraints of the same altitude (CF and FF) the path is level.
+  const int prev = lnav_.active() - 1;
+  if (prev >= 0 && constrained(prev) && route_.points[static_cast<size_t>(prev)].altFt <= route_.points[static_cast<size_t>(cst)].altFt) {
+    vnav_.valid = true;
+    vnav_.cstFt = route_.points[static_cast<size_t>(cst)].altFt;
+    vnav_.pathAltFt = route_.points[static_cast<size_t>(prev)].altFt;
+    pathCst_ = -1;
+    return;
+  }
+  const double geomNm = lnav_.alongToM(route_, cst, state_.groundSpeedKt) / kNmToM;
+  const double dt = clock_.stepS();
+  if (cst != pathCst_ || pathNm_ < 0.0 || std::fabs(geomNm - pathNm_) > 5.0) {
+    pathNm_ = geomNm;
+    pathCst_ = cst;
+  } else {
+    pathNm_ -= state_.groundSpeedKt / 3600.0 * dt;
+    pathNm_ += (geomNm - pathNm_) * std::min(1.0, dt / 30.0);
+  }
+  const double toCstNm = pathNm_;
+  vnav_.valid = true;
+  vnav_.cstFt = route_.points[static_cast<size_t>(cst)].altFt;
+  vnav_.pathAltFt = vnav_.cstFt + toCstNm * ftPerNm;
+  // The top of descent from the cruise altitude: where the aircraft is level, or the FCU's while climbing.
+  const int v = ap_.vertical();
+  const bool climbing = v == A320_VERT_CLB || v == A320_VERT_OP_CLB || (ap_.armed() & A320_ARMED_CLB) ||
+                        ((v == A320_VERT_VS || v == A320_VERT_FPA) && state_.verticalSpeedFpm > 300.0);
+  const bool descending = v == A320_VERT_DES || v == A320_VERT_ALT_CST || v == A320_VERT_ALT_CST_STAR ||
+                          v == A320_VERT_GS || v == A320_VERT_GS_STAR || v == A320_VERT_LAND || v == A320_VERT_FLARE;
+  const double cruiseFt = climbing ? std::max(ap_.altFt(), state_.altitudeFt) : state_.altitudeFt;
+  if (!descending && cruiseFt > vnav_.cstFt + 300.0) {
+    const double todNm = toCstNm - (cruiseFt - vnav_.cstFt) / ftPerNm;
+    if (todNm > 0.0 && lnav_.pointAlong(route_, lnavAircraft(), todNm * kNmToM, vnav_.todN, vnav_.todE)) {
+      vnav_.todValid = true;
+      vnav_.todNm = todNm;
+    }
+  }
+  // Passing T/D level with the FCU altitude not set lower: tell the crew, as the ND and MCDU do.
+  if (todBefore && !vnav_.todValid && !descending && !state_.onGround && (v == A320_VERT_ALT || v == A320_VERT_ALT_STAR) &&
+      ap_.altFt() >= state_.altitudeFt - 100.0)
+    hint("T/D REACHED: set a lower altitude in the ALT window (the approach's is on the F-PLN, in magenta) and push the "
+         "ALT knob for DES.");
 }
 
 void Simulation::loadFlightPlan(int flightPlan, bool onRunway, int depRunway, int arrRunway) {
@@ -521,6 +587,12 @@ void Simulation::setWind(double fromTrueDeg, double kt) {
   windKt_ = std::max(0.0, kt);
   applyWind();
   refreshState();
+}
+
+void Simulation::setWeather(int weather) {
+  weather_ = clamp(weather, 0, A320_WEATHER_COUNT - 1);
+  atc_.setWeather(weather_);
+  state_.weather = weather_;
 }
 
 void Simulation::applyWind() {
@@ -780,6 +852,7 @@ void Simulation::applyControls() {
   updateEngines((c.apuBleed && apu_.avail()) || anyEngineRunning);
 
   lnav_.update(route_, lnavAircraft());
+  updateVnav();
   const ApOutput ap = ap_.update(apInput());
   const bool alphaFloor = ap_.athrMode() == A320_ATHR_AFLOOR;
   if (alphaFloor && !wasAlphaFloor_)
@@ -998,6 +1071,14 @@ void Simulation::refreshState() {
   } else {
     s.toDistanceNm = s.toBearingMagDeg = s.crossTrackNm = s.routeRemainingNm = 0.0;
   }
+  s.descentPathValid = vnav_.valid ? 1 : 0;
+  s.descentPathAltFt = vnav_.pathAltFt;
+  s.descentConstraintFt = vnav_.cstFt;
+  s.todValid = vnav_.todValid ? 1 : 0;
+  s.todDistanceNm = vnav_.todNm;
+  s.todNorthM = vnav_.todN;
+  s.weather = weather_;
+  s.todEastM = vnav_.todE;
   s.apDisconnectSeq = ap_.disconnectSeq();
 
   s.apuN = apu_.n();

@@ -353,6 +353,12 @@ void AudioEngine::render(int16_t* out, int frames, const A320State& s) {
   const float rumbleA = onePoleCoef(70.0f, rate_);
   const float buffetA = onePoleCoef(35.0f, rate_);
   const float invRate = 1.0f / rate_;
+  // Rain: louder with speed; nothing in a wreck or while paused.
+  const float rainTarget = s.weather == A320_WEATHER_RAIN && !s.paused && s.destroyed == A320_DESTROYED_NONE
+                               ? 0.04f + 0.08f * clamp(static_cast<float>(s.iasKt) / 250.0f, 0.0f, 1.0f)
+                               : 0.0f;
+  const float rainHpA = onePoleCoef(2500.0f, rate_);
+  const float dropDecay = 1.0f - onePoleCoef(60.0f, rate_);
 
   for (int i = 0; i < frames; ++i) {
     p_.roarAmp += glide * (target.roarAmp - p_.roarAmp);
@@ -376,6 +382,12 @@ void AudioEngine::render(int16_t* out, int frames, const A320State& s) {
     rumble1_ += rumbleA * (noise() - rumble1_);
     rumble2_ += rumbleA * (rumble1_ - rumble2_);
     buffet_ += buffetA * (noise() - buffet_);
+    rainAmp_ += glide * (rainTarget - rainAmp_);
+    const float rn = noise();
+    rainLp_ += rainHpA * (rn - rainLp_);
+    // Single drops: a random tick now and then, decaying in a few milliseconds.
+    if (rainAmp_ > 0.001f && (noise() + 1.0f) * 0.5f < 300.0f * invRate) rainDrop_ = noise();
+    rainDrop_ *= dropDecay;
 
     whinePhase_ += p_.whineFreq * invRate;
     corePhase_ += p_.coreFreq * invRate;
@@ -389,7 +401,8 @@ void AudioEngine::render(int16_t* out, int frames, const A320State& s) {
                 5.0f * p_.buffetAmp * buffet_ +
                 p_.whineAmp * std::sin(kTwoPi * static_cast<float>(whinePhase_)) +
                 p_.coreAmp * std::sin(kTwoPi * static_cast<float>(corePhase_)) +
-                p_.apuAmp * std::sin(kTwoPi * static_cast<float>(apuPhase_));
+                p_.apuAmp * std::sin(kTwoPi * static_cast<float>(apuPhase_)) +
+                rainAmp_ * (1.5f * (rn - rainLp_) + 3.0f * rainDrop_);
     for (Voice& v : voices_) {
       if (v.pos < v.clip->size()) mix += v.gain * (*v.clip)[v.pos++];
     }

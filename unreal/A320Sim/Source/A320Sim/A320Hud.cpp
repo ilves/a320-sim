@@ -203,6 +203,10 @@ void AA320Hud::DrawHUD()
 	const double Margin = (PanelH - S) / 2.0;
 	Scale = S / 420.0;
 
+	if (Aircraft->IsCockpitView() && Aircraft->IsSimReady())
+	{
+		DrawWindscreenRain(*Aircraft, W, PanelTop);
+	}
 	Fill(0.0, PanelTop, W, H - PanelTop, Glareshield);
 	Line(0.0, PanelTop, W, PanelTop, FLinearColor(0.2f, 0.2f, 0.22f), 3.0);
 	if (Aircraft->IsSimReady())
@@ -457,6 +461,12 @@ void AA320Hud::DrawPfd(const AA320Aircraft& Aircraft, double X, double Y, double
 		Frame(AX, AltBugY - 0.012 * S, 0.02 * S, 0.024 * S, Cyan, 2.0);
 	}
 	Text(FString::Printf(TEXT("%d"), FMath::RoundToInt(St.fcuAltFt)), AX + AW / 2.0, TapeTop - 0.025 * S, Cyan, 0, 1);
+	// DES: the descent path's altitude (VDEV) as a magenta dot beside the tape, at the end when off it.
+	if (St.descentPathValid && (St.vertMode == A320_VERT_DES || St.vertMode == A320_VERT_ALT_CST_STAR))
+	{
+		const double VdevY = FMath::Clamp(AltY(St.descentPathAltFt), TapeTop + 0.01 * S, TapeBottom - 0.01 * S);
+		Arc(AX - 0.012 * S, VdevY, 0.009 * S, 0.0, 360.0, Magenta, 2.5);
+	}
 	Line(AX - 0.02 * S, CY, AX + AW, CY, Yellow, 3.0);
 	Fill(AX, CY - 0.03 * S, AW, 0.06 * S, Screen);
 	Text(FString::Printf(TEXT("%d"), FMath::RoundToInt(St.altitudeFt / 10.0) * 10), AX + AW - 0.005 * S, CY, Green, 1, 2);
@@ -636,6 +646,20 @@ void AA320Hud::DrawNd(const AA320Aircraft& Aircraft, double X, double Y, double 
 				Line(P.X - D, P.Y, P.X, P.Y - D, C, 1.5);
 				Text(UTF8_TO_TCHAR(Route[i].ident), P.X + 0.015 * S, P.Y - 0.015 * S, C, 0, 0);
 			}
+		}
+	}
+	// The top of descent: a white arrow down to the right, as on the A320's ND.
+	if (!bLs && St.todValid)
+	{
+		const FVector2D T = ToScreen(St.todNorthM, St.todEastM);
+		if (T.X > CX0 && T.X < CX1 && T.Y > CY0 && T.Y < CY1)
+		{
+			const double D = 0.012 * S;
+			Line(T.X - 2.0 * D, T.Y - D, T.X, T.Y - D, White, 2.0);
+			Line(T.X, T.Y - D, T.X + 1.5 * D, T.Y + 0.5 * D, White, 2.0);
+			Line(T.X + 1.5 * D, T.Y + 0.5 * D, T.X + 0.6 * D, T.Y + 0.5 * D, White, 2.0);
+			Line(T.X + 1.5 * D, T.Y + 0.5 * D, T.X + 1.5 * D, T.Y - 0.4 * D, White, 2.0);
+			Text(TEXT("T/D"), T.X + 0.015 * S, T.Y + 0.02 * S, White, 0, 0);
 		}
 	}
 	// A trip's destination without a route (a place picked on the map, or no arrival in the
@@ -1038,7 +1062,7 @@ void AA320Hud::DrawHelp()
 		TEXT("MCDU           Tab (or MCDU, top right): arrival ILS, RAD NAV, PERF; type on the keyboard, Backspace = CLR"),
 		TEXT("Radio / ATC    F10 (or RADIO, top right): COM 1, transponder, ATC log; keys 1-6 pick a reply while it's open"),
 		TEXT("FCU            1/2 SPD,  3/4 HDG,  5/6 ALT,  7/8 V/S  (Shift = x10);  U fly HDG,  9 climb/descend to ALT,  0 hold V/S"),
-		TEXT("               \\ HDG-V/S / TRK-FPA;  Shift+U, Shift+9, Shift+0 (or Shift+click) push the knob: NAV along the flight plan, level off, V/S 0"),
+		TEXT("               \\ HDG-V/S / TRK-FPA;  Shift+U, Shift+9, Shift+0 (or Shift+click) push the knob: NAV, CLB/DES along the flight plan, V/S 0"),
 		TEXT("Sound          - (minus) on/off,  M silence master warning"),
 		TEXT("Takeoff        N (release brake), Home (TOGA), rotate ~150 kt with Down arrow, G at positive climb"),
 		TEXT("Landing        Vapp = VLS + 5 (amber strip), keep diamonds centred, flare ~30 ft, End at RETARD"),
@@ -1067,6 +1091,31 @@ void AA320Hud::AddButton(double X, double Y, double W, double H, const FString& 
 	Buttons.Add({FBox2D(FVector2D(X, Y), FVector2D(X + W, Y + H)), Command, Param});
 }
 
+void AA320Hud::DrawWindscreenRain(const AA320Aircraft& Aircraft, double W, double Top)
+{
+	const A320State& St = Aircraft.GetSimState();
+	A320WeatherInfo Info;
+	if (St.destroyed != A320_DESTROYED_NONE || !a320_weather_info(Aircraft.GetWeather(), &Info) || !Info.rain ||
+		St.heightAboveFieldM / 0.3048 > Info.cloudTopFt)
+	{
+		return;
+	}
+	// Drops run up the glass with speed, and slide down slowly at a standstill.
+	const double T = GetWorld()->GetTimeSeconds();
+	const double Speed = FMath::Clamp(St.iasKt / 160.0, 0.0, 1.0);
+	const double LengthPx = (6.0 + 50.0 * Speed) * Scale;
+	const FLinearColor Drop(0.75f, 0.8f, 0.85f, 0.35f);
+	for (int32 i = 0; i < 70; ++i)
+	{
+		const uint32 Hash = static_cast<uint32>(i) * 2654435761u;
+		const double U = (Hash & 0xFFFF) / 65535.0, V = ((Hash >> 16) & 0xFFFF) / 65535.0;
+		const double Rate = (Speed > 0.1 ? -(150.0 + 250.0 * Speed) : 25.0) * Scale * (0.6 + 0.8 * V);
+		const double Y = FMath::Fmod(V * Top + T * Rate + 100.0 * Top, Top);
+		const double X = U * W + (Speed > 0.1 ? (U - 0.5) * 0.15 * W * (1.0 - Y / Top) : 0.0);
+		Line(X, Y, X - 0.25 * LengthPx * (U - 0.5), Y + LengthPx, Drop, 1.5);
+	}
+}
+
 void AA320Hud::DrawFcu(const AA320Aircraft& Aircraft, double X, double Y, double W, double H)
 {
 	const A320State& St = Aircraft.GetSimState();
@@ -1084,13 +1133,15 @@ void AA320Hud::DrawFcu(const AA320Aircraft& Aircraft, double X, double Y, double
 	// The HDG-V/S / TRK-FPA pushbutton turns the heading and V/S windows into track and FPA.
 	const bool bTrkFpa = St.fcuTrkFpa != 0;
 	const bool bNav = St.latMode == A320_LAT_NAV || (St.armed & A320_ARMED_NAV);
+	const bool bManagedAlt = St.vertMode == A320_VERT_CLB || St.vertMode == A320_VERT_DES || St.vertMode == A320_VERT_ALT_CST ||
+		St.vertMode == A320_VERT_ALT_CST_STAR || (St.armed & A320_ARMED_CLB);
 	const bool bVs = St.vertMode == A320_VERT_VS || St.vertMode == A320_VERT_FPA;
 	const FString VsValue = !bVs ? FString(TEXT("-----"))
 		: (bTrkFpa ? FString::Printf(TEXT("%+.1f"), St.fcuFpaDeg) : FString::Printf(TEXT("%+05d"), FMath::RoundToInt(St.fcuVsFpm)));
 	const FWindow FcuWindows[] = {
 		{TEXT("SPD"), FString::Printf(TEXT("%03d"), FMath::RoundToInt(St.fcuSpdKt)), EA320Command::SpdDec, EA320Command::SpdInc, EA320Command::None, TEXT(""), false},
 		{bTrkFpa ? TEXT("TRK") : TEXT("HDG"), bNav ? FString(TEXT("---")) : FString::Printf(TEXT("%03d"), (FMath::RoundToInt(St.fcuHdgMagDeg) + 359) % 360 + 1), EA320Command::HdgDec, EA320Command::HdgInc, EA320Command::FcuHdgPull, bTrkFpa ? TEXT("TRK") : TEXT("HDG"), St.latMode == A320_LAT_HDG || St.latMode == A320_LAT_TRK, bNav},
-		{TEXT("ALT"), FString::Printf(TEXT("%05d"), FMath::RoundToInt(St.fcuAltFt)), EA320Command::AltDec, EA320Command::AltInc, EA320Command::FcuAltPull, TEXT("LVL/CH"), St.vertMode == A320_VERT_OP_CLB || St.vertMode == A320_VERT_OP_DES},
+		{TEXT("ALT"), FString::Printf(TEXT("%05d"), FMath::RoundToInt(St.fcuAltFt)), EA320Command::AltDec, EA320Command::AltInc, EA320Command::FcuAltPull, TEXT("LVL/CH"), St.vertMode == A320_VERT_OP_CLB || St.vertMode == A320_VERT_OP_DES, bManagedAlt},
 		{bTrkFpa ? TEXT("FPA") : TEXT("V/S"), VsValue, EA320Command::VsDec, EA320Command::VsInc, EA320Command::FcuVsPull, bTrkFpa ? TEXT("FPA") : TEXT("V/S"), bVs},
 	};
 	Fill(X, Y, W, H, FLinearColor(0.09f, 0.095f, 0.1f));
@@ -1219,6 +1270,7 @@ void AA320Hud::DrawFma(const A320State& St, double X, double Y, double S)
 		Mode(2, UTF8_TO_TCHAR(a320_lat_mode_name(St.latMode)), X + 0.5 * S, 0.18 * S, Green);
 		FString ArmedV;
 		if (St.armed & A320_ARMED_GS) ArmedV += TEXT("G/S ");
+		else if (St.armed & A320_ARMED_CLB) ArmedV += TEXT("CLB");
 		else if (St.armed & A320_ARMED_ALT) ArmedV += TEXT("ALT");
 		Text(ArmedV, X + 0.3 * S, Row2, Cyan, 0, 1);
 		Text((St.armed & A320_ARMED_LOC) ? TEXT("LOC") : ((St.armed & A320_ARMED_NAV) ? TEXT("NAV") : TEXT("")), X + 0.5 * S, Row2, Cyan, 0, 1);
@@ -2526,7 +2578,7 @@ void AA320Hud::DrawFlightMenu(const AA320Aircraft& Aircraft)
 
 	const double PW = FMath::Min(W * 0.66, 1150.0 * Scale), PX = (W - PW) / 2.0, PY = H * 0.06;
 	const double Pad = 18.0 * Scale, BH = 34.0 * Scale, Gap = 8.0 * Scale, LabelW = 120.0 * Scale;
-	const double PH = FMath::Min(H * 0.88, 760.0 * Scale);
+	const double PH = FMath::Min(H * 0.92, 810.0 * Scale);
 	Fill(PX, PY, PW, PH, FLinearColor(0.06f, 0.07f, 0.08f, 0.97f));
 	Buttons.Add({FBox2D(FVector2D(PX, PY), FVector2D(PX + PW, PY + PH)), EA320Command::None});  // swallows clicks
 	Frame(PX, PY, PW, PH, FLinearColor(0.5f, 0.52f, 0.55f), 2.0);
@@ -2613,6 +2665,22 @@ void AA320Hud::DrawFlightMenu(const AA320Aircraft& Aircraft)
 	AddButton(PX + Pad + LabelW, CY, 200.0 * Scale, BH, TEXT("FLIGHT PLAN ENTERED"), EA320Command::FlightPlan, bPlan, A320_PLAN_FULL);
 	AddButton(PX + Pad + LabelW + 200.0 * Scale + Gap, CY, 200.0 * Scale, BH, TEXT("NOT ENTERED"), EA320Command::FlightPlan, !bPlan,
 		A320_PLAN_EMPTY);
+	CY += BH + Gap;
+	// The weather and the time of day apply at once, in flight too.
+	Text(TEXT("WEATHER"), PX + Pad, CY + BH / 2.0, White, 1, 0);
+	BX = PX + Pad + LabelW;
+	const double WxW = 105.0 * Scale;
+	for (int32 Wx = 0; Wx < A320_WEATHER_COUNT; ++Wx)
+	{
+		A320WeatherInfo Info;
+		a320_weather_info(Wx, &Info);
+		AddButton(BX, CY, WxW, BH, UTF8_TO_TCHAR(Info.name), EA320Command::WeatherSet, Aircraft.GetWeather() == Wx, Wx);
+		BX += WxW + Gap;
+	}
+	BX += 2.0 * Gap;
+	AddButton(BX, CY, WxW, BH, TEXT("DAY"), EA320Command::NightSet, !Aircraft.IsNight(), 0);
+	BX += WxW + Gap;
+	AddButton(BX, CY, WxW, BH, TEXT("NIGHT"), EA320Command::NightSet, Aircraft.IsNight(), 1);
 	CY += BH + 2.0 * Gap;
 
 	// What that gives: where, how high, and who is on the radio.
