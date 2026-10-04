@@ -613,8 +613,34 @@ void AA320Hud::DrawNd(const AA320Aircraft& Aircraft, double X, double Y, double 
 		}
 	}
 
-	// A trip's destination (a place picked on the map, or another airport): a magenta line to it.
-	if (!bLs && Runways.IsValidIndex(Aircraft.GetArrRunway()) && Runways.IsValidIndex(Aircraft.GetDepRunway()))
+	// The flight plan: the legs still to fly in green, the TO waypoint's name in white.
+	const TArray<A320Waypoint>& Route = Aircraft.GetRoute();
+	const bool bRoute = Route.Num() >= 2 && St.routeActive >= 1;
+	if (!bLs && bRoute)
+	{
+		for (int32 i = St.routeActive - 1; i < Route.Num(); ++i)
+		{
+			const FVector2D P = ToScreen(Route[i].northM, Route[i].eastM);
+			if (i >= St.routeActive)
+			{
+				const FVector2D Prev = ToScreen(Route[i - 1].northM, Route[i - 1].eastM);
+				ClippedLine(Prev.X, Prev.Y, P.X, P.Y, CX0, CY0, CX1, CY1, Green, 2.0);
+			}
+			if (P.X > CX0 && P.X < CX1 && P.Y > CY0 && P.Y < CY1 && Route[i].kind != A320_WPT_RUNWAY)
+			{
+				const double D = 0.009 * S;
+				const FLinearColor C = i == St.routeActive ? White : Green;
+				Line(P.X, P.Y - D, P.X + D, P.Y, C, 1.5);
+				Line(P.X + D, P.Y, P.X, P.Y + D, C, 1.5);
+				Line(P.X, P.Y + D, P.X - D, P.Y, C, 1.5);
+				Line(P.X - D, P.Y, P.X, P.Y - D, C, 1.5);
+				Text(UTF8_TO_TCHAR(Route[i].ident), P.X + 0.015 * S, P.Y - 0.015 * S, C, 0, 0);
+			}
+		}
+	}
+	// A trip's destination without a route (a place picked on the map, or no arrival in the
+	// MCDU): a magenta line to it.
+	if (!bLs && !bRoute && Runways.IsValidIndex(Aircraft.GetArrRunway()) && Runways.IsValidIndex(Aircraft.GetDepRunway()))
 	{
 		const FA320Destination& Place = Aircraft.GetPlaceDestination();
 		const TArray<A320AirportInfo>& Airports = Aircraft.GetAirports();
@@ -732,9 +758,18 @@ void AA320Hud::DrawNd(const AA320Aircraft& Aircraft, double X, double Y, double 
 	Line(AcX - 0.015 * S, AcY + 0.035 * S, AcX + 0.015 * S, AcY + 0.035 * S, Yellow, 3.0);
 
 	Text(FString::Printf(TEXT("GS %d  TAS %d"), FMath::RoundToInt(St.groundSpeedKt), FMath::RoundToInt(St.tasKt)), X + 0.03 * S, Y + 0.04 * S, White, 0, 0);
+	// Top right: the TO waypoint, its bearing and distance (ARC and ROSE NAV).
+	const bool bToWpt = !bLs && bRoute;
+	if (bToWpt)
+	{
+		Text(FString::Printf(TEXT("%s  %03d\u00B0"), UTF8_TO_TCHAR(St.toWaypoint), (FMath::RoundToInt(St.toBearingMagDeg) + 359) % 360 + 1),
+			X + S - 0.03 * S, Y + 0.04 * S, White, 0, 2);
+		Text(FString::Printf(TEXT("%.1f NM"), St.toDistanceNm), X + S - 0.03 * S, Y + 0.085 * S, Green, 0, 2);
+	}
 	if (Aircraft.IsLsOn() && Runways.IsValidIndex(St.ilsRunwayIndex))
 	{
-		Text(FString::Printf(TEXT("%s %.2f  %.1f NM"), UTF8_TO_TCHAR(St.ilsIdent), St.ilsFreqMHz, St.dmeNm), X + S - 0.03 * S, Y + 0.04 * S, Magenta, 0, 2);
+		Text(FString::Printf(TEXT("%s %.2f  %.1f NM"), UTF8_TO_TCHAR(St.ilsIdent), St.ilsFreqMHz, St.dmeNm), X + S - 0.03 * S,
+			Y + (bToWpt ? 0.13 : 0.04) * S, Magenta, 0, 2);
 	}
 	Text(FString::Printf(TEXT("%s  %d NM"), bLs ? TEXT("ROSE LS") : (bRose ? TEXT("ROSE NAV") : TEXT("ARC")), Aircraft.GetNdRangeNm()),
 		X + 0.03 * S, Y + 0.96 * S, Cyan, 0, 0);
@@ -1003,7 +1038,7 @@ void AA320Hud::DrawHelp()
 		TEXT("MCDU           Tab (or MCDU, top right): arrival ILS, RAD NAV, PERF; type on the keyboard, Backspace = CLR"),
 		TEXT("Radio / ATC    F10 (or RADIO, top right): COM 1, transponder, ATC log; keys 1-6 pick a reply while it's open"),
 		TEXT("FCU            1/2 SPD,  3/4 HDG,  5/6 ALT,  7/8 V/S  (Shift = x10);  U fly HDG,  9 climb/descend to ALT,  0 hold V/S"),
-		TEXT("               \\ HDG-V/S / TRK-FPA;  Shift+U, Shift+9, Shift+0 (or Shift+click) push the knob: hold heading, level off, V/S 0"),
+		TEXT("               \\ HDG-V/S / TRK-FPA;  Shift+U, Shift+9, Shift+0 (or Shift+click) push the knob: NAV along the flight plan, level off, V/S 0"),
 		TEXT("Sound          - (minus) on/off,  M silence master warning"),
 		TEXT("Takeoff        N (release brake), Home (TOGA), rotate ~150 kt with Down arrow, G at positive climb"),
 		TEXT("Landing        Vapp = VLS + 5 (amber strip), keep diamonds centred, flare ~30 ft, End at RETARD"),
@@ -1044,15 +1079,17 @@ void AA320Hud::DrawFcu(const AA320Aircraft& Aircraft, double X, double Y, double
 		EA320Command Dec, Inc, Pull;
 		const TCHAR* PullLabel;
 		bool bPullLit;
+		bool bManaged = false;  // NAV: dashes and the managed dot
 	};
 	// The HDG-V/S / TRK-FPA pushbutton turns the heading and V/S windows into track and FPA.
 	const bool bTrkFpa = St.fcuTrkFpa != 0;
+	const bool bNav = St.latMode == A320_LAT_NAV || (St.armed & A320_ARMED_NAV);
 	const bool bVs = St.vertMode == A320_VERT_VS || St.vertMode == A320_VERT_FPA;
 	const FString VsValue = !bVs ? FString(TEXT("-----"))
 		: (bTrkFpa ? FString::Printf(TEXT("%+.1f"), St.fcuFpaDeg) : FString::Printf(TEXT("%+05d"), FMath::RoundToInt(St.fcuVsFpm)));
 	const FWindow FcuWindows[] = {
 		{TEXT("SPD"), FString::Printf(TEXT("%03d"), FMath::RoundToInt(St.fcuSpdKt)), EA320Command::SpdDec, EA320Command::SpdInc, EA320Command::None, TEXT(""), false},
-		{bTrkFpa ? TEXT("TRK") : TEXT("HDG"), FString::Printf(TEXT("%03d"), (FMath::RoundToInt(St.fcuHdgMagDeg) + 359) % 360 + 1), EA320Command::HdgDec, EA320Command::HdgInc, EA320Command::FcuHdgPull, bTrkFpa ? TEXT("TRK") : TEXT("HDG"), St.latMode == A320_LAT_HDG || St.latMode == A320_LAT_TRK},
+		{bTrkFpa ? TEXT("TRK") : TEXT("HDG"), bNav ? FString(TEXT("---")) : FString::Printf(TEXT("%03d"), (FMath::RoundToInt(St.fcuHdgMagDeg) + 359) % 360 + 1), EA320Command::HdgDec, EA320Command::HdgInc, EA320Command::FcuHdgPull, bTrkFpa ? TEXT("TRK") : TEXT("HDG"), St.latMode == A320_LAT_HDG || St.latMode == A320_LAT_TRK, bNav},
 		{TEXT("ALT"), FString::Printf(TEXT("%05d"), FMath::RoundToInt(St.fcuAltFt)), EA320Command::AltDec, EA320Command::AltInc, EA320Command::FcuAltPull, TEXT("LVL/CH"), St.vertMode == A320_VERT_OP_CLB || St.vertMode == A320_VERT_OP_DES},
 		{bTrkFpa ? TEXT("FPA") : TEXT("V/S"), VsValue, EA320Command::VsDec, EA320Command::VsInc, EA320Command::FcuVsPull, bTrkFpa ? TEXT("FPA") : TEXT("V/S"), bVs},
 	};
@@ -1078,6 +1115,11 @@ void AA320Hud::DrawFcu(const AA320Aircraft& Aircraft, double X, double Y, double
 		Text(Win.Label, CX + 2.0 * Scale, Y + H * 0.22, White, 0, 0);
 		Fill(CX, Y + H * 0.42, BoxW, H * 0.5, Screen);
 		Text(Win.Value, CX + BoxW / 2.0, Y + H * 0.67, Amber, 1, 1);
+		if (Win.bManaged)
+		{
+			const double Dot = H * 0.09;
+			Fill(CX + BoxW - Dot * 1.8, Y + H * 0.67 - Dot / 2.0, Dot, Dot, Amber);
+		}
 		const double SmallW = WindowW * 0.15;
 		AddButton(CX + BoxW + 2.0, Y + H * 0.42, SmallW, H * 0.5, TEXT("-"), Win.Dec, false);
 		AddButton(CX + BoxW + SmallW + 4.0, Y + H * 0.42, SmallW, H * 0.5, TEXT("+"), Win.Inc, false);
@@ -1179,7 +1221,7 @@ void AA320Hud::DrawFma(const A320State& St, double X, double Y, double S)
 		if (St.armed & A320_ARMED_GS) ArmedV += TEXT("G/S ");
 		else if (St.armed & A320_ARMED_ALT) ArmedV += TEXT("ALT");
 		Text(ArmedV, X + 0.3 * S, Row2, Cyan, 0, 1);
-		Text((St.armed & A320_ARMED_LOC) ? TEXT("LOC") : TEXT(""), X + 0.5 * S, Row2, Cyan, 0, 1);
+		Text((St.armed & A320_ARMED_LOC) ? TEXT("LOC") : ((St.armed & A320_ARMED_NAV) ? TEXT("NAV") : TEXT("")), X + 0.5 * S, Row2, Cyan, 0, 1);
 	}
 
 	// Column 4: approach capability once APPR is armed or engaged.
@@ -2995,7 +3037,39 @@ void AA320Hud::DrawMap(const AA320Aircraft& Aircraft)
 	const double DestN = Place.bSet ? Place.NorthM : Airports[ArrRw.airport].northM;
 	const double DestE = Place.bSet ? Place.EastM : Airports[ArrRw.airport].eastM;
 	const bool bTrip = Place.bSet || ArrRw.airport != DepRw.airport;
-	if (bTrip)
+	// The loaded flight's route, unless the menu or the map has chosen another flight since.
+	const TArray<A320Waypoint>& Route = Aircraft.GetRoute();
+	auto Near = [](double N0, double E0, double N1, double E1) { return FMath::Abs(N0 - N1) < 50.0 && FMath::Abs(E0 - E1) < 50.0; };
+	const bool bRouteShown = !Place.bSet && Route.Num() >= 2 && Near(Route.Last().northM, Route.Last().eastM, ArrRw.thresholdNorthM, ArrRw.thresholdEastM) &&
+		(Route[0].kind == A320_WPT_POSITION || Near(Route[0].northM, Route[0].eastM, DepRw.startNorthM, DepRw.startEastM));
+	if (bRouteShown)
+	{
+		// The flight plan's waypoints, named when zoomed in; the aircraft to its TO waypoint.
+		for (int32 i = 0; i < Route.Num(); ++i)
+		{
+			const FVector2D P = MapToScreen(Route[i].northM, Route[i].eastM);
+			if (i > 0)
+			{
+				const FVector2D Prev = MapToScreen(Route[i - 1].northM, Route[i - 1].eastM);
+				ClippedLine(Prev.X, Prev.Y, P.X, P.Y, CX0, CY0, CX1, CY1, Magenta, 3.0);
+			}
+			if (InMap(P, 0.0) && Route[i].kind != A320_WPT_RUNWAY)
+			{
+				Arc(P.X, P.Y, 4.0 * Scale, 0.0, 360.0, Magenta, 2.0);
+				if (MapMetresPerPixel < 250.0)
+				{
+					Text(UTF8_TO_TCHAR(Route[i].ident), P.X + 7.0 * Scale, P.Y + 9.0 * Scale, Magenta, 0, 0);
+				}
+			}
+		}
+		if (!St.onGround && Route.IsValidIndex(St.routeActive))
+		{
+			const FVector2D Ac = MapToScreen(St.northM, St.eastM);
+			const FVector2D To = MapToScreen(Route[St.routeActive].northM, Route[St.routeActive].eastM);
+			ClippedLine(Ac.X, Ac.Y, To.X, To.Y, CX0, CY0, CX1, CY1, FLinearColor(1.0f, 0.4f, 1.0f, 0.6f), 1.5);
+		}
+	}
+	else if (bTrip)
 	{
 		const FVector2D A = MapToScreen(DepAp.northM, DepAp.eastM), B = MapToScreen(DestN, DestE);
 		ClippedLine(A.X, A.Y, B.X, B.Y, CX0, CY0, CX1, CY1, Magenta, 3.0);

@@ -14,6 +14,7 @@
 #include "a320/GroundMap.h"
 #include "a320/Ils.h"
 #include "a320/Mcdu.h"
+#include "a320/Route.h"
 #include "a320/SimClock.h"
 #include "a320/Systems.h"
 #include "a320/a320_api.h"
@@ -69,6 +70,7 @@ class Simulation {
 
   void mcduKey(int key);
   void mcduDisplay(A320McduDisplay& out) const;
+  const Route& route() const { return route_; }
   Fms& fms() { return fms_; }
   const Fms& fms() const { return fms_; }
 
@@ -101,6 +103,11 @@ class Simulation {
   IlsSignal ilsSignal_;
   Fms fms_;
   Mcdu mcdu_;
+  Route route_;
+  Lnav lnav_;
+  // A new route from the MCDU's FROM/TO and runways (a flight start, or the crew's changes).
+  void rebuildRoute();
+  Lnav::Aircraft lnavAircraft() const;
   Atc atc_;
   double stepTimeS_ = 0.0;
   void updateAtc();

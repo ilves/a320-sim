@@ -253,6 +253,8 @@ bool Simulation::startFlight(A320Scenario scenario, int depRunway, int arrRunway
   stepTimeS_ = 0.0;
   clock_.resetTime();
   refreshState();
+  rebuildRoute();  // from where refreshState put the aircraft
+  refreshState();
   state_.com1ActiveKhz = controls_.com1ActiveKhz;
   atc_.fillState(state_);
   wasOnGround_ = state_.onGround != 0;
@@ -400,6 +402,9 @@ ApInput Simulation::apInput() const {
   in.glideslopeDeg = tuned ? tuned->glideslopeDeg() : 3.0;
   in.locDegPerDot = tuned ? tuned->locHalfSectorDeg() / 2.0 : 0.8;
   in.magneticVariationDeg = magVar();
+  in.navValid = lnav_.valid();
+  // The flat world's grid differs from true north by the meridian convergence.
+  in.navTrackTrueDeg = lnav_.desiredGridTrackDeg() - (s.gridHeadingDeg - s.headingTrueDeg);
   in.pilotStickPitch = controls_.stickPitch;
   in.pilotStickRoll = controls_.stickRoll;
   in.thrustLever = thrustLevers(controls_).forward();
@@ -412,14 +417,44 @@ ApInput Simulation::apInput() const {
 }
 
 void Simulation::mcduKey(int key) {
-  McduContext ctx{world_, frame_, state_, fms_, weightLbs_};
+  const Fms before = fms_;
+  McduContext ctx{world_, frame_, state_, fms_, weightLbs_, route_, lnav_.active()};
   mcdu_.press(key, ctx);
+  if (fms_.originAirport != before.originAirport || fms_.destAirport != before.destAirport ||
+      fms_.depRunway != before.depRunway || fms_.arrRunway != before.arrRunway) {
+    rebuildRoute();
+    refreshState();
+  }
 }
 
 void Simulation::mcduDisplay(A320McduDisplay& out) const {
   Fms fms = fms_;  // rendering never changes the crew's data
-  McduContext ctx{world_, frame_, state_, fms, weightLbs_};
+  McduContext ctx{world_, frame_, state_, fms, weightLbs_, route_, lnav_.active()};
   mcdu_.render(ctx, out);
+}
+
+Lnav::Aircraft Simulation::lnavAircraft() const {
+  Lnav::Aircraft a;
+  a.northM = state_.northM;
+  a.eastM = state_.eastM;
+  a.altitudeFt = state_.altitudeFt;
+  a.gridTrackDeg = state_.gridTrackDeg;
+  a.groundSpeedKt = state_.groundSpeedKt;
+  a.onGround = state_.onGround != 0;
+  return a;
+}
+
+void Simulation::rebuildRoute() {
+  const bool onGround = state_.onGround != 0;
+  route_ = buildRoute(RouteRequest{world_, frame_, fms_, onGround, state_.northM, state_.eastM});
+  if (onGround) {
+    lnav_.reset(route_);
+    lnav_.update(route_, lnavAircraft());
+  } else {
+    lnav_.resync(route_, lnavAircraft());
+  }
+  // A departure in the flight plan arms NAV for the takeoff, as a SID does with the FD on.
+  if (onGround) ap_.armNav(route_.hasDeparture);
 }
 
 void Simulation::loadFlightPlan(int flightPlan, bool onRunway, int depRunway, int arrRunway) {
@@ -466,7 +501,10 @@ void Simulation::loadFlightPlan(int flightPlan, bool onRunway, int depRunway, in
 }
 
 void Simulation::fcuCommand(A320FcuCommand cmd) {
+  const bool wasNav = ap_.lateral() == A320_LAT_NAV;
   hint(ap_.command(cmd, apInput()));
+  // NAV engaged in the air: the leg to fly from here (direct to its fix when far from it).
+  if (!wasNav && ap_.lateral() == A320_LAT_NAV) lnav_.resync(route_, lnavAircraft());
   if ((cmd == A320_FCU_APPR || cmd == A320_FCU_LOC) && fms_.tunedIls() < 0)
     hint("No ILS is tuned: insert the approach on the MCDU (F-PLN, the destination line, ARRIVAL, the ILS, INSERT) "
          "or type the ILS on RAD NAV.");
@@ -741,6 +779,7 @@ void Simulation::applyControls() {
   for (int i = 0; i < 2; ++i) anyEngineRunning = anyEngineRunning || state_.engRunning[i];
   updateEngines((c.apuBleed && apu_.avail()) || anyEngineRunning);
 
+  lnav_.update(route_, lnavAircraft());
   const ApOutput ap = ap_.update(apInput());
   const bool alphaFloor = ap_.athrMode() == A320_ATHR_AFLOOR;
   if (alphaFloor && !wasAlphaFloor_)
@@ -946,6 +985,19 @@ void Simulation::refreshState() {
   s.fcuTrkFpa = ap_.trkFpa() ? 1 : 0;
   s.windFromTrueDeg = windFromTrueDeg_;
   s.windKt = windKt_;
+  s.routeCount = static_cast<int>(route_.points.size());
+  s.routeActive = lnav_.valid() ? lnav_.active() : -1;
+  std::memset(s.toWaypoint, 0, sizeof(s.toWaypoint));
+  if (lnav_.valid()) {
+    std::snprintf(s.toWaypoint, sizeof(s.toWaypoint), "%s", route_.points[static_cast<size_t>(lnav_.active())].ident.c_str());
+    s.toDistanceNm = lnav_.toDistanceM() / kNmToM;
+    const double brgTrue = lnav_.toBearingGridDeg() - (s.gridHeadingDeg - s.headingTrueDeg);
+    s.toBearingMagDeg = std::fmod(brgTrue - magVar() + 720.0, 360.0);
+    s.crossTrackNm = lnav_.crossTrackM() / kNmToM;
+    s.routeRemainingNm = lnav_.remainingM(route_) / kNmToM;
+  } else {
+    s.toDistanceNm = s.toBearingMagDeg = s.crossTrackNm = s.routeRemainingNm = 0.0;
+  }
   s.apDisconnectSeq = ap_.disconnectSeq();
 
   s.apuN = apu_.n();

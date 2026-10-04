@@ -147,6 +147,17 @@ std::string runwayName(const McduContext& ctx, int i) {
                                                                      : std::string();
 }
 
+// The leg's course to route waypoint i from the one before it: initial great circle, magnetic.
+double legCourseMag(const McduContext& ctx, size_t i) {
+  const Waypoint& p = ctx.route.points[i];
+  const Waypoint& q = ctx.route.points[i - 1];
+  const double la1 = q.geo.latDeg * kDegToRad, la2 = p.geo.latDeg * kDegToRad;
+  const double dLon = (p.geo.lonDeg - q.geo.lonDeg) * kDegToRad;
+  const double trueDeg = std::atan2(std::sin(dLon) * std::cos(la2),
+                                    std::cos(la1) * std::sin(la2) - std::sin(la1) * std::cos(la2) * std::cos(dLon)) * kRadToDeg;
+  return wrap360(trueDeg - ctx.world.airports[static_cast<size_t>(ctx.world.nearestAirport(p.n, p.e))].magneticVariationDeg);
+}
+
 // Bearing (magnetic) and distance from the aircraft to a runway threshold.
 void toThreshold(const McduContext& ctx, int i, double& brgMag, double& distNm) {
   const Enu t = ctx.frame.toEnu(ctx.world.runways[static_cast<size_t>(i)].threshold);
@@ -194,6 +205,16 @@ void Mcdu::reset() {
   scratch_.clear();
   message_.clear();
   tmpyDep_ = tmpyArr_ = -1;
+  fplnScroll_ = 0;
+}
+
+int Mcdu::fplnIndex(const McduContext& ctx, int line) const {
+  const int n = static_cast<int>(ctx.route.points.size());
+  if (ctx.route.empty()) return -1;
+  // Line 1 is the FROM waypoint (the one before the active), scrolled with the slew keys.
+  const int first = std::max(0, std::min(std::max(ctx.routeActive - 1, 0) + fplnScroll_, n - 1));
+  const int i = first + line;
+  return i < n ? i : -1;
 }
 
 void Mcdu::typeChar(char c) {
@@ -230,7 +251,19 @@ void Mcdu::press(int key, McduContext& ctx) {
       return;
     case A320_MCDU_INIT: page_ = Page::Init; break;
     case A320_MCDU_FPLN:
-    case A320_MCDU_AIRPORT: page_ = Page::Fpln; break;
+    case A320_MCDU_AIRPORT:
+      page_ = Page::Fpln;
+      fplnScroll_ = 0;
+      break;
+    case A320_MCDU_UP:
+    case A320_MCDU_DOWN:
+      // The slew keys scroll the flight plan: up brings the later waypoints up.
+      if (page_ == Page::Fpln && !ctx.route.empty()) {
+        const int n = static_cast<int>(ctx.route.points.size());
+        const int base = std::max(ctx.routeActive - 1, 0);
+        fplnScroll_ = std::max(-base, std::min(fplnScroll_ + (key == A320_MCDU_UP ? 1 : -1), n - 1 - base));
+      }
+      break;
     case A320_MCDU_RADNAV: page_ = Page::RadNav; break;
     case A320_MCDU_PERF: page_ = ctx.state.onGround && !ctx.fms.flown ? Page::PerfTakeoff : Page::PerfAppr; break;
     case A320_MCDU_PROG: page_ = Page::Prog; break;
@@ -247,7 +280,7 @@ void Mcdu::press(int key, McduContext& ctx) {
       show("NOT AVAILABLE IN SIM");
       break;
     default:
-      break;  // slew keys and OVFY: no scrolling pages yet
+      break;  // OVFY
   }
 }
 
@@ -257,6 +290,15 @@ void Mcdu::lineSelect(int line, bool right, McduContext& ctx) {
     case Page::Fpln:
       if (ctx.fms.originAirport < 0 || ctx.fms.destAirport < 0) {
         if (!right && line <= 5) show("ENTER FROM/TO ON INIT");
+        return;
+      }
+      if (!ctx.route.empty()) {
+        // A route: the origin's and the destination's lines open their lateral revisions.
+        const int i = line < 5 ? fplnIndex(ctx, line) : -1;
+        const int last = static_cast<int>(ctx.route.points.size()) - 1;
+        if (right) return;
+        if (i == 0 && ctx.route.hasDeparture) page_ = Page::LatRevOrigin;
+        else if (line == 5 || i == last) page_ = Page::LatRevDest;
         return;
       }
       if (!right && line == 0) page_ = Page::LatRevOrigin;
@@ -524,6 +566,53 @@ void Mcdu::lineSelectAppr(int line, bool right, McduContext& ctx) {
   }
 }
 
+namespace {
+
+// F-PLN with a route: five lines from the waypoint first, each under its leg (BRG to the active
+// waypoint, TRK after it, and the distance), then the destination line.
+void renderRoute(const McduContext& ctx, Screen& s, const std::string& dest, int first) {
+  const A320State& st = ctx.state;
+  const std::vector<Waypoint>& pts = ctx.route.points;
+  const int n = static_cast<int>(pts.size());
+  if (first > 0) s.left(0, "     ", A320_MCDU_WHITE, 1);  // scrolled: no FROM title
+  s.put(1, 8, "TIME  SPD/ALT", A320_MCDU_WHITE, 1);
+  for (int line = 0; line < 5; ++line) {
+    const int i = first + line, row = 2 + 2 * line;
+    if (i == n) {
+      s.centre(row, "---- END OF F-PLN ----", A320_MCDU_WHITE);
+      continue;
+    }
+    if (i == n + 1) {
+      s.centre(row, "-- NO ALTN F-PLN --", A320_MCDU_WHITE);
+      continue;
+    }
+    if (i > n + 1) continue;
+    const Waypoint& w = pts[static_cast<size_t>(i)];
+    const bool active = i == ctx.routeActive;
+    if (line > 0 && i > 0) {
+      const bool brg = active && st.routeActive >= 0 && w.kind != A320_WPT_ALTITUDE;
+      const double crs = brg ? st.toBearingMagDeg : legCourseMag(ctx, static_cast<size_t>(i));
+      const double nm = brg ? st.toDistanceNm : std::hypot(w.n - pts[static_cast<size_t>(i - 1)].n, w.e - pts[static_cast<size_t>(i - 1)].e) / kNmToM;
+      const int c = (static_cast<int>(std::lround(crs)) + 359) % 360 + 1;
+      s.left(row - 1, fmt(" %s%03d`", brg ? "BRG" : (w.kind == A320_WPT_ALTITUDE ? "C" : "TRK"), c), active ? A320_MCDU_WHITE : A320_MCDU_GREEN);
+      s.put(row - 1, 11, fmt("%3.0fNM", nm), active ? A320_MCDU_WHITE : A320_MCDU_GREEN);
+    }
+    s.left(row, w.ident, active ? A320_MCDU_WHITE : A320_MCDU_GREEN);
+    s.put(row, 8, "----", A320_MCDU_WHITE);
+    // Constraints in magenta; the runways' elevations green.
+    if (w.altFt > 0 && w.kind != A320_WPT_RUNWAY) s.right(row, fmt("---/%6d", w.altFt), A320_MCDU_MAGENTA);
+    else if (w.kind == A320_WPT_RUNWAY) s.right(row, fmt("---/%6d", w.altFt), A320_MCDU_GREEN);
+    else s.right(row, "---/------", A320_MCDU_WHITE);
+  }
+  s.left(11, " DEST    TIME  DIST EFOB", A320_MCDU_WHITE);
+  s.left(12, dest, A320_MCDU_WHITE);
+  s.put(12, 9, "----", A320_MCDU_WHITE);
+  s.put(12, 14, fmt("%4.0f", st.routeActive >= 0 ? st.routeRemainingNm : 0.0), A320_MCDU_WHITE);
+  s.right(12, fmt("%4.1f", st.fuelKg / 1000.0), A320_MCDU_WHITE);
+}
+
+}  // namespace
+
 void Mcdu::render(const McduContext& ctx, A320McduDisplay& out) const {
   Screen s(out);
   const A320State& st = ctx.state;
@@ -574,6 +663,10 @@ void Mcdu::render(const McduContext& ctx, A320McduDisplay& out) const {
         break;
       }
       s.left(0, " FROM", A320_MCDU_WHITE, 1);
+      if (!ctx.route.empty()) {
+        renderRoute(ctx, s, to + runwayName(ctx, f.arrRunway), fplnIndex(ctx, 0));
+        break;
+      }
       s.right(1, "SPD/ALT   ", A320_MCDU_WHITE);
       const std::string origin = from + runwayName(ctx, f.depRunway);
       auto elevFt = [&](int airport) {

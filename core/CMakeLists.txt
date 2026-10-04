@@ -49,6 +49,8 @@ add_library(a320core_static STATIC
   src/Guide.cpp
   src/Ils.cpp
   src/Mcdu.cpp
+  src/NavData.cpp
+  src/Route.cpp
   src/SimClock.cpp
   src/Simulation.cpp
   src/Systems.cpp)

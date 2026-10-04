@@ -69,6 +69,8 @@ public:
 	const A320Controls& GetSimControls() const { return Controls; }
 	const TArray<A320RunwayInfo>& GetRunways() const { return Runways; }
 	const TArray<A320AirportInfo>& GetAirports() const { return Airports; }
+	// The flight plan's waypoints (a320_get_waypoint), refreshed every frame.
+	const TArray<A320Waypoint>& GetRoute() const { return Route; }
 	// At the nearest airport.
 	double GetMagneticVariation() const { return State.magneticVariationDeg; }
 	double GetFieldElevationFt() const;
@@ -147,6 +149,7 @@ private:
 	A320Controls Controls{};
 	FString SimError;
 	TArray<A320RunwayInfo> Runways;
+	TArray<A320Waypoint> Route;
 	TArray<A320AirportInfo> Airports;
 	int32 DepRunway = 0;
 	int32 ArrRunway = 0;

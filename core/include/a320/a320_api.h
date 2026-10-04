@@ -21,7 +21,7 @@
 extern "C" {
 #endif
 
-#define A320_API_VERSION 13
+#define A320_API_VERSION 14
 
 typedef enum A320Scenario {
   A320_SCENARIO_RUNWAY = 0,     /* lined up, engines idle, CONF 1+F, park brake set */
@@ -34,7 +34,8 @@ typedef enum A320Scenario {
 /* Autoflight (FCU) modes, as shown on the PFD's flight mode annunciator. */
 typedef enum A320LatMode {
   A320_LAT_NONE = 0, A320_LAT_HDG, A320_LAT_LOC_STAR, A320_LAT_LOC, A320_LAT_ROLLOUT,
-  A320_LAT_TRK /* API 13: the selected track (TRK-FPA reference) */
+  A320_LAT_TRK, /* API 13: the selected track (TRK-FPA reference) */
+  A320_LAT_NAV  /* API 14: the flight plan's route (managed lateral navigation) */
 } A320LatMode;
 typedef enum A320VertMode {
   A320_VERT_NONE = 0, A320_VERT_ALT, A320_VERT_ALT_STAR, A320_VERT_VS, A320_VERT_OP_CLB, A320_VERT_OP_DES,
@@ -50,6 +51,7 @@ typedef enum A320AthrMode {
 #define A320_ARMED_ALT 1
 #define A320_ARMED_LOC 2
 #define A320_ARMED_GS 4
+#define A320_ARMED_NAV 8 /* API 14: engages at 30 ft after takeoff, or when the route is reached */
 
 /* FCU pushbuttons and knob pushes/pulls. */
 typedef enum A320FcuCommand {
@@ -63,7 +65,7 @@ typedef enum A320FcuCommand {
   A320_FCU_AP2,       /* second autopilot: both only with LOC or APPR (autoland CAT 3 DUAL) */
   /* API 13. */
   A320_FCU_TRK_FPA,   /* HDG-V/S / TRK-FPA pushbutton: the heading and V/S windows become track and FPA */
-  A320_FCU_HDG_PUSH,  /* NAV is not simulated: hold the present heading (track), wings level */
+  A320_FCU_HDG_PUSH,  /* NAV along the flight plan (armed on the ground); without one, hold the present heading */
   A320_FCU_ALT_PUSH,  /* managed climb/descent is not simulated: level off at the present altitude */
   A320_FCU_VS_PUSH    /* level off: V/S 0 (FPA 0) */
 } A320FcuCommand;
@@ -297,6 +299,13 @@ typedef struct A320State {
   int fcuTrkFpa;       /* HDG-V/S / TRK-FPA pushbutton in TRK-FPA */
   double fcuFpaDeg;    /* selected flight path angle */
   double windFromTrueDeg, windKt;
+  /* API 14: the flight plan's route (a320_get_waypoint) and where the FMS is on it. */
+  int routeCount;
+  int routeActive;          /* the TO waypoint, -1 = none */
+  char toWaypoint[8];
+  double toDistanceNm, toBearingMagDeg;
+  double crossTrackNm;      /* right of the active leg positive */
+  double routeRemainingNm;  /* along the route to its last point */
 } A320State;
 
 typedef struct A320RunwayInfo {
@@ -377,6 +386,26 @@ A320_API void a320_fcu_set_targets(A320Sim* sim, double spdKt, double hdgMagDeg,
 A320_API void a320_fcu_set_fpa(A320Sim* sim, double fpaDeg);
 /* A steady wind (API 13), the direction it blows from (true). It stays for later flights. */
 A320_API void a320_set_wind(A320Sim* sim, double fromTrueDeg, double kt);
+/* The flight plan's waypoints (API 14), built from the MCDU's FROM/TO and runways: the departure
+ * runway, a climb on its track to an altitude, real FRA points (eAIP ENR 4.4) and an ILS transition. */
+typedef enum A320WaypointKind {
+  A320_WPT_FIX = 0,      /* a named point */
+  A320_WPT_ALTITUDE,     /* "(1630)": climb on the runway track to altFt, then direct to the next fix */
+  A320_WPT_APPROACH,     /* a generated approach fix: CF (course fix), FF (final fix), DW/BS (downwind, base) */
+  A320_WPT_RUNWAY,       /* the departure runway (first) or the landing threshold (last) */
+  A320_WPT_POSITION      /* where a plan made in the air starts */
+} A320WaypointKind;
+typedef struct A320Waypoint {
+  char ident[8];
+  int kind;              /* A320WaypointKind */
+  double northM, eastM;  /* flat world */
+  double latDeg, lonDeg;
+  int altFt;             /* constraint, or an A320_WPT_ALTITUDE leg's altitude; 0 = none */
+  double legCourseMagDeg, legNm; /* the leg to it from the previous waypoint */
+} A320Waypoint;
+A320_API int a320_route_count(const A320Sim* sim);
+A320_API int a320_get_waypoint(const A320Sim* sim, int index, A320Waypoint* out);
+
 A320_API const char* a320_lat_mode_name(int latMode);
 A320_API const char* a320_vert_mode_name(int vertMode);
 A320_API const char* a320_athr_mode_name(int athrMode);

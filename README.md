@@ -42,9 +42,11 @@ working PFD, ND and E/WD. A FLIGHT menu at start picks the airports and how the 
   - HDG-V/S / TRK-FPA pushbutton: TRK holds the ground track (the wind correction comes by
     itself) and FPA a flight path angle (−9.9° to +9.9°). The windows, the FMA and your
     hardware FCU switch with it; the PFD shows the flight path vector ("bird").
-  - Knob pushes: HDG push holds the present heading (track) wings level and ALT push levels off
-    at the present altitude, since NAV and managed climb/descent are not built; V/S push
-    levels off with V/S 0 (FPA 0).
+  - **NAV** along the flight plan's route (see [Route and NAV](#route-and-nav)): armed on the
+    ground, it engages at 30 ft; in the air HDG push engages it. LOC and G/S capture from it.
+  - Knob pushes: HDG push is NAV (without a route it holds the present heading, wings level);
+    ALT push levels off at the present altitude, since managed climb/descent is not built; V/S
+    push levels off with V/S 0 (FPA 0).
   - AP1 and AP2: both engage only with LOC or APPR armed (CAT 3 DUAL), as on the aircraft.
   - The PFD's flight mode annunciator boxes a new mode for 10 s and shows CAT 3 SINGLE/DUAL.
   - Speed protection: A/THR and the autopilot never fly slower than VLS or faster than VMAX,
@@ -276,7 +278,7 @@ Press **Tab**, or MCDU at the top right. It works like the A320's MCDU:
 - CLR on an empty scratchpad, then a line select key, deletes that field.
 
 **Land on another runway (switch the ILS):**
-1. Press **F-PLN**, then the destination line (LSK 3L) to open LAT REV FROM EETN.
+1. Press **F-PLN**, then the destination line (LSK 6L) to open LAT REV FROM EETN.
 2. Press **ARRIVAL>** and pick the approach, for example `<ILS08`. It shows in yellow
    (temporary).
 3. Press **INSERT\*** (LSK 6R).
@@ -291,7 +293,7 @@ The FMGC tunes the ILS by itself:
 
 | Key | Page |
 |---|---|
-| F-PLN | Origin and destination with their runways, distance to go. LSK 1L opens DEPARTURE, LSK 3L ARRIVAL |
+| F-PLN | The route's waypoints with each leg's track and distance (BRG and distance to the active one), constraints in magenta, the destination with the distance to go along the route. The slew keys (↑ ↓) scroll it. The origin's line opens DEPARTURE, the destination's (LSK 6L) ARRIVAL |
 | RAD NAV | The tuned ILS (small font = auto-tuned). Type `ILK`, `109.30` or `ILK/109.30` at LSK 3L to tune it yourself, CLR to go back to auto. LSK 4L sets the course |
 | PERF | On the ground: TAKE OFF, with V1/VR/V2, FLAPS/THS, FLEX TO TEMP and THR RED/ACC. In the air: APPR, with QNH, temperature, wind, minimums (BARO or RADIO) and LDG CONF |
 | INIT | FROM/TO (e.g. `EETN/EEKE`, on the ground), flight number, cost index and cruise level |
@@ -427,6 +429,32 @@ more as you zoom in.
   air...); FLIGHT OPTIONS goes back to that menu.
 - The magenta line is the route, with its distance and magnetic course; you can fly anywhere,
   there are no borders.
+
+## Route and NAV
+
+Choose a departure and an arrival airport (FLIGHT menu, map, or MCDU INIT FROM/TO with the
+departure and arrival runways) and the flight plan gets a route the autopilot can fly:
+- **Departure:** the runway, a climb on its track to 1500 ft above the field (`(1630)` at
+  Tallinn), then direct to the airport's FRA departure point (Tallinn and Tartu have them, e.g.
+  LONSA or GONOS).
+- **En route:** real points of Estonia's free route airspace from the eAIP (ENR 4.4), the ones
+  near the direct line, and the arrival airport's FRA arrival point (e.g. SULUN for Tallinn).
+- **Approach:** generated as an Airbus database codes unnamed fixes: CF (course fix) and FF (final
+  fix, where the glide path meets 2000 ft above the threshold) on the extended centreline, and
+  RW at the threshold. Coming from beside or beyond the runway, a downwind (DW) and base (BS)
+  point lead onto it. CF and FF carry the intercept altitude.
+- **NAV:** armed for the takeoff (cyan on the FMA), it engages at 30 ft and flies the legs with
+  fly-by turns. HDG pull leaves it, HDG push (Shift+U, Shift-click on HDG, or the panel's push)
+  re-engages it, direct to the next fix when far from the route. With APPR armed, LOC and G/S
+  capture from NAV.
+- **On the displays:** the ND draws the legs still to fly in green with the TO waypoint in white,
+  and its name, bearing and distance at the top right; the map draws the whole route. The HDG
+  window shows dashes and the managed dot in NAV.
+- **Vertical:** set the altitudes yourself (ALT, LVL/CH, V/S): managed climb and descent are not
+  built. A route of 100 NM wants its descent from about 45 NM out.
+- A circuit (the same airport) and a free flight to a town have no route.
+- The points come from `tools/make_navdata.py`, which turns ENR 4.4 (AIRAC 2026-10-01) into
+  `core/src/NavData.cpp`; run it again for a new AIRAC (`--airac`).
 
 ## Breakup and crash
 
@@ -660,7 +688,9 @@ The flight tests fly the real JSBSim A320 with a scripted pilot:
 - ATC flights: a Tallinn circuit, Kuressaare to Tallinn (AFIS, FL090, descent, ILS 26) and a
   40 NM straight-in to Kuressaare, flown by a crew that reads back, tunes and squawks;
 - the autopilot: OP CLB with ALT capture, a HDG turn, a V/S descent with capture, TRK in a
-  40 kt crosswind, an FPA descent with capture, the HDG/ALT/V/S pushes, LOC
+  40 kt crosswind, an FPA descent with capture, the HDG/ALT/V/S pushes, a route from the
+  departure and arrival, NAV from 30 ft along Tallinn 08 to Tartu onto the ILS 26 (downwind and
+  base), HDG push to NAV in the air, LOC
   intercept from a heading, instinctive disconnect, and a full autoland to a stop;
 - the audio engine: WAV loading, engine level following thrust, pause, callouts, and the
   master warning and its acknowledgment;
@@ -703,7 +733,8 @@ These are marked `a320-sim:` in `unreal/A320Sim/Content/JSBSim/aircraft/A320/A32
 ## Limitations and next steps
 
 **Not yet built:**
-- managed (FMS) speed and NAV modes, SIDs/STARs and DIR TO, and the flight directors;
+- managed (FMS) speed and vertical modes, the published SIDs/STARs, DIR TO, and the flight
+  directors;
 - go-around (TOGA during an approach: SRS and GA TRK);
 - weather radar and TCAS;
 - trees as 3D objects (forests are in the imagery only), and buildings in the villages;

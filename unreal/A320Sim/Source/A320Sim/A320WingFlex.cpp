@@ -408,7 +408,10 @@ void FA320WingFlex::SendOutputs(const AA320Aircraft& Aircraft, double Now)
 		O.ap2 = St.ap2Engaged != 0;
 		O.athr = St.athrEngaged != 0;
 		// On the localizer the heading window shows dashes; out of V/S mode the V/S window does.
-		O.hdgDashed = St.latMode == A320_LAT_LOC_STAR || St.latMode == A320_LAT_LOC || St.latMode == A320_LAT_ROLLOUT;
+		// NAV (engaged or armed): dashes and the managed dot.
+		const bool bNav = St.latMode == A320_LAT_NAV || (St.armed & A320_ARMED_NAV);
+		O.hdgDashed = bNav || St.latMode == A320_LAT_LOC_STAR || St.latMode == A320_LAT_LOC || St.latMode == A320_LAT_ROLLOUT;
+		O.hdgManaged = bNav;
 		O.vsDashed = St.vertMode != A320_VERT_VS && St.vertMode != A320_VERT_FPA;
 		O.trkFpa = St.fcuTrkFpa != 0;
 		O.spd = static_cast<uint16>(FMath::Clamp(FMath::RoundToInt(St.fcuSpdKt), 0, 999));

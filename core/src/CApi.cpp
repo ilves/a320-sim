@@ -8,6 +8,7 @@
 #include "a320/Guide.h"
 #include "a320/Simulation.h"
 #include "a320/Systems.h"
+#include "a320/Units.h"
 #include "a320/a320_api.h"
 
 struct A320Sim {
@@ -220,6 +221,36 @@ void a320_mcdu_get_display(const A320Sim* sim, A320McduDisplay* display) {
 
 void a320_fcu_set_targets(A320Sim* sim, double spdKt, double hdgMagDeg, double altFt, double vsFpm) {
   if (sim) sim->sim.setFcuTargets(spdKt, hdgMagDeg, altFt, vsFpm);
+}
+
+int a320_route_count(const A320Sim* sim) { return sim ? static_cast<int>(sim->sim.route().points.size()) : 0; }
+
+int a320_get_waypoint(const A320Sim* sim, int index, A320Waypoint* out) {
+  if (!sim || !out || index < 0 || index >= a320_route_count(sim)) return 0;
+  const a320::World& w = sim->sim.world();
+  const std::vector<a320::Waypoint>& pts = sim->sim.route().points;
+  const a320::Waypoint& p = pts[static_cast<size_t>(index)];
+  *out = A320Waypoint{};
+  std::snprintf(out->ident, sizeof(out->ident), "%s", p.ident.c_str());
+  out->kind = p.kind;
+  out->northM = p.n;
+  out->eastM = p.e;
+  out->latDeg = p.geo.latDeg;
+  out->lonDeg = p.geo.lonDeg;
+  out->altFt = p.altFt;
+  if (index > 0) {
+    // Initial great-circle course from the previous point, magnetic at the nearest airport.
+    const a320::Waypoint& q = pts[static_cast<size_t>(index - 1)];
+    const double la1 = q.geo.latDeg * a320::kDegToRad, la2 = p.geo.latDeg * a320::kDegToRad;
+    const double dLon = (p.geo.lonDeg - q.geo.lonDeg) * a320::kDegToRad;
+    const double trueDeg = std::atan2(std::sin(dLon) * std::cos(la2),
+                                      std::cos(la1) * std::sin(la2) - std::sin(la1) * std::cos(la2) * std::cos(dLon)) *
+                           a320::kRadToDeg;
+    const double var = w.airports[static_cast<size_t>(w.nearestAirport(p.n, p.e))].magneticVariationDeg;
+    out->legCourseMagDeg = std::fmod(trueDeg - var + 720.0, 360.0);
+    out->legNm = std::hypot(p.n - q.n, p.e - q.e) / a320::kNmToM;
+  }
+  return 1;
 }
 
 void a320_fcu_set_fpa(A320Sim* sim, double fpaDeg) {

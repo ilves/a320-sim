@@ -79,9 +79,9 @@ TEST(mcdu_arrival_switches_the_ils_in_flight) {
   run(sim, 0.1);
   CHECK(std::strcmp(state(sim).ilsIdent, "ILK") == 0);
 
-  // F-PLN -> destination -> LAT REV -> ARRIVAL -> ILS08 (temporary, yellow) -> INSERT.
+  // F-PLN -> destination line -> LAT REV -> ARRIVAL -> ILS08 (temporary, yellow) -> INSERT.
   a320_mcdu_key(sim, A320_MCDU_FPLN);
-  a320_mcdu_key(sim, A320_MCDU_LSK1L + 2);
+  a320_mcdu_key(sim, A320_MCDU_LSK1L + 5);
   CHECK(row(sim, 2).find("ARRIVAL>") != std::string::npos);
   a320_mcdu_key(sim, A320_MCDU_LSK1R);
   CHECK(row(sim, 0).find("ARRIVAL TO EETN") != std::string::npos);
@@ -98,7 +98,7 @@ TEST(mcdu_arrival_switches_the_ils_in_flight) {
   CHECK(std::fabs(s.ilsFreqMHz - 108.30) < 1e-6);
   CHECK(s.arrRunwayIndex == runwayIndex(sim, "08"));
   CHECK(!s.locValid);  // east of the field: behind the 08 localizer
-  CHECK(row(sim, 6).rfind("EETN08", 0) == 0);
+  CHECK(row(sim, 12).rfind("EETN08", 0) == 0);
 
   // RAD NAV: a manual entry wins over the auto-tuning; CLR gives it back.
   a320_mcdu_key(sim, A320_MCDU_RADNAV);

@@ -16,6 +16,8 @@ struct ApInput {
   double locDots = 0.0, gsDots = 0.0, locRangeNm = 0.0;
   double ilsCourseTrueDeg = 0.0, glideslopeDeg = 3.0, locDegPerDot = 0.8;
   double magneticVariationDeg = 0.0;
+  bool navValid = false;           // the flight plan has a leg to fly (Lnav)
+  double navTrackTrueDeg = 0.0;    // the track it asks for
   double pilotStickPitch = 0.0, pilotStickRoll = 0.0;  // for instinctive disconnect
   double thrustLever = 0.0;    // pilot's lever; autothrust works below it, up to CL
   double alphaDeg = 0.0;
@@ -43,6 +45,8 @@ class Autopilot {
   void engageCruise();
   void setTargets(double spdKt, double hdgMagDeg, double altFt, double vsFpm);
   void setFpa(double fpaDeg);
+  // NAV armed for the takeoff: it engages at 30 ft (a flight plan with a departure).
+  void armNav(bool armed) { navArmed_ = armed; }
   ApOutput update(const ApInput& in);
 
   bool apEngaged() const { return ap1_ || ap2_; }
@@ -83,7 +87,7 @@ class Autopilot {
   A320LatMode lat_ = A320_LAT_NONE;
   A320VertMode vert_ = A320_VERT_NONE;
   A320AthrMode athrMode_ = A320_ATHR_OFF;
-  bool locArmed_ = false, gsArmed_ = false;
+  bool locArmed_ = false, gsArmed_ = false, navArmed_ = false;
   double spd_ = 160.0, hdg_ = 0.0, alt_ = 3000.0, vs_ = 0.0, fpa_ = 0.0;
   bool trkFpa_ = false;
   std::string hint_;  // a formatted hint, returned by command()

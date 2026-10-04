@@ -226,6 +226,11 @@ void AA320Aircraft::Tick(float DeltaSeconds)
 	a320_set_controls(Sim, &Controls);
 	a320_update(Sim, DeltaSeconds);
 	a320_get_state(Sim, &State);
+	Route.SetNum(a320_route_count(Sim));
+	for (int32 i = 0; i < Route.Num(); ++i)
+	{
+		a320_get_waypoint(Sim, i, &Route[i]);
+	}
 	// Only once the core has actually stepped (not when paused, or on a frame shorter than its
 	// 120 Hz step): release the momentary APU START, and let the autobrake selector follow the
 	// core, which disarms it when the pilot brakes.

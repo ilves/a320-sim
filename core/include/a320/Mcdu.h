@@ -5,6 +5,7 @@
 #include "a320/Airport.h"
 #include "a320/Fms.h"
 #include "a320/Geo.h"
+#include "a320/Route.h"
 #include "a320/a320_api.h"
 
 namespace a320 {
@@ -28,6 +29,8 @@ struct McduContext {
   const A320State& state;
   Fms& fms;
   double weightLbs;
+  const Route& route;
+  int routeActive;  // the TO waypoint, -1 = none
 };
 
 // The MCDU pages for one airport: INIT, F-PLN with lateral revisions, DEPARTURE and ARRIVAL,
@@ -57,6 +60,9 @@ class Mcdu {
   std::string scratch_;
   std::string message_;
   int tmpyDep_ = -1, tmpyArr_ = -1;
+  int fplnScroll_ = 0;  // F-PLN: waypoints scrolled past the FROM line (slew keys)
+  // The route's waypoint on an F-PLN line (0-4), or -1.
+  int fplnIndex(const McduContext& ctx, int line) const;
 };
 
 }  // namespace a320

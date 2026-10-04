@@ -39,7 +39,7 @@ void Autopilot::reset(double spdKt, double hdgMagDeg, double altFt) {
   lat_ = A320_LAT_NONE;
   vert_ = A320_VERT_NONE;
   athrMode_ = A320_ATHR_OFF;
-  locArmed_ = gsArmed_ = false;
+  locArmed_ = gsArmed_ = navArmed_ = false;
   spd_ = spdKt;
   hdg_ = wrap360(hdgMagDeg);
   alt_ = altFt;
@@ -54,6 +54,7 @@ int Autopilot::armed() const {
   int bits = 0;
   if (vert_ == A320_VERT_VS || vert_ == A320_VERT_FPA || vert_ == A320_VERT_OP_CLB || vert_ == A320_VERT_OP_DES) bits |= A320_ARMED_ALT;
   if (locArmed_) bits |= A320_ARMED_LOC;
+  if (navArmed_) bits |= A320_ARMED_NAV;
   if (gsArmed_) bits |= A320_ARMED_GS;
   return bits;
 }
@@ -152,9 +153,20 @@ const char* Autopilot::command(A320FcuCommand cmd, const ApInput& in) {
       if (athr_ && !in.onGround && (in.thrustLever > kLeverClimb + 0.03 || in.thrustLever <= 0.02))
         return "A/THR armed (blue on the FMA): it becomes active when the thrust levers are in the CL detent.";
       return nullptr;
-    case A320_FCU_HDG_PULL:
     case A320_FCU_HDG_PUSH:
       if (landing) return kLandLocked;
+      if (in.navValid) {
+        // NAV: managed lateral guidance along the flight plan, armed on the ground.
+        if (lat_ == A320_LAT_LOC || lat_ == A320_LAT_LOC_STAR)
+          return "NAV: the localizer is engaged. Push LOC or APPR to leave the approach first.";
+        if (in.onGround) navArmed_ = true;
+        else lat_ = A320_LAT_NAV;
+        return nullptr;
+      }
+      [[fallthrough]];
+    case A320_FCU_HDG_PULL:
+      if (landing) return kLandLocked;
+      navArmed_ = false;
       lat_ = selectedLateral();
       locArmed_ = gsArmed_ = false;
       if (onGs) {
@@ -163,10 +175,10 @@ const char* Autopilot::command(A320FcuCommand cmd, const ApInput& in) {
       }
       if (cmd == A320_FCU_HDG_PULL) return nullptr;
       hdg_ = presentDirection(in);
-      return trkFpa_ ? "HDG pushed: NAV (managed navigation) is not simulated, so the autopilot holds the present "
-                       "track, wings level. Turn the knob and pull it for a new track."
-                     : "HDG pushed: NAV (managed navigation) is not simulated, so the autopilot holds the present "
-                       "heading, wings level. Turn the knob and pull it for a new heading.";
+      return trkFpa_ ? "HDG pushed: no flight plan to navigate (NAV), so the autopilot holds the present track, "
+                       "wings level. Choose departure and arrival on the FLIGHT menu or the MCDU for a route."
+                     : "HDG pushed: no flight plan to navigate (NAV), so the autopilot holds the present heading, "
+                       "wings level. Choose departure and arrival on the FLIGHT menu or the MCDU for a route.";
     case A320_FCU_TRK_FPA: {
       trkFpa_ = !trkFpa_;
       // An engaged HDG or V/S becomes TRK or FPA on the present values; a preselected
@@ -241,6 +253,16 @@ const char* Autopilot::command(A320FcuCommand cmd, const ApInput& in) {
 }
 
 void Autopilot::updateModes(const ApInput& in) {
+  // NAV engages at 30 ft after takeoff; without a leg to fly it reverts to holding the heading.
+  if (navArmed_ && in.navValid && !in.onGround && in.radioAltFt > 30.0) {
+    lat_ = A320_LAT_NAV;
+    navArmed_ = false;
+  }
+  if (!in.navValid) navArmed_ = false;
+  if (lat_ == A320_LAT_NAV && !in.navValid) {
+    lat_ = selectedLateral();
+    hdg_ = presentDirection(in);
+  }
   // Localizer capture: within 1.8 dots and converging, then track once nearly centred.
   if (locArmed_ && in.locValid && std::fabs(in.locDots) < 1.8) {
     lat_ = A320_LAT_LOC_STAR;
@@ -282,6 +304,8 @@ double Autopilot::lateralBank(const ApInput& in) {
       const double hdgTrue = hdg_ + in.magneticVariationDeg;
       return clamp(2.5 * wrap180(hdgTrue - in.headingTrueDeg), -25.0, 25.0);
     }
+    case A320_LAT_NAV:
+      return clamp(2.5 * wrap180(in.navTrackTrueDeg - in.trackTrueDeg), -25.0, 25.0);
     case A320_LAT_TRK: {
       // The track over the ground: the wind correction angle comes by itself.
       const double trkTrue = hdg_ + in.magneticVariationDeg;
@@ -440,6 +464,7 @@ const char* latModeName(int mode) {
     case A320_LAT_LOC: return "LOC";
     case A320_LAT_ROLLOUT: return "ROLL OUT";
     case A320_LAT_TRK: return "TRK";
+    case A320_LAT_NAV: return "NAV";
     default: return "";
   }
 }

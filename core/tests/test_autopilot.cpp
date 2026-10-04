@@ -28,7 +28,7 @@ struct ApFlight {
   int maxLat = 0, maxVert = 0;
   bool sawLat[8] = {}, sawVert[12] = {};
 
-  explicit ApFlight(A320Scenario scenario) {
+  explicit ApFlight(A320Scenario scenario, int plan = A320_PLAN_ROUTE) {
     char err[256] = {0};
     sim = a320_create(A320_DATA_DIR, err, sizeof(err));
     if (!sim) { std::printf("  create failed: %s\n", err); return; }
@@ -38,7 +38,7 @@ struct ApFlight {
       a320_get_runway(sim, i, &info);
       if (std::strcmp(info.ident, "26") == 0 && std::strcmp(info.icao, "EETN") == 0) idx = i;
     }
-    a320_reset(sim, scenario, idx);
+    a320_start_flight(sim, scenario, idx, idx, 20.0, plan);
     a320_get_runway(sim, idx, &rw);
     magVar = a320_magnetic_variation_deg(sim);
     a320_get_state(sim, &s);
@@ -324,7 +324,8 @@ TEST(ap_fpa_holds_the_path_angle_down_to_the_altitude) {
 }
 
 TEST(ap_hdg_alt_and_vs_pushes_level_off) {
-  ApFlight f(A320_SCENARIO_APPROACH);
+  // No arrival in the MCDU, so no route: HDG push holds the heading instead of engaging NAV.
+  ApFlight f(A320_SCENARIO_APPROACH, A320_PLAN_EMPTY);
   if (!f.sim) { CHECK(false); return; }
   // Climbing in a turn: V/S +1500 towards 6000 ft, a heading 60 degrees off.
   f.targets(220, std::fmod(f.s.fcuHdgMagDeg + 60.0, 360.0), 6000, 0);
