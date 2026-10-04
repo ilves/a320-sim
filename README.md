@@ -460,9 +460,10 @@ scripts/, *.bat              Windows setup, run and package scripts
 
 `tools/make_terrain.py` builds `Content/Terrain/` from open data. The output is in the
 repository, so you only run the tool to change the area or the detail. It covers all of
-Estonia, with the islands, in three layers (about 55 MB in all):
-- **Detailed:** 80 × 80 km around EETN, 64 tiles of 10 km at about 10 m per pixel.
-- **Region:** 835 tiles of 10 km at about 20 m per pixel, wherever there is land (57.45–59.85° N,
+Estonia, with the islands, in three layers (about 58 MB in all):
+- **Detailed:** 80 × 80 km around EETN, 64 tiles of 10 km at about 10 m per pixel, and 16 more
+  over 40 × 40 km around Kuressaare (EEKE).
+- **Region:** 837 tiles of 10 km at about 20 m per pixel, wherever there is land (57.45–59.85° N,
   21.6–28.3° E, files in `Region/`). Open sea is skipped.
 - **Base:** one 570 km square at about 140 m per pixel, from southern Finland to Riga.
 
@@ -475,18 +476,19 @@ To regenerate it:
 ```
 pip install numpy pillow
 python tools/make_terrain.py              # --inner-km, --tile-px, --buildings-km to change the area
-python tools/make_terrain.py --region none                       # the airport area only
+python tools/make_terrain.py --region none                       # the airport areas only
+python tools/make_terrain.py --airports none                     # no detailed area around EEKE
 python tools/make_terrain.py --region 57.5,60,21.5,28.5 --region-px 1024   # another box, sharper
 ```
 
 Other options: `--region-zoom`, `--region-grid`, `--region-quality`, `--outer-margin-km`,
-`--outer-px` and `--outer-step-km` (see `--help`). The first run downloads about 6,300 tiles into
+`--outer-px` and `--outer-step-km` (see `--help`). The first run downloads about 6,700 tiles into
 `build/terrain-cache`.
 
 How the sim uses the data:
 - **Placement:** every pixel and vertex goes through the same airport frame as the flight model,
   so the imaged runway lies under the modelled one.
-- **Airport area:** the terrain around the runway is blended to field elevation.
+- **Airport area:** the terrain around the EETN and EEKE runways is blended to runway elevation.
 - **Sea level:** the sea sits at sea level, about 40 m below the field.
 - **Streaming:** only the base layer loads at start-up, with the tiles under the aircraft. In
   flight, detailed tiles load within 20 km (and unload beyond 28 km), region tiles within 45 km
