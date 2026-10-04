@@ -105,7 +105,9 @@ const GuideStep kIlsAutoland[] = {
      "Wait for the glideslope diamond on the right of the PFD to come down to the centre. Level at 3000 ft you "
      "meet the beam from below, which is normal.",
      "FMA: G/S* (boxed), then G/S. The aircraft starts down at about 700-800 ft/min.",
-     "G/S* = capturing, G/S = tracking the 3 degree glidepath. The ALT mode ends by itself.",
+     "G/S* = capturing, G/S = tracking the 3 degree glidepath. The ALT mode ends by itself. Intercept below the beam: "
+     "at 3000 ft it is about 9 NM from the runway, so be on the localizer before that. If the diamond is already "
+     "below the centre you are high: G/S stays armed, descend with V/S -1500 until it captures.",
      "Same in MSFS.",
      {A320_GT_FMA, A320_GT_PFD_ILS}, false,
      [](const A320State& s, const A320Controls&) { return onGlideslope(s); }},

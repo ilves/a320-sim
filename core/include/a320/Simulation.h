@@ -49,6 +49,7 @@ class Simulation {
  private:
   double trimAirborne();
   void hint(const char* text);
+  void hintAboveGlideslope();
   ApInput apInput() const;
   void applyControls();
   void refreshState();
@@ -76,6 +77,7 @@ class Simulation {
   A320State state_{};
   bool wasOnGround_ = true;
   bool wasAlphaFloor_ = false;
+  bool aboveGsHinted_ = false, noGsArmHinted_ = false;
   double airborneS_ = 0.0;
   double lastAirborneS_ = 0.0;
   double speedbrakePos_ = 0.0;

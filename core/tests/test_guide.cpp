@@ -169,3 +169,54 @@ TEST(tutor_hints_on_the_ground) {
   CHECK(std::strstr(s.hint, "GEAR") != nullptr);
   a320_destroy(sim);
 }
+
+// Too high on the localizer: ALT never meets the beam, the tutor says why, and a V/S descent
+// captures G/S from above (FCOM technique) while G/S stays armed.
+TEST(glideslope_from_above) {
+  char err[256] = {0};
+  A320Sim* sim = a320_create(A320_DATA_DIR, err, sizeof(err));
+  if (!sim) { CHECK(false); return; }
+  a320_reset(sim, A320_SCENARIO_APPROACH, runway26(sim));
+  A320Controls c;
+  a320_get_controls(sim, &c);
+  A320State s;
+  a320_get_state(sim, &s);
+  a320_fcu_set_targets(sim, s.fcuSpdKt, s.fcuHdgMagDeg, 4500.0, s.fcuVsFpm);
+  a320_fcu_command(sim, A320_FCU_ALT_PULL);
+  a320_fcu_command(sim, A320_FCU_APPR);
+  bool hinted = false, captured = false, descending = false;
+  for (int i = 0; i < 120 * 600 && !captured; ++i) {
+    a320_set_controls(sim, &c);
+    a320_update(sim, kDt);
+    a320_get_state(sim, &s);
+    if (!hinted && std::strstr(s.hint, "above the glideslope")) {
+      hinted = true;
+      std::printf("  at %.1f NM, %.0f ft, VS %.0f, %s: %s\n", s.dmeNm, s.altitudeFt, s.verticalSpeedFpm,
+                  a320_lat_mode_name(s.latMode), s.hint);
+      CHECK(s.latMode == A320_LAT_LOC || s.latMode == A320_LAT_LOC_STAR);
+      CHECK(s.vertMode != A320_VERT_GS_STAR && s.vertMode != A320_VERT_GS);
+    }
+    if (hinted && !descending && s.latMode == A320_LAT_LOC) {
+      descending = true;
+      a320_fcu_command(sim, A320_FCU_VS_PULL);
+      a320_fcu_set_targets(sim, 180.0, s.fcuHdgMagDeg, 2000.0, -1500.0);
+    }
+    captured = s.vertMode == A320_VERT_GS_STAR || s.vertMode == A320_VERT_GS;
+  }
+  std::printf("  G/S captured at %.1f NM, %.0f ft (%s/%s, loc %.2f gs %.2f valid %d/%d, hint: %s)\n", s.dmeNm, s.altitudeFt,
+              a320_vert_mode_name(s.vertMode), a320_lat_mode_name(s.latMode), s.locDots, s.gsDots, s.locValid, s.gsValid, s.hint);
+  CHECK(hinted && descending && captured);
+  // Then it settles on the beam like a capture from below, configured as a pilot would.
+  c.flapsLever = 2;
+  double worst = 0.0;
+  for (int i = 0; i < 120 * 90; ++i) {
+    a320_set_controls(sim, &c);
+    a320_update(sim, kDt);
+    a320_get_state(sim, &s);
+    if (i > 120 * 30) worst = std::fmax(worst, std::fabs(s.gsDots));
+    if (i % (120 * 5) == 0) std::printf("    %3d s %5.0f ft %+.2f dots VS %.0f IAS %.0f\n", i / 120, s.altitudeFt, s.gsDots, s.verticalSpeedFpm, s.iasKt);
+  }
+  std::printf("  then %s, worst %.2f dots, %.0f ft\n", a320_vert_mode_name(s.vertMode), worst, s.altitudeFt);
+  CHECK(s.vertMode == A320_VERT_GS && worst < 0.3);
+  a320_destroy(sim);
+}

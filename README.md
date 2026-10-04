@@ -300,6 +300,11 @@ The lesson ends once you have stopped on the runway.
 3. **Autoland.** Start from F6, or head towards the localizer within about 30°.
    1. With AP1 and A/THR on, press **K** (APPR). LOC and G/S show armed in cyan, then capture
       in green.
+      - G/S captures only when you reach the beam. At 3000 ft that is about 9 NM from the
+        runway, so be on the localizer before then.
+      - If you are higher, the glideslope diamond sits below the centre and ALT holds you
+        above the beam. As in the real aircraft, keep G/S armed and descend with V/S −1500
+        (**0**, then **7/8**) until G/S* captures. The tutor tells you when this happens.
    2. Set FLAPS FULL around 7 NM, and the speed to VLS + 5 with **1/2**.
    3. The aircraft flies LAND, FLARE and RETARD, then ROLL OUT on the centreline. Press
       **End** at "RETARD".

@@ -414,10 +414,12 @@ void FA320WingFlex::SendOutputs(const AA320Aircraft& Aircraft, double Now)
 		O.backlight = Backlight;
 		O.lcd = LcdBrightness;
 		const Payload Out = buildFcu(O);
-		// Only changes are sent: a resend of the same state can make the displays redraw.
-		if (Out != LastFcuOut && Fcu->Write(Out))
+		// Changes go out at once; the unchanged state is repeated as a keep-alive, since the panels
+		// dim their lights when the host goes quiet (MobiFlight streams continuously).
+		if ((Out != LastFcuOut || Now - LastFcuSendTime > KeepAliveS) && Fcu->Write(Out))
 		{
 			LastFcuOut = Out;
+			LastFcuSendTime = Now;
 		}
 	}
 	if (Efis)
@@ -431,9 +433,10 @@ void FA320WingFlex::SendOutputs(const AA320Aircraft& Aircraft, double Now)
 		O.backlight = Backlight;
 		O.lcd = LcdBrightness;
 		const Payload Out = buildEfis(O);
-		if (Out != LastEfisOut && Efis->Write(Out))
+		if ((Out != LastEfisOut || Now - LastEfisSendTime > KeepAliveS) && Efis->Write(Out))
 		{
 			LastEfisOut = Out;
+			LastEfisSendTime = Now;
 		}
 	}
 }

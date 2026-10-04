@@ -37,4 +37,7 @@ private:
 	float ScanTimer = 0.0f;
 	a320::wingflex::Payload LastFcuOut{};
 	a320::wingflex::Payload LastEfisOut{};
+	double LastFcuSendTime = 0.0;
+	double LastEfisSendTime = 0.0;
+	static constexpr double KeepAliveS = 0.2;
 };

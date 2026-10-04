@@ -179,8 +179,9 @@ const char* Autopilot::command(A320FcuCommand cmd, const ApInput& in) {
     }
     case A320_FCU_VS_PULL:
       if (landing) return kLandLocked;
+      // An armed G/S stays armed: a V/S descent onto the beam is the standard capture from above.
+      // Leaving an engaged G/S does not re-arm it.
       vs_ = std::round(in.verticalSpeedFpm / 100.0) * 100.0;
-      gsArmed_ = false;
       enterVertical(A320_VERT_VS, in);
       return nullptr;
   }

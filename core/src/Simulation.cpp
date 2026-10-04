@@ -181,6 +181,7 @@ bool Simulation::reset(A320Scenario scenario, int runwayIndex) {
   refreshState();
   wasOnGround_ = state_.onGround != 0;
   wasAlphaFloor_ = false;
+  aboveGsHinted_ = noGsArmHinted_ = false;
   airborneS_ = lastAirborneS_ = wasOnGround_ ? 0.0 : 60.0;
   return true;
 }
@@ -235,6 +236,38 @@ double Simulation::trimAirborne() {
   }
   setProp("fcs/pitch-trim-cmd-norm", 0.0);
   return -4.0;
+}
+
+// G/S captures only when the beam is reached: from below in ALT, or from above while descending
+// (the FCOM "intercept from above" technique). Holding ALT above the beam never meets it.
+void Simulation::hintAboveGlideslope() {
+  const A320LatMode lat = ap_.lateral();
+  const A320VertMode vert = ap_.vertical();
+  const bool onLoc = lat == A320_LAT_LOC || lat == A320_LAT_LOC_STAR;
+  const bool gsArmed = (ap_.armed() & A320_ARMED_GS) != 0;
+  const bool onGs = vert == A320_VERT_GS_STAR || vert == A320_VERT_GS || vert == A320_VERT_LAND || vert == A320_VERT_FLARE;
+  if (!onLoc || onGs) aboveGsHinted_ = noGsArmHinted_ = false;
+  if (!onLoc || onGs) return;
+
+  // gsDots is geometric, so it also tells "too high" once the receiver is above the beam's coverage.
+  if (gsArmed && !aboveGsHinted_ && state_.locValid && state_.gsDots < -1.0 && state_.verticalSpeedFpm > -300.0) {
+    aboveGsHinted_ = true;
+    // Height of the beam below: same direction, glideslope angle instead of the actual elevation.
+    const double gsDeg = 3.0, elevDeg = gsDeg - state_.gsDots * 0.12 * gsDeg;
+    const double highFt = state_.heightAboveFieldM / 0.3048 *
+                          (1.0 - std::tan(gsDeg * kDegToRad) / std::tan(elevDeg * kDegToRad));
+    char text[256];
+    std::snprintf(text, sizeof(text),
+                  "G/S: about %.0f ft above the glideslope, so ALT never meets the beam. It captures when you reach "
+                  "it: descend with V/S -1500 ft/min (steeper than the beam) and G/S stays armed, or intercept earlier.",
+                  highFt);
+    hint(text);
+  }
+  if (!gsArmed && !noGsArmHinted_ && state_.gsValid && std::fabs(state_.gsDots) < 0.5) {
+    noGsArmHinted_ = true;
+    hint("G/S: passing the glideslope, but only LOC is armed, so the autopilot keeps the altitude. "
+         "Push APPR to arm G/S (blue on the FMA).");
+  }
 }
 
 void Simulation::hint(const char* text) {
@@ -346,6 +379,7 @@ void Simulation::applyControls() {
     hint("ALPHA FLOOR: the angle of attack came close to the stall, so A/THR set TOGA thrust. Once the speed is back, "
          "press A/THR to end TOGA LK, then set the thrust levers.");
   wasAlphaFloor_ = alphaFloor;
+  hintAboveGlideslope();
   const double stickPitch = ap.apActive ? ap.stickPitch : c.stickPitch;
   const double stickRoll = ap.apActive ? ap.stickRoll : c.stickRoll;
   const double pedals = clamp(c.pedals + (ap.apActive ? ap.pedals : 0.0), -1.0, 1.0);
