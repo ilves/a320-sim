@@ -65,7 +65,7 @@ class AudioEngine {
   uint32_t rng_ = 0x12345678u;
 
   bool synced_ = false;
-  uint32_t calloutSeq_ = 0, touchdownSeq_ = 0, apSeq_ = 0;
+  uint32_t calloutSeq_ = 0, touchdownSeq_ = 0, apSeq_ = 0, destroyedSeq_ = 0, impactSeq_[2] = {0, 0};
   double gearPos_ = 1.0;
   int signs_ = 0;
   uint32_t acked_ = 0;

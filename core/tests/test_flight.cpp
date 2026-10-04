@@ -318,6 +318,7 @@ static void flyIlsLanding(A320Scenario scenario, double* touchdownOut = nullptr,
   CHECK(std::fabs(stopY) < rw.widthM / 2.0);
   CHECK(f.heard("FIFTY"));
   CHECK(f.heard("RETARD"));
+  CHECK(f.s.destroyed == A320_DESTROYED_NONE);
   if (touchdownOut) *touchdownOut = f.s.touchdownDistanceM;
 }
 
@@ -341,4 +342,73 @@ TEST(ils_landing_at_kuressaare_17) {
 
 TEST(ils_approach_and_landing_from_10nm) {
   flyIlsLanding(A320_SCENARIO_FINAL_10NM);
+}
+
+// 300 kt in the air: the airframe breaks in two and the pieces fall to the ground.
+TEST(overspeed_breaks_the_aircraft_in_two) {
+  Flight f(A320_SCENARIO_APPROACH);
+  if (!f.sim) { CHECK(false); return; }
+  int r26 = 0;
+  for (int i = 0; i < a320_runway_count(f.sim); ++i) {
+    A320RunwayInfo info;
+    a320_get_runway(f.sim, i, &info);
+    if (std::strcmp(info.ident, "26") == 0) r26 = i;
+  }
+  a320_start_flight(f.sim, A320_SCENARIO_APPROACH, r26, r26, 40.0, A320_PLAN_FULL);
+  a320_get_state(f.sim, &f.s);
+  a320_get_controls(f.sim, &f.c);
+  const double startFt = f.s.altitudeFt;
+  a320_fcu_command(f.sim, A320_FCU_AP1);  // AP off: the pilot dives at full thrust
+  f.c.thrustLever = 1.0;
+  double maxIasIntact = 0.0;
+  const uint32_t seq = f.s.destroyedSeq;
+  f.fly(120.0, [&] {
+    if (f.s.destroyed) return false;
+    maxIasIntact = std::fmax(maxIasIntact, f.s.iasKt);
+    f.c.stickPitch = clampd(0.1 * (-12.0 - f.s.pitchDeg), -0.6, 0.6);
+    return true;
+  });
+  std::printf("  broke up at %.0f kt, %.0f ft (started at %.0f ft), max intact %.1f kt\n", f.s.iasKt, f.s.altitudeFt, startFt,
+              maxIasIntact);
+  CHECK(f.s.destroyed == A320_DESTROYED_BREAKUP && f.s.destroyedSeq == seq + 1);
+  CHECK(maxIasIntact < A320_BREAKUP_IAS_KT && f.s.iasKt >= A320_BREAKUP_IAS_KT);
+  const A320Section front0 = f.s.sections[0], rear0 = f.s.sections[1];
+  CHECK(!front0.onGround && !rear0.onGround);
+  // The pieces fall apart and reach the ground; the flight model is stopped meanwhile.
+  double t = 0.0;
+  f.fly(400.0, [&] {
+    t += kDt;
+    return !(f.s.sections[0].onGround && f.s.sections[1].onGround);
+  });
+  const A320Section& a = f.s.sections[0];
+  const A320Section& b = f.s.sections[1];
+  const double apart = std::hypot(a.northM - b.northM, a.eastM - b.eastM);
+  std::printf("  on the ground after %.0f s: nose %.0f m and rest %.0f m from the breakup, %.0f m apart; pitch %.0f / %.0f\n", t,
+              std::hypot(a.northM - front0.northM, a.eastM - front0.eastM), std::hypot(b.northM - rear0.northM, b.eastM - rear0.eastM),
+              apart, a.pitchDeg, b.pitchDeg);
+  CHECK(a.onGround && b.onGround && a.impactSeq == front0.impactSeq + 1 && b.impactSeq == rear0.impactSeq + 1);
+  CHECK(apart > 50.0);
+  CHECK(std::fabs(a.heightAboveFieldM - f.s.groundHeightM) < 10.0 && std::fabs(b.heightAboveFieldM - f.s.groundHeightM) < 10.0);
+  CHECK(t > 10.0 && t < 300.0);
+  // A new flight puts it back together.
+  a320_reset(f.sim, A320_SCENARIO_RUNWAY, r26);
+  a320_get_state(f.sim, &f.s);
+  CHECK(f.s.destroyed == A320_DESTROYED_NONE && f.s.destroyedSeq == seq + 1);
+}
+
+// A dive into the ground: a crash, the flight model stops where it hit.
+TEST(hard_impact_is_a_crash) {
+  Flight f(A320_SCENARIO_FINAL_4NM);
+  if (!f.sim) { CHECK(false); return; }
+  f.fly(60.0, [&] {
+    if (f.s.destroyed) return false;
+    f.c.stickPitch = clampd(0.1 * (-8.0 - f.s.pitchDeg), -0.6, 0.6);
+    return true;
+  });
+  std::printf("  crash at %.0f fpm, %.0f kt\n", f.s.impactFpm, f.s.iasKt);
+  CHECK(f.s.destroyed == A320_DESTROYED_CRASH);
+  CHECK(f.s.impactFpm <= -A320_CRASH_SINK_FPM || f.s.pitchDeg <= -10.0);
+  const double n = f.s.northM, e = f.s.eastM;
+  f.fly(5.0, [] { return true; });
+  CHECK(f.s.destroyed == A320_DESTROYED_CRASH && f.s.northM == n && f.s.eastM == e && f.s.warnings == 0);
 }

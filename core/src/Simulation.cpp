@@ -83,6 +83,10 @@ bool Simulation::startFlight(A320Scenario scenario, int depRunway, int arrRunway
   const LocalFrame& rwFrame = airportFrames_[static_cast<size_t>(rw.airport)];
   nearestAirport_ = rw.airport;
 
+  destroyed_ = A320_DESTROYED_NONE;
+  impact_ = false;
+  impactFpm_ = 0.0;
+  pieces_[0] = pieces_[1] = Piece{};
   controls_ = A320Controls{};
   controls_.gearDown = 1;
   flaps_ = FlapsSystem{};
@@ -134,7 +138,10 @@ bool Simulation::startFlight(A320Scenario scenario, int depRunway, int arrRunway
     speedKt = scenario == A320_SCENARIO_FINAL_10NM ? 160.0 : 150.0;
   }
   controls_.flapsLever = flaps_.lever();
-  const GeoPos pos = rwFrame.toGeo(rwIls.axes().toEnu(start));
+  GeoPos pos = rwFrame.toGeo(rwIls.axes().toEnu(start));
+  // The tangent plane rises above the curving earth (about 1400 ft at 40 NM): far out, the
+  // altitude is set directly. The finals stay on the ILS glidepath, a straight line in space.
+  if (intercept) pos.altM = startAltFt * kFtToM;
   double thsDeg = 0.0;
 
   try {
@@ -456,11 +463,140 @@ void Simulation::update(double realDtS) {
 
 void Simulation::step() {
   if (!fdm_) return;
+  if (destroyed_ != A320_DESTROYED_NONE) {
+    stepTimeS_ += clock_.stepS();
+    updatePieces(clock_.stepS());
+    return;
+  }
   applyControls();
   fdm_->Run();
   stepTimeS_ += clock_.stepS();
   refreshState();
-  updateAtc();
+  checkDestroyed();
+  if (destroyed_ == A320_DESTROYED_NONE) updateAtc();
+}
+
+void Simulation::checkDestroyed() {
+  const A320State& s = state_;
+  if (!s.onGround && s.iasKt >= A320_BREAKUP_IAS_KT) breakUp();
+  else if (impact_) crash();
+}
+
+namespace {
+// The body's forward axis in the flat world (north, east, up).
+void forwardAxis(double gridHdgDeg, double pitchDeg, double& n, double& e, double& u) {
+  const double h = gridHdgDeg * kDegToRad, p = pitchDeg * kDegToRad;
+  n = std::cos(p) * std::cos(h);
+  e = std::cos(p) * std::sin(h);
+  u = std::sin(p);
+}
+}  // namespace
+
+void Simulation::breakUp() {
+  const A320State& s = state_;
+  destroyed_ = A320_DESTROYED_BREAKUP;
+  ++destroyedSeq_;
+  double fn = 0.0, fe = 0.0, fu = 0.0;
+  forwardAxis(s.gridHeadingDeg, s.pitchDeg, fn, fe, fu);
+  // The nose section dives and rolls; the rest, with the wings, slows sooner and spins flat.
+  const double cgX[2] = {9.0, -3.0}, push[2] = {4.0, -4.0}, terminal[2] = {85.0, 55.0};
+  const double pitchTarget[2] = {-65.0, -8.0}, hdgRate[2] = {6.0, 32.0};
+  const double bankRate[2] = {s.bankDeg >= 0.0 ? 25.0 : -25.0, s.bankDeg >= 0.0 ? -12.0 : 12.0};
+  for (int i = 0; i < 2; ++i) {
+    Piece& p = pieces_[i];
+    p = Piece{};
+    p.cgX = cgX[i];
+    p.n = s.northM + fn * cgX[i];
+    p.e = s.eastM + fe * cgX[i];
+    p.u = s.heightAboveFieldM + fu * cgX[i];
+    p.vn = s.velNorthMps + fn * push[i];
+    p.ve = s.velEastMps + fe * push[i];
+    p.vu = s.velUpMps + fu * push[i];
+    p.hdg = s.gridHeadingDeg;
+    p.pitch = s.pitchDeg;
+    p.bank = s.bankDeg;
+    p.hdgRate = hdgRate[i];
+    p.bankRate = bankRate[i];
+    p.pitchTarget = pitchTarget[i];
+    p.dragK = 9.81 / (terminal[i] * terminal[i]);
+  }
+  hint("The airframe broke up: in this sim the A320 comes apart at 300 kt. Start a new flight (F11, or F5).");
+  fillDestroyed(state_);
+}
+
+void Simulation::crash() {
+  const A320State& s = state_;
+  destroyed_ = A320_DESTROYED_CRASH;
+  ++destroyedSeq_;
+  impactFpm_ = s.verticalSpeedFpm;
+  for (Piece& p : pieces_) {
+    p = Piece{};
+    p.n = s.northM;
+    p.e = s.eastM;
+    p.u = s.heightAboveFieldM;
+    p.hdg = s.gridHeadingDeg;
+    p.pitch = s.pitchDeg;
+    p.bank = s.bankDeg;
+    p.onGround = true;
+  }
+  hint("Crash: the ground impact was too hard. Start a new flight (F11, or F5).");
+  fillDestroyed(state_);
+}
+
+void Simulation::updatePieces(double dt) {
+  if (destroyed_ != A320_DESTROYED_BREAKUP) return;
+  for (int i = 0; i < 2; ++i) {
+    Piece& p = pieces_[i];
+    if (p.onGround) continue;
+    const double speed = std::sqrt(p.vn * p.vn + p.ve * p.ve + p.vu * p.vu);
+    p.vn -= p.dragK * speed * p.vn * dt;
+    p.ve -= p.dragK * speed * p.ve * dt;
+    p.vu -= (p.dragK * speed * p.vu + 9.81) * dt;
+    p.n += p.vn * dt;
+    p.e += p.ve * dt;
+    p.u += p.vu * dt;
+    p.pitch += std::clamp((p.pitchTarget - p.pitch) * 0.7, -30.0, 30.0) * dt;
+    p.bank = std::remainder(p.bank + p.bankRate * dt, 360.0);
+    p.hdg = std::fmod(p.hdg + p.hdgRate * dt + 360.0, 360.0);
+    // The CG rests a fuselage radius above the ground.
+    if (p.u <= groundHeightM_ + 2.0) {
+      p.u = groundHeightM_ + 2.0;
+      p.vn = p.ve = p.vu = 0.0;
+      p.pitch = std::clamp(p.pitch, -25.0, 10.0);
+      p.bank = std::clamp(p.bank, -20.0, 20.0);
+      p.onGround = true;
+      ++impactSeq_[i];
+    }
+  }
+  fillDestroyed(state_);
+}
+
+void Simulation::fillDestroyed(A320State& s) const {
+  s.destroyed = destroyed_;
+  s.destroyedSeq = destroyedSeq_;
+  s.impactFpm = impactFpm_;
+  for (int i = 0; i < 2; ++i) {
+    A320Section& out = s.sections[i];
+    out.impactSeq = impactSeq_[i];
+    if (destroyed_ == A320_DESTROYED_NONE) continue;
+    const Piece& p = pieces_[i];
+    double fn = 0.0, fe = 0.0, fu = 0.0;
+    forwardAxis(p.hdg, p.pitch, fn, fe, fu);
+    out.northM = p.n - fn * p.cgX;
+    out.eastM = p.e - fe * p.cgX;
+    out.heightAboveFieldM = p.u - fu * p.cgX;
+    out.gridHeadingDeg = p.hdg;
+    out.pitchDeg = p.pitch;
+    out.bankDeg = p.bank;
+    out.velNorthMps = p.vn;
+    out.velEastMps = p.ve;
+    out.velUpMps = p.vu;
+    out.onGround = p.onGround ? 1 : 0;
+  }
+  if (destroyed_ != A320_DESTROYED_NONE) {
+    s.warnings = 0;
+    s.apEngaged = s.ap1Engaged = s.ap2Engaged = 0;
+  }
 }
 
 void Simulation::updateAtc() {
@@ -617,7 +753,15 @@ void Simulation::refreshState() {
     const double convergence = std::atan2(north.e - enu.e, north.n - enu.n) * kRadToDeg;
     s.gridHeadingDeg = std::fmod(s.headingTrueDeg + convergence + 720.0, 360.0);
     s.gridTrackDeg = std::fmod(s.trackTrueDeg + convergence + 720.0, 360.0);
+    // The velocity on the flat world's axes.
+    const double cosC = std::cos(convergence * kDegToRad), sinC = std::sin(convergence * kDegToRad);
+    const double vnMps = vn * kFtToM, veMps = ve * kFtToM;
+    s.velNorthMps = vnMps * cosC - veMps * sinC;
+    s.velEastMps = vnMps * sinC + veMps * cosC;
+    s.velUpMps = prop("velocities/h-dot-fps") * kFtToM;
   }
+  groundHeightM_ = world_.airports[static_cast<size_t>(nearestAirport_)].reference.altM - world_.reference.altM;
+  s.groundHeightM = groundHeightM_;
   s.flightPathDeg = prop("flight-path/gamma-deg");
   s.iasKt = std::fmax(prop("velocities/vc-kts"), 0.0);
   s.tasKt = prop("velocities/vtrue-kts");
@@ -792,6 +936,16 @@ void Simulation::refreshState() {
     ++s.calloutSeq;
   }
 
+  // A crash: the first ground contact far too hard, a wing tip or the nose first, or the
+  // fuselage on the ground (the gear up, or collapsed by the impact).
+  {
+    const bool contact = s.onGround && !wasOnGround_;
+    const bool bodyContact = prop("position/h-agl-ft") < 0.4 * kRadioAltOffsetFt;
+    impact_ = destroyed_ == A320_DESTROYED_NONE && airborneS_ > 0.0 &&
+              ((contact && (s.verticalSpeedFpm <= -A320_CRASH_SINK_FPM || std::fabs(s.bankDeg) >= 25.0 ||
+                            s.pitchDeg <= -10.0)) ||
+               bodyContact);
+  }
   airborneS_ = s.onGround ? 0.0 : airborneS_ + clock_.stepS();
   // A skip of a few feet after touchdown is the same landing, not a new one.
   if (s.onGround && !wasOnGround_ && lastAirborneS_ > 3.0) {
@@ -814,6 +968,7 @@ void Simulation::refreshState() {
   }
   if (!s.onGround) lastAirborneS_ = airborneS_;
   wasOnGround_ = s.onGround != 0;
+  fillDestroyed(s);
 }
 
 }  // namespace a320

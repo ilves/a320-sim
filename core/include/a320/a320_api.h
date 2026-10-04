@@ -21,7 +21,7 @@
 extern "C" {
 #endif
 
-#define A320_API_VERSION 11
+#define A320_API_VERSION 12
 
 typedef enum A320Scenario {
   A320_SCENARIO_RUNWAY = 0,     /* lined up, engines idle, CONF 1+F, park brake set */
@@ -66,6 +66,26 @@ typedef enum A320SoundEvent {
   A320_SOUND_CLICK = 0,       /* cockpit button */
   A320_SOUND_ACK_WARNING      /* master warning pushed: silence the repetitive chime */
 } A320SoundEvent;
+
+/* The aircraft destroyed (API 12): a structural breakup in flight at or above
+ * A320_BREAKUP_IAS_KT, or a crash: a ground impact at or beyond A320_CRASH_SINK_FPM, a wing
+ * or the nose first, or the fuselage touching. The flight model stops; a new flight resets it. */
+typedef enum A320Destroyed { A320_DESTROYED_NONE = 0, A320_DESTROYED_BREAKUP, A320_DESTROYED_CRASH } A320Destroyed;
+#define A320_BREAKUP_IAS_KT 300.0
+#define A320_CRASH_SINK_FPM 1500.0
+/* The fuselage breaks this far ahead of the reference point (m): the nose section ahead, the
+ * wings, engines and tail behind. */
+#define A320_BREAKUP_SPLIT_X_M 3.3
+
+/* One piece of a destroyed aircraft. Its parts keep their places in the aircraft's frame, so the
+ * pose is that frame's: the reference point (the CG before the breakup) and its attitude. */
+typedef struct A320Section {
+  double northM, eastM, heightAboveFieldM;
+  double gridHeadingDeg, pitchDeg, bankDeg;
+  double velNorthMps, velEastMps, velUpMps;
+  int onGround;
+  uint32_t impactSeq; /* +1 when it hits the ground */
+} A320Section;
 
 typedef enum A320PitchLaw { A320_LAW_GROUND = 0, A320_LAW_FLIGHT = 1, A320_LAW_FLARE = 2 } A320PitchLaw;
 
@@ -256,6 +276,15 @@ typedef struct A320State {
   /* Heading in the flat world (northM/eastM axes): true heading plus the meridian convergence,
    * about 2 degrees at Kuressaare. Orient the aircraft and the map with this. */
   double gridHeadingDeg, gridTrackDeg;
+  /* API 12. */
+  double velNorthMps, velEastMps, velUpMps;
+  int destroyed;             /* A320Destroyed */
+  uint32_t destroyedSeq;     /* +1 each time */
+  double impactFpm;          /* vertical speed at a crash */
+  double groundHeightM;      /* the flight model's ground here, in heightAboveFieldM terms */
+  /* After a breakup: [0] the nose section, [1] the rest (wings, engines, tail), falling. After
+   * a crash both are the aircraft where it hit. */
+  A320Section sections[2];
 } A320State;
 
 typedef struct A320RunwayInfo {

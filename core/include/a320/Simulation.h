@@ -115,6 +115,30 @@ class Simulation {
   double airborneS_ = 0.0;
   double lastAirborneS_ = 0.0;
   double speedbrakePos_ = 0.0;
+
+  // A destroyed aircraft (A320Destroyed): the flight model stops and, after a breakup, the two
+  // pieces fall on their own: gravity, drag, a tumble, until they reach the ground.
+  struct Piece {
+    double n = 0.0, e = 0.0, u = 0.0;     // its CG in the flat world (u: height above field)
+    double vn = 0.0, ve = 0.0, vu = 0.0;  // m/s
+    double hdg = 0.0, pitch = 0.0, bank = 0.0;  // grid heading
+    double hdgRate = 0.0, bankRate = 0.0, pitchTarget = 0.0;
+    double cgX = 0.0;    // its CG ahead of the aircraft's reference point (m)
+    double dragK = 0.0;  // g / terminal speed squared
+    bool onGround = false;
+  };
+  void checkDestroyed();
+  void breakUp();
+  void crash();
+  void updatePieces(double dt);
+  void fillDestroyed(A320State& s) const;
+  int destroyed_ = A320_DESTROYED_NONE;
+  uint32_t destroyedSeq_ = 0;
+  uint32_t impactSeq_[2] = {0, 0};
+  Piece pieces_[2];
+  bool impact_ = false;  // this step's ground contact is a crash
+  double impactFpm_ = 0.0;
+  double groundHeightM_ = 0.0;
 };
 
 }  // namespace a320

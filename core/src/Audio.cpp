@@ -134,6 +134,24 @@ void AudioEngine::synthesizeClips() {
     hi += 0.12f * (n - hi);
     return 0.5f * (lo - hi) * std::exp(-t * 8.0f);
   });
+  // Explosion: a deep boom with a crackling, slowly fading tail.
+  float boomLp = 0.0f, crackLp = 0.0f;
+  make("explosion", 3.0f, [&](float t) {
+    boomLp += 0.02f * (rnd() - boomLp);
+    crackLp += 0.3f * (rnd() - crackLp);
+    const float boom = 6.0f * boomLp * std::exp(-t * 1.6f) + 0.7f * std::sin(kTwoPi * (38.0f - 8.0f * t) * t) * std::exp(-t * 3.0f);
+    const float crackle = crackLp * (rnd() > 0.96f ? 1.0f : 0.15f) * std::exp(-t * 1.2f);
+    return std::min(t / 0.003f, 1.0f) * (boom + 0.6f * crackle);
+  });
+  // Breakup: a bang, then metal tearing (a rough, falling tone over noise).
+  float tearLp = 0.0f;
+  make("breakup", 2.2f, [&](float t) {
+    tearLp += 0.08f * (rnd() - tearLp);
+    const float bang = 4.0f * tearLp * std::exp(-t * 6.0f);
+    const float f = 140.0f - 40.0f * t;
+    const float tear = (std::sin(kTwoPi * f * t) > 0.0f ? 0.25f : -0.25f) * (0.6f + 0.4f * rnd()) * std::exp(-t * 1.5f);
+    return std::min(t / 0.002f, 1.0f) * (bang + tear + 0.4f * tearLp * std::exp(-t * 0.8f));
+  });
   // Cabin chime ("ding-dong") when the seat belt or no smoking signs change.
   make("ding", 1.2f, [](float t) {
     const float second = t > 0.35f ? 1.0f : 0.0f;
@@ -168,6 +186,19 @@ float AudioEngine::noise() {
 AudioEngine::Params AudioEngine::targetParams(const A320State& s) const {
   Params p;
   if (s.paused) return p;  // everything fades out while paused
+  if (s.destroyed != A320_DESTROYED_NONE) {
+    // The engines are gone. Falling: the wind; on the ground: the fire's deep roar.
+    const bool burning = s.destroyed == A320_DESTROYED_CRASH || s.sections[0].onGround || s.sections[1].onGround;
+    const double v = std::sqrt(s.sections[0].velNorthMps * s.sections[0].velNorthMps +
+                               s.sections[0].velEastMps * s.sections[0].velEastMps +
+                               s.sections[0].velUpMps * s.sections[0].velUpMps);
+    const float kt = static_cast<float>(v * 1.944);
+    p.windAmp = s.sections[0].onGround ? 0.0f : 0.22f * std::pow(clamp(kt / 320.0f, 0.0f, 1.0f), 2.0f);
+    p.windA = onePoleCoef(250.0f + kt * 5.0f, rate_);
+    p.rumbleAmp = burning ? 0.25f : 0.0f;
+    p.buffetAmp = burning ? 0.06f : 0.0f;  // the crackle
+    return p;
+  }
   const float n1 = static_cast<float>((s.n1[0] + s.n1[1]) / 200.0);
   const float n2 = static_cast<float>((s.n2[0] + s.n2[1]) / 200.0);
   const float spool = clamp((n1 - 0.2f) / 0.8f, 0.0f, 1.0f);
@@ -200,6 +231,9 @@ void AudioEngine::detectEvents(const A320State& s, double blockS) {
     calloutQueue_.clear();
     touchdownSeq_ = s.touchdownSeq;
     apSeq_ = s.apDisconnectSeq;
+    destroyedSeq_ = s.destroyedSeq;
+    impactSeq_[0] = s.sections[0].impactSeq;
+    impactSeq_[1] = s.sections[1].impactSeq;
     gearPos_ = s.gearPos;
     signs_ = s.signs;
     synced_ = true;
@@ -207,6 +241,17 @@ void AudioEngine::detectEvents(const A320State& s, double blockS) {
   if (clickPending_) {
     play("click", 0.8f);
     clickPending_ = false;
+  }
+  if (s.destroyedSeq != destroyedSeq_) {
+    destroyedSeq_ = s.destroyedSeq;
+    if (s.destroyed == A320_DESTROYED_BREAKUP) play("breakup", 1.0f);
+    else if (s.destroyed == A320_DESTROYED_CRASH) play("explosion", 1.0f);
+  }
+  for (int i = 0; i < 2; ++i) {
+    if (s.sections[i].impactSeq != impactSeq_[i]) {
+      impactSeq_[i] = s.sections[i].impactSeq;
+      play("explosion", 0.8f);
+    }
   }
   if (s.calloutSeq != calloutSeq_) {
     calloutSeq_ = s.calloutSeq;
