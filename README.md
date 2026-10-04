@@ -387,7 +387,7 @@ close it to fly the default, lined up on EETN 26.
 
 ## Breakup and crash
 
-- **Breakup:** in the air at 300 kt (indicated) or more, the airframe breaks in two just ahead
+- **Breakup:** in the air at 380 kt (indicated) or more, the airframe breaks in two just ahead
   of the wings. The nose section dives, the rest with the wings spins down; both trail fire and
   smoke and explode where they hit the ground. The flight model stops; the camera watches from
   outside.
@@ -395,9 +395,9 @@ close it to fly the default, lined up on EETN 26.
   or the fuselage on the ground (gear up): an explosion, fire, a smoke column and debris.
 - A new flight (F11, or F5) puts everything back.
 
-300 kt is this sim's limit by choice: the real A320 is certified to 350 kt (VMO) and flies 280 to
-300 kt routinely above 10,000 ft, so keep below 300 kt here. The limit is `A320_BREAKUP_IAS_KT` in
-`core/include/a320/a320_api.h`.
+380 kt is the A320's design dive speed (VD), the highest it is shown to survive. Normal flight
+stays below 350 kt (VMO, the overspeed warning); between the two the aircraft holds together. The
+limit is `A320_BREAKUP_IAS_KT` in `core/include/a320/a320_api.h`.
 
 ## First flight
 

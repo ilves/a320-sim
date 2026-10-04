@@ -71,7 +71,8 @@ typedef enum A320SoundEvent {
  * A320_BREAKUP_IAS_KT, or a crash: a ground impact at or beyond A320_CRASH_SINK_FPM, a wing
  * or the nose first, or the fuselage touching. The flight model stops; a new flight resets it. */
 typedef enum A320Destroyed { A320_DESTROYED_NONE = 0, A320_DESTROYED_BREAKUP, A320_DESTROYED_CRASH } A320Destroyed;
-#define A320_BREAKUP_IAS_KT 300.0
+/* 380 kt: the A320's design dive speed (VD), the most it is shown to survive; VMO is 350 kt. */
+#define A320_BREAKUP_IAS_KT 380.0
 #define A320_CRASH_SINK_FPM 1500.0
 /* The fuselage breaks this far ahead of the reference point (m): the nose section ahead, the
  * wings, engines and tail behind. */

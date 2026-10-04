@@ -344,7 +344,7 @@ TEST(ils_approach_and_landing_from_10nm) {
   flyIlsLanding(A320_SCENARIO_FINAL_10NM);
 }
 
-// 300 kt in the air: the airframe breaks in two and the pieces fall to the ground.
+// Beyond the design dive speed in the air: the airframe breaks in two and the pieces fall to the ground.
 TEST(overspeed_breaks_the_aircraft_in_two) {
   Flight f(A320_SCENARIO_APPROACH);
   if (!f.sim) { CHECK(false); return; }
@@ -354,7 +354,7 @@ TEST(overspeed_breaks_the_aircraft_in_two) {
     a320_get_runway(f.sim, i, &info);
     if (std::strcmp(info.ident, "26") == 0) r26 = i;
   }
-  a320_start_flight(f.sim, A320_SCENARIO_APPROACH, r26, r26, 40.0, A320_PLAN_FULL);
+  a320_start_flight(f.sim, A320_SCENARIO_APPROACH, r26, r26, 80.0, A320_PLAN_FULL);  // FL200
   a320_get_state(f.sim, &f.s);
   a320_get_controls(f.sim, &f.c);
   const double startFt = f.s.altitudeFt;
@@ -365,7 +365,7 @@ TEST(overspeed_breaks_the_aircraft_in_two) {
   f.fly(120.0, [&] {
     if (f.s.destroyed) return false;
     maxIasIntact = std::fmax(maxIasIntact, f.s.iasKt);
-    f.c.stickPitch = clampd(0.1 * (-12.0 - f.s.pitchDeg), -0.6, 0.6);
+    f.c.stickPitch = clampd(0.1 * (-15.0 - f.s.pitchDeg), -0.6, 0.6);
     return true;
   });
   std::printf("  broke up at %.0f kt, %.0f ft (started at %.0f ft), max intact %.1f kt\n", f.s.iasKt, f.s.altitudeFt, startFt,

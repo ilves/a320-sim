@@ -520,7 +520,7 @@ void Simulation::breakUp() {
     p.pitchTarget = pitchTarget[i];
     p.dragK = 9.81 / (terminal[i] * terminal[i]);
   }
-  hint("The airframe broke up: in this sim the A320 comes apart at 300 kt. Start a new flight (F11, or F5).");
+  hint("The airframe broke up beyond the design dive speed (380 kt; VMO is 350). Start a new flight (F11, or F5).");
   fillDestroyed(state_);
 }
 
