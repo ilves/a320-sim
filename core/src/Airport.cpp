@@ -59,6 +59,7 @@ Airport makeTallinn() {
   Airport a;
   a.icao = "EETN";
   a.name = "Tallinn Lennart Meri";
+  a.city = "Tallinn";
   a.reference = {(e08.latDeg + e26.latDeg) / 2.0, (e08.lonDeg + e26.lonDeg) / 2.0,
                  131.0 * kFtToM};
   // AIP: 10 E (2025); runway 26 at 270.2 true is the published localizer course 260.
@@ -71,6 +72,66 @@ Airport makeTallinn() {
   a.runways[1].ils = {"ILK", 109.30, 260.0, 3.0, 54.0, 262.0};
   return a;
 }
+
+Airport makeKuressaare() {
+  // AIP AD 2.12: THR 17 58 14 27.69N 022 30 33.61E 10 ft, THR 35 58 13 23.05N 022 30 34.52E 8 ft.
+  const RunwayEndData e17{"17", 58.0 + 14.0 / 60.0 + 27.69 / 3600.0, 22.0 + 30.0 / 60.0 + 33.61 / 3600.0, 10.0, 0.0};
+  const RunwayEndData e35{"35", 58.0 + 13.0 / 60.0 + 23.05 / 3600.0, 22.0 + 30.0 / 60.0 + 34.52 / 3600.0, 8.0, 0.0};
+  Airport a;
+  a.icao = "EEKE";
+  a.name = "Kuressaare";
+  a.city = "Kuressaare";
+  // At runway level (9 ft, between the thresholds) rather than the 15 ft aerodrome elevation: the
+  // flight model's ground is this height, and the scenery flattens the runway to it.
+  a.reference = {58.0 + 13.0 / 60.0 + 48.0 / 3600.0, 22.0 + 30.0 / 60.0 + 34.0 / 3600.0, 9.0 * kFtToM};
+  a.magneticVariationDeg = 9.0;  // AIP: 9 E (2025)
+  const LocalFrame f(a.reference);
+  a.runways.push_back(makeDirection(f, e17, e35, 30.0));
+  a.runways.push_back(makeDirection(f, e35, e17, 30.0));
+  // ILS 17 (IWA 109.90, course 171): the glide path antenna 302 m past the threshold gives a
+  // 52 ft crossing height; the localizer stands 116 m past the far end. Runway 35 has no ILS.
+  a.runways[0].ils = {"IWA", 109.90, 171.0, 3.0, 52.0, 116.0};
+  a.runways[1].ils = {"", 0.0, 351.0, 3.0, 50.0, 300.0};
+  return a;
+}
+
+int World::findRunway(const std::string& ident) const {
+  for (size_t i = 0; i < runways.size(); ++i)
+    if (runways[i].ident == ident) return static_cast<int>(i);
+  return -1;
+}
+
+int World::nearestAirport(double northM, double eastM) const {
+  int best = 0;
+  double bestD = 1e18;
+  for (size_t i = 0; i < airports.size(); ++i) {
+    const double d = std::hypot(northM - airportNorthM[i], eastM - airportEastM[i]);
+    if (d < bestD) {
+      bestD = d;
+      best = static_cast<int>(i);
+    }
+  }
+  return best;
+}
+
+World makeWorld(std::vector<Airport> airports) {
+  World w;
+  w.airports = std::move(airports);
+  w.reference = w.airports.front().reference;
+  const LocalFrame frame(w.reference);
+  for (size_t a = 0; a < w.airports.size(); ++a) {
+    const Enu p = frame.toEnu(w.airports[a].reference);
+    w.airportNorthM.push_back(p.n);
+    w.airportEastM.push_back(p.e);
+    for (Runway r : w.airports[a].runways) {
+      r.airport = static_cast<int>(a);
+      w.runways.push_back(r);
+    }
+  }
+  return w;
+}
+
+World makeEstonia() { return makeWorld({makeTallinn(), makeKuressaare()}); }
 
 RunwayAxes::RunwayAxes(const LocalFrame& frame, const Runway& runway)
     : threshold_(frame.toEnu(runway.threshold)) {

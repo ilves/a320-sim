@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <vector>
 
 #include "a320/Systems.h"
 #include "a320/Units.h"
@@ -99,12 +100,12 @@ double wrap360(double d) {
 }
 
 double runwayLengthM(const McduContext& ctx, int i) {
-  const Runway& r = ctx.airport.runways[static_cast<size_t>(i)];
+  const Runway& r = ctx.world.runways[static_cast<size_t>(i)];
   const Enu a = ctx.frame.toEnu(r.start), b = ctx.frame.toEnu(r.end);
   return std::hypot(b.e - a.e, b.n - a.n);
 }
 
-int findIls(const Airport& airport, const std::string& entry) {
+int findIls(const World& world, const std::string& entry) {
   // "ILK", "109.30" or "ILK/109.30"
   std::string ident = entry, freq;
   const size_t slash = entry.find('/');
@@ -117,8 +118,8 @@ int findIls(const Airport& airport, const std::string& entry) {
   }
   double mhz = 0.0;
   if (!freq.empty() && !parseNumber(freq, mhz)) return -2;
-  for (size_t i = 0; i < airport.runways.size(); ++i) {
-    const IlsSpec& ils = airport.runways[i].ils;
+  for (size_t i = 0; i < world.runways.size(); ++i) {
+    const IlsSpec& ils = world.runways[i].ils;
     if (ils.ident.empty()) continue;
     const bool identOk = ident.empty() || ident == ils.ident;
     const bool freqOk = freq.empty() || std::fabs(mhz - ils.frequencyMHz) < 0.006;
@@ -127,16 +128,30 @@ int findIls(const Airport& airport, const std::string& entry) {
   return -1;
 }
 
+// The runways of one airport, as global runway indices.
+std::vector<int> runwaysOf(const McduContext& ctx, int airport) {
+  std::vector<int> out;
+  for (size_t i = 0; i < ctx.world.runways.size(); ++i)
+    if (ctx.world.runways[i].airport == airport) out.push_back(static_cast<int>(i));
+  return out;
+}
+
+int airportIndex(const World& world, const std::string& icao) {
+  for (size_t i = 0; i < world.airports.size(); ++i)
+    if (world.airports[i].icao == icao) return static_cast<int>(i);
+  return -1;
+}
+
 std::string runwayName(const McduContext& ctx, int i) {
-  return i >= 0 && i < static_cast<int>(ctx.airport.runways.size()) ? ctx.airport.runways[static_cast<size_t>(i)].ident
+  return i >= 0 && i < static_cast<int>(ctx.world.runways.size()) ? ctx.world.runways[static_cast<size_t>(i)].ident
                                                                      : std::string();
 }
 
 // Bearing (magnetic) and distance from the aircraft to a runway threshold.
 void toThreshold(const McduContext& ctx, int i, double& brgMag, double& distNm) {
-  const Enu t = ctx.frame.toEnu(ctx.airport.runways[static_cast<size_t>(i)].threshold);
+  const Enu t = ctx.frame.toEnu(ctx.world.runways[static_cast<size_t>(i)].threshold);
   const double dn = t.n - ctx.state.northM, de = t.e - ctx.state.eastM;
-  brgMag = wrap360(std::atan2(de, dn) * kRadToDeg - ctx.airport.magneticVariationDeg);
+  brgMag = wrap360(std::atan2(de, dn) * kRadToDeg - ctx.state.magneticVariationDeg);
   distNm = std::hypot(dn, de) / kNmToM;
 }
 
@@ -162,7 +177,7 @@ ConfigSpeeds computeConfigSpeeds(double weightLbs) {
   return c;
 }
 
-double computeVapp(const Fms& fms, const ConfigSpeeds& speeds, const Airport& airport) {
+double computeVapp(const Fms& fms, const ConfigSpeeds& speeds, const World& airport) {
   if (fms.vappKt > 0.0) return fms.vappKt;
   double correction = 5.0;
   const int rwy = fms.arrRunway >= 0 ? fms.arrRunway : fms.depRunway;
@@ -266,7 +281,24 @@ void Mcdu::lineSelect(int line, bool right, McduContext& ctx) {
 void Mcdu::lineSelectInit(int line, bool right, McduContext& ctx) {
   Fms& f = ctx.fms;
   const bool clr = scratch_ == "CLR";
-  if (right || scratch_.empty()) return;
+  if (scratch_.empty()) return;
+  if (right && line == 0) {  // FROM/TO, e.g. EETN/EEKE
+    const size_t slash = scratch_.find('/');
+    if (slash == std::string::npos || clr) return show(kFormatError);
+    const int a = airportIndex(ctx.world, scratch_.substr(0, slash));
+    const int b = airportIndex(ctx.world, scratch_.substr(slash + 1));
+    if (a < 0 || b < 0) return show(kNotInDatabase);
+    if (!ctx.state.onGround || f.flown) return show(kNotAllowed);
+    // A new route: the old runways no longer belong to it.
+    if (a != f.originAirport && f.depRunway >= 0 && ctx.world.runways[static_cast<size_t>(f.depRunway)].airport != a)
+      f.depRunway = -1;
+    if (f.arrRunway >= 0 && ctx.world.runways[static_cast<size_t>(f.arrRunway)].airport != b) f.arrRunway = -1;
+    f.originAirport = a;
+    f.destAirport = b;
+    accepted();
+    return;
+  }
+  if (right) return;
   if (line == 2) {
     if (clr) { f.flightNumber.clear(); accepted(); return; }
     if (scratch_.size() > 8 || scratch_.find_first_of("/. ") != std::string::npos) return show(kFormatError);
@@ -298,7 +330,8 @@ void Mcdu::lineSelectInit(int line, bool right, McduContext& ctx) {
 void Mcdu::lineSelectRunways(int line, bool right, McduContext& ctx) {
   const bool dep = page_ == Page::Departure;
   int& tmpy = dep ? tmpyDep_ : tmpyArr_;
-  const int count = static_cast<int>(ctx.airport.runways.size());
+  const std::vector<int> list = runwaysOf(ctx, dep ? ctx.fms.originAirport : ctx.fms.destAirport);
+  const int count = static_cast<int>(list.size());
   if (line == 5) {
     if (tmpy >= 0 && right) {  // INSERT*
       if (dep) {
@@ -321,7 +354,7 @@ void Mcdu::lineSelectRunways(int line, bool right, McduContext& ctx) {
   const int index = line - first;
   if (index < 0 || index >= count || index > 2) return;
   if (dep && !ctx.state.onGround) return show(kNotAllowed);
-  tmpy = index;
+  tmpy = list[static_cast<size_t>(index)];
 }
 
 void Mcdu::lineSelectRadNav(int line, bool right, McduContext& ctx) {
@@ -339,7 +372,7 @@ void Mcdu::lineSelectRadNav(int line, bool right, McduContext& ctx) {
       accepted();
       return;
     }
-    const int i = findIls(ctx.airport, scratch_);
+    const int i = findIls(ctx.world, scratch_);
     if (i == -2) return show(kFormatError);
     if (i < 0) return show(kNotInDatabase);
     f.manualIls = i;
@@ -491,8 +524,9 @@ void Mcdu::render(const McduContext& ctx, A320McduDisplay& out) const {
   Screen s(out);
   const A320State& st = ctx.state;
   const Fms& f = ctx.fms;
-  const std::string icao = ctx.airport.icao;
-  const int count = static_cast<int>(ctx.airport.runways.size());
+  const std::string from = ctx.world.airports[static_cast<size_t>(f.originAirport)].icao;
+  const std::string to = ctx.world.airports[static_cast<size_t>(f.destAirport)].icao;
+  const int count = static_cast<int>(ctx.world.runways.size());
   const ConfigSpeeds cs = computeConfigSpeeds(ctx.weightLbs);
 
   switch (page_) {
@@ -501,7 +535,7 @@ void Mcdu::render(const McduContext& ctx, A320McduDisplay& out) const {
       s.left(1, " CO RTE", A320_MCDU_WHITE);
       s.right(1, "FROM/TO  ", A320_MCDU_WHITE);
       s.left(2, "----------", A320_MCDU_WHITE);
-      s.right(2, icao + "/" + icao, A320_MCDU_CYAN);
+      s.right(2, from + "/" + to, A320_MCDU_CYAN);
       s.left(3, "ALTN/CO RTE", A320_MCDU_WHITE);
       s.left(4, "----/---------", A320_MCDU_WHITE);
       s.left(5, "FLT NBR", A320_MCDU_WHITE);
@@ -528,14 +562,16 @@ void Mcdu::render(const McduContext& ctx, A320McduDisplay& out) const {
       s.left(0, " FROM", A320_MCDU_WHITE, 1);
       if (!f.flightNumber.empty()) s.right(0, f.flightNumber + " ", A320_MCDU_WHITE, 1);
       s.right(1, "SPD/ALT   ", A320_MCDU_WHITE);
-      const std::string origin = icao + runwayName(ctx, f.depRunway);
-      const int elevFt = static_cast<int>(std::lround(ctx.airport.reference.altM / kFtToM));
+      const std::string origin = from + runwayName(ctx, f.depRunway);
+      auto elevFt = [&](int airport) {
+        return static_cast<int>(std::lround(ctx.world.airports[static_cast<size_t>(airport)].reference.altM / kFtToM));
+      };
       s.left(2, origin, A320_MCDU_GREEN);
-      s.right(2, fmt(" ---/%6d", elevFt), A320_MCDU_GREEN);
+      s.right(2, fmt(" ---/%6d", elevFt(f.originAirport)), A320_MCDU_GREEN);
       s.centre(4, "-F-PLN DISCONTINUITY-", A320_MCDU_WHITE);
-      const std::string dest = icao + runwayName(ctx, f.arrRunway);
+      const std::string dest = to + runwayName(ctx, f.arrRunway);
       s.left(6, dest, A320_MCDU_GREEN);
-      s.right(6, fmt(" ---/%6d", elevFt), A320_MCDU_GREEN);
+      s.right(6, fmt(" ---/%6d", elevFt(f.destAirport)), A320_MCDU_GREEN);
       s.centre(8, "---- END OF F-PLN ----", A320_MCDU_WHITE);
       s.centre(10, "-- NO ALTN F-PLN --", A320_MCDU_WHITE);
       s.left(11, " DEST    TIME  DIST EFOB", A320_MCDU_WHITE);
@@ -555,7 +591,8 @@ void Mcdu::render(const McduContext& ctx, A320McduDisplay& out) const {
     case Page::LatRevOrigin:
     case Page::LatRevDest: {
       const bool origin = page_ == Page::LatRevOrigin;
-      s.centre(0, "LAT REV FROM " + icao + runwayName(ctx, origin ? f.depRunway : f.arrRunway), A320_MCDU_WHITE);
+      s.centre(0, "LAT REV FROM " + (origin ? from + runwayName(ctx, f.depRunway) : to + runwayName(ctx, f.arrRunway)),
+               A320_MCDU_WHITE);
       if (origin) s.left(2, "<DEPARTURE", A320_MCDU_WHITE);
       else s.right(2, "ARRIVAL>", A320_MCDU_WHITE);
       s.left(12, "<RETURN", A320_MCDU_WHITE);
@@ -568,7 +605,7 @@ void Mcdu::render(const McduContext& ctx, A320McduDisplay& out) const {
       const int tmpy = dep ? tmpyDep_ : tmpyArr_;
       const int shown = tmpy >= 0 ? tmpy : active;
       const A320McduColor lineColor = tmpy >= 0 ? A320_MCDU_YELLOW : A320_MCDU_GREEN;
-      s.centre(0, dep ? "DEPARTURES FROM " + icao : "ARRIVAL TO " + icao, A320_MCDU_WHITE);
+      s.centre(0, dep ? "DEPARTURES FROM " + from : "ARRIVAL TO " + to, A320_MCDU_WHITE);
       if (dep) {
         s.left(1, " RWY      SID     TRANS", A320_MCDU_WHITE);
         s.left(2, shown >= 0 ? " " + runwayName(ctx, shown) : " ---", shown >= 0 ? lineColor : A320_MCDU_WHITE);
@@ -576,7 +613,9 @@ void Mcdu::render(const McduContext& ctx, A320McduDisplay& out) const {
         s.centre(3, "AVAILABLE RUNWAYS", A320_MCDU_WHITE);
       } else {
         s.left(1, " APPR     VIA     STAR", A320_MCDU_WHITE);
-        s.left(2, shown >= 0 ? " ILS" + runwayName(ctx, shown) : " ------", shown >= 0 ? lineColor : A320_MCDU_WHITE);
+        const bool shownIls = shown >= 0 && !ctx.world.runways[static_cast<size_t>(shown)].ils.ident.empty();
+        s.left(2, shown >= 0 ? (shownIls ? " ILS" : " RWY") + runwayName(ctx, shown) : " ------",
+               shown >= 0 ? lineColor : A320_MCDU_WHITE);
         s.put(2, 9, "------  ------", A320_MCDU_WHITE);
         s.left(3, " VIA", A320_MCDU_WHITE);
         s.right(3, "TRANS ", A320_MCDU_WHITE);
@@ -585,14 +624,21 @@ void Mcdu::render(const McduContext& ctx, A320McduDisplay& out) const {
         s.centre(5, "APPROACHES", A320_MCDU_WHITE);
       }
       const int firstLine = dep ? 1 : 2;
-      for (int i = 0; i < count && i < 3; ++i) {
-        const int row = 2 * (firstLine + i) + 2;
-        const Runway& r = ctx.airport.runways[static_cast<size_t>(i)];
-        const std::string name = dep ? r.ident : "ILS" + r.ident;
+      const std::vector<int> list = runwaysOf(ctx, dep ? f.originAirport : f.destAirport);
+      for (size_t k = 0; k < list.size() && k < 3; ++k) {
+        const int i = list[k];
+        const int row = 2 * (firstLine + static_cast<int>(k)) + 2;
+        const Runway& r = ctx.world.runways[static_cast<size_t>(i)];
+        const bool hasIls = !r.ils.ident.empty();
+        // Approaches: the ILS, or the runway alone for a visual approach.
+        const std::string name = dep ? r.ident : (hasIls ? "ILS" : "RWY") + r.ident;
         s.left(row, fmt("<%-6s %5.0fM", name.c_str(), runwayLengthM(ctx, i)), A320_MCDU_CYAN);
-        s.left(row + 1, fmt("  CRS%03.0f   %s/%s", r.ils.courseMagDeg, r.ils.ident.c_str(),
-                            freqText(r.ils.frequencyMHz).c_str()),
-               A320_MCDU_CYAN, 1);
+        if (hasIls)
+          s.left(row + 1, fmt("  CRS%03.0f   %s/%s", r.ils.courseMagDeg, r.ils.ident.c_str(),
+                              freqText(r.ils.frequencyMHz).c_str()),
+                 A320_MCDU_CYAN, 1);
+        else
+          s.left(row + 1, fmt("  CRS%03.0f   NO ILS", r.ils.courseMagDeg), A320_MCDU_CYAN, 1);
       }
       if (tmpy >= 0) {
         s.left(12, "<ERASE", A320_MCDU_AMBER);
@@ -616,7 +662,7 @@ void Mcdu::render(const McduContext& ctx, A320McduDisplay& out) const {
       s.left(7, "CRS", A320_MCDU_WHITE);
       const int ils = f.tunedIls();
       if (ils >= 0 && ils < count) {
-        const IlsSpec& spec = ctx.airport.runways[static_cast<size_t>(ils)].ils;
+        const IlsSpec& spec = ctx.world.runways[static_cast<size_t>(ils)].ils;
         const int small = f.manualIls >= 0 ? 0 : 1;  // auto-tuned values in small font
         s.left(6, spec.ident + "/" + freqText(spec.frequencyMHz), A320_MCDU_CYAN, small);
         const double crs = f.manualCrsMagDeg >= 0.0 ? f.manualCrsMagDeg : spec.courseMagDeg;
@@ -701,7 +747,7 @@ void Mcdu::render(const McduContext& ctx, A320McduDisplay& out) const {
       else s.right(8, "FULL", A320_MCDU_GREEN);
       s.left(9, "VAPP", A320_MCDU_WHITE);
       s.put(9, 6, "VLS", A320_MCDU_WHITE);
-      s.left(10, fmt("%.0f", computeVapp(f, cs, ctx.airport)), A320_MCDU_CYAN, f.vappKt > 0.0 ? 0 : 1);
+      s.left(10, fmt("%.0f", computeVapp(f, cs, ctx.world)), A320_MCDU_CYAN, f.vappKt > 0.0 ? 0 : 1);
       s.put(10, 6, fmt("%.0f", f.conf3 ? cs.vls3Kt : cs.vlsFullKt), A320_MCDU_GREEN);
       s.left(11, " PREV", A320_MCDU_WHITE);
       s.left(12, "<PHASE", A320_MCDU_WHITE);
@@ -718,12 +764,12 @@ void Mcdu::render(const McduContext& ctx, A320McduDisplay& out) const {
         double brg = 0.0, nm = 0.0;
         toThreshold(ctx, target, brg, nm);
         s.left(6, fmt(" %03.0f`/%5.1f", brg, nm), A320_MCDU_GREEN);
-        s.right(6, icao + runwayName(ctx, target), A320_MCDU_CYAN);
+        s.right(6, ctx.world.airportOf(target).icao + runwayName(ctx, target), A320_MCDU_CYAN);
       }
       s.left(9, " ILS", A320_MCDU_WHITE);
       const int ils = f.tunedIls();
       if (ils >= 0 && ils < count) {
-        const IlsSpec& spec = ctx.airport.runways[static_cast<size_t>(ils)].ils;
+        const IlsSpec& spec = ctx.world.runways[static_cast<size_t>(ils)].ils;
         s.left(10, " " + spec.ident + "/" + freqText(spec.frequencyMHz), A320_MCDU_GREEN);
         if (st.ilsFreqMHz > 0.0 && st.dmeNm > 0.0) s.right(10, fmt("DME %.1f", st.dmeNm), A320_MCDU_GREEN);
       } else {

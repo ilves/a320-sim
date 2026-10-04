@@ -1,5 +1,6 @@
 #include "a320/Simulation.h"
 
+#include <algorithm>
 #include <cmath>
 #include <ctime>
 #include <cstdio>
@@ -9,6 +10,7 @@
 #include "FGFDMExec.h"
 #include "initialization/FGInitialCondition.h"
 #include "initialization/FGTrim.h"
+#include "models/FGInertial.h"
 #include "models/FGPropulsion.h"
 #include "models/propulsion/FGTurbine.h"
 #include "simgear/misc/sg_path.hxx"
@@ -32,9 +34,9 @@ constexpr double kElevatorToThs = 1.5 / 3.5;
 
 }  // namespace
 
-Simulation::Simulation(Airport airport)
-    : airport_(std::move(airport)), frame_(airport_.reference) {
-  for (const Runway& r : airport_.runways) ilsAll_.emplace_back(frame_, r);
+Simulation::Simulation(World world) : world_(std::move(world)), frame_(world_.reference) {
+  for (const Airport& a : world_.airports) airportFrames_.emplace_back(a.reference);
+  for (const Runway& r : world_.runways) ilsAll_.emplace_back(airportFrames_[static_cast<size_t>(r.airport)], r);
 }
 
 Simulation::~Simulation() = default;
@@ -61,14 +63,25 @@ bool Simulation::init(const std::string& jsbsimRoot, std::string* error) {
     fdm_.reset();
     return false;
   }
-  return reset(A320_SCENARIO_RUNWAY, airport_.find("26") ? 1 : 0);
+  const int rwy26 = world_.findRunway("26");
+  return reset(A320_SCENARIO_RUNWAY, rwy26 >= 0 ? rwy26 : 0);
 }
 
 bool Simulation::reset(A320Scenario scenario, int runwayIndex) {
-  if (!fdm_ || airport_.runways.empty()) return false;
-  runwayIndex_ = clamp(runwayIndex, 0, static_cast<int>(airport_.runways.size()) - 1);
-  const Runway& rw = airport_.runways[runwayIndex_];
+  return startFlight(scenario, runwayIndex, runwayIndex, 20.0);
+}
+
+bool Simulation::startFlight(A320Scenario scenario, int depRunway, int arrRunway, double distanceNm) {
+  if (!fdm_ || world_.runways.empty()) return false;
+  const int last = static_cast<int>(world_.runways.size()) - 1;
+  depRunway = clamp(depRunway, 0, last);
+  arrRunway = clamp(arrRunway, 0, last);
+  const bool airborneStart = scenario != A320_SCENARIO_RUNWAY && scenario != A320_SCENARIO_COLD_DARK;
+  runwayIndex_ = airborneStart ? arrRunway : depRunway;
+  const Runway& rw = world_.runways[static_cast<size_t>(runwayIndex_)];
   const Ils& rwIls = ils();
+  const LocalFrame& rwFrame = airportFrames_[static_cast<size_t>(rw.airport)];
+  nearestAirport_ = rw.airport;
 
   controls_ = A320Controls{};
   controls_.gearDown = 1;
@@ -95,7 +108,10 @@ bool Simulation::reset(A320Scenario scenario, int runwayIndex) {
   controls_.signs = A320_SIGN_NO_SMOKING | (coldDark ? 0 : A320_SIGN_SEATBELTS);
   controls_.spoilersArmed = onRunway && !coldDark ? 1 : 0;
   controls_.autobrake = onRunway && !coldDark ? A320_AUTOBRAKE_MAX : A320_AUTOBRAKE_OFF;
-  double speedKt = 0.0;
+  double speedKt = 0.0, startAltFt = 3000.0;
+  // Beyond 22 NM: straight in on the course for Radar to vector, instead of on the intercept.
+  const bool farOut = intercept && distanceNm > 22.0;
+  const double turnDeg = intercept && !farOut ? kInterceptDeg : 0.0;
   RunwayPoint start;
   if (onRunway) {
     start = {-rwIls.axes().displacementM() + kLineupDistanceM, 0.0, 0.0};
@@ -104,7 +120,11 @@ bool Simulation::reset(A320Scenario scenario, int runwayIndex) {
   } else if (intercept) {
     // 3 NM left of the extended centreline, 20 NM out, at 3000 ft: a 30 degree intercept
     // that captures the localizer near 15 NM and the glideslope from below near 9 NM.
-    start = {-20.0 * kNmToM, -3.0 * kNmToM, 3000.0 * kFtToM - rw.threshold.altM};
+    // Further out, higher: on a 3 degree profile above 3000 ft, at most FL200.
+    const double nm = clamp(distanceNm, 8.0, 150.0);
+    startAltFt = std::min(20000.0, 3000.0 + std::max(0.0, nm - 20.0) * 318.0);
+    if (startAltFt > 3000.0) startAltFt = std::round(startAltFt / 1000.0) * 1000.0;
+    start = {-nm * kNmToM, -3.0 * kNmToM, startAltFt * kFtToM - rw.threshold.altM};
     controls_.gearDown = 0;
     speedKt = 220.0;
   } else {
@@ -114,15 +134,15 @@ bool Simulation::reset(A320Scenario scenario, int runwayIndex) {
     speedKt = scenario == A320_SCENARIO_FINAL_10NM ? 160.0 : 150.0;
   }
   controls_.flapsLever = flaps_.lever();
-  const GeoPos pos = frame_.toGeo(rwIls.axes().toEnu(start));
+  const GeoPos pos = rwFrame.toGeo(rwIls.axes().toEnu(start));
   double thsDeg = 0.0;
 
   try {
     auto ic = fdm_->GetIC();
-    ic->SetTerrainElevationFtIC(airport_.reference.altM * kMToFt);
+    ic->SetTerrainElevationFtIC(world_.airports[static_cast<size_t>(rw.airport)].reference.altM * kMToFt);
     ic->SetGeodLatitudeDegIC(pos.latDeg);
     ic->SetLongitudeDegIC(pos.lonDeg);
-    const double headingDeg = rw.trueCourseDeg + (intercept ? kInterceptDeg : 0.0);
+    const double headingDeg = rw.trueCourseDeg + turnDeg;
     ic->SetPsiDegIC(headingDeg);
     ic->SetPhiDegIC(0.0);
     ic->SetThetaDegIC(0.0);
@@ -167,11 +187,11 @@ bool Simulation::reset(A320Scenario scenario, int runwayIndex) {
   controls_.thrustLever = onRunway ? 0.0 : clamp(prop("fcs/throttle-cmd-norm[0]"), 0.0, 1.0);
   throttle_ = controls_.thrustLever;
   {
-    const double magVar = airport_.magneticVariationDeg;
+    const double magVar = world_.airports[static_cast<size_t>(rw.airport)].magneticVariationDeg;
     const double courseMag = rw.trueCourseDeg - magVar;
     // FCU preset: climb to 5000 ft at 200 kt after takeoff; on final, approach speed and a
     // 3000 ft missed-approach altitude.
-    ap_.reset(onRunway ? 200.0 : speedKt, courseMag + (intercept ? kInterceptDeg : 0.0), onRunway ? 5000.0 : 3000.0);
+    ap_.reset(onRunway ? 200.0 : speedKt, courseMag + turnDeg, onRunway ? 5000.0 : intercept ? startAltFt : 3000.0);
     if (intercept) {
       // Levers in CL with A/THR flying the speed, as in normal operation.
       ap_.engageCruise();
@@ -182,8 +202,12 @@ bool Simulation::reset(A320Scenario scenario, int runwayIndex) {
   fbw_.reset(onRunway ? PitchLaw::Ground : PitchLaw::Flight, 0.0, thsDeg);
   // A new flight: on the runway the departure is loaded; in the air, the arrival to this runway.
   fms_ = Fms{};
+  fms_.originAirport = world_.runways[static_cast<size_t>(depRunway)].airport;
+  fms_.destAirport = world_.runways[static_cast<size_t>(arrRunway)].airport;
   if (onRunway) {
     fms_.depRunway = runwayIndex_;
+    // A flight to somewhere else starts with its arrival in the flight plan; a circuit doesn't.
+    if (arrRunway != depRunway) fms_.arrRunway = arrRunway;
   } else {
     fms_.arrRunway = runwayIndex_;
     fms_.flown = true;
@@ -198,7 +222,7 @@ bool Simulation::reset(A320Scenario scenario, int runwayIndex) {
 #else
     gmtime_r(&now, &utc);
 #endif
-    atc_.reset(scenario, runwayIndex_, controls_, static_cast<uint32_t>(now), utc.tm_hour * 60 + utc.tm_min);
+    atc_.reset(world_, scenario, depRunway, arrRunway, controls_, static_cast<uint32_t>(now), utc.tm_hour * 60 + utc.tm_min);
   }
   stepTimeS_ = 0.0;
   clock_.resetTime();
@@ -349,7 +373,7 @@ ApInput Simulation::apInput() const {
   const Ils* tuned = tunedIls_ >= 0 ? &ilsAll_[static_cast<size_t>(tunedIls_)] : nullptr;
   in.glideslopeDeg = tuned ? tuned->glideslopeDeg() : 3.0;
   in.locDegPerDot = tuned ? tuned->locHalfSectorDeg() / 2.0 : 0.8;
-  in.magneticVariationDeg = airport_.magneticVariationDeg;
+  in.magneticVariationDeg = magVar();
   in.pilotStickPitch = controls_.stickPitch;
   in.pilotStickRoll = controls_.stickRoll;
   in.thrustLever = thrustLevers(controls_).forward();
@@ -362,13 +386,13 @@ ApInput Simulation::apInput() const {
 }
 
 void Simulation::mcduKey(int key) {
-  McduContext ctx{airport_, frame_, state_, fms_, weightLbs_};
+  McduContext ctx{world_, frame_, state_, fms_, weightLbs_};
   mcdu_.press(key, ctx);
 }
 
 void Simulation::mcduDisplay(A320McduDisplay& out) const {
   Fms fms = fms_;  // rendering never changes the crew's data
-  McduContext ctx{airport_, frame_, state_, fms, weightLbs_};
+  McduContext ctx{world_, frame_, state_, fms, weightLbs_};
   mcdu_.render(ctx, out);
 }
 
@@ -407,7 +431,7 @@ void Simulation::step() {
 void Simulation::updateAtc() {
   state_.simTimeS = stepTimeS_;
   state_.com1ActiveKhz = controls_.com1ActiveKhz;
-  const AtcContext ctx{airport_, frame_, state_, controls_, fms_};
+  const AtcContext ctx{world_, frame_, state_, controls_, fms_};
   atc_.update(ctx);
   const std::string h = atc_.takeHint();
   if (!h.empty()) hint(h.c_str());
@@ -415,12 +439,12 @@ void Simulation::updateAtc() {
 }
 
 std::vector<std::string> Simulation::atcOptions() const {
-  const AtcContext ctx{airport_, frame_, state_, controls_, fms_};
+  const AtcContext ctx{world_, frame_, state_, controls_, fms_};
   return atc_.options(ctx);
 }
 
 void Simulation::atcChoose(int option) {
-  const AtcContext ctx{airport_, frame_, state_, controls_, fms_};
+  const AtcContext ctx{world_, frame_, state_, controls_, fms_};
   atc_.choose(option, ctx);
   const std::string h = atc_.takeHint();
   if (!h.empty()) hint(h.c_str());
@@ -523,7 +547,23 @@ void Simulation::refreshState() {
   const Enu enu = frame_.toEnu({s.latDeg, s.lonDeg, s.altitudeFt * kFtToM});
   s.northM = enu.n;
   s.eastM = enu.e;
-  s.heightAboveFieldM = s.altitudeFt * kFtToM - airport_.reference.altM;
+  s.heightAboveFieldM = s.altitudeFt * kFtToM - world_.reference.altM;
+  // The flight model's ground is the nearest airport's field elevation (the terrain beyond is
+  // visual only), so the radio altimeter and touchdowns are right at every airport.
+  {
+    const int nearest = world_.nearestAirport(enu.n, enu.e);
+    if (nearest != nearestAirport_) {
+      nearestAirport_ = nearest;
+      fdm_->GetInertial()->SetTerrainElevation(world_.airports[static_cast<size_t>(nearest)].reference.altM * kMToFt);
+    }
+  }
+  s.magneticVariationDeg = magVar();
+  s.nearestAirport = nearestAirport_;
+  // Each airport's ILS geometry is evaluated in its own tangent frame.
+  std::vector<Enu> local;
+  for (size_t a = 0; a < airportFrames_.size(); ++a)
+    local.push_back(a == 0 ? enu : airportFrames_[a].toEnu({s.latDeg, s.lonDeg, s.altitudeFt * kFtToM}));
+  auto enuFor = [&](int runway) -> const Enu& { return local[static_cast<size_t>(world_.runways[static_cast<size_t>(runway)].airport)]; };
 
   s.headingTrueDeg = prop("attitude/psi-deg");
   s.pitchDeg = prop("attitude/theta-deg");
@@ -534,6 +574,14 @@ void Simulation::refreshState() {
     if (s.trackTrueDeg < 0.0) s.trackTrueDeg += 360.0;
   } else {
     s.trackTrueDeg = s.headingTrueDeg;
+  }
+  // Local north as seen in the flat world (the first airport's tangent plane) turns with the
+  // longitude: the meridian convergence, about 2 degrees at Kuressaare.
+  {
+    const Enu north = frame_.toEnu({s.latDeg + 0.01, s.lonDeg, s.altitudeFt * kFtToM});
+    const double convergence = std::atan2(north.e - enu.e, north.n - enu.n) * kRadToDeg;
+    s.gridHeadingDeg = std::fmod(s.headingTrueDeg + convergence + 720.0, 360.0);
+    s.gridTrackDeg = std::fmod(s.trackTrueDeg + convergence + 720.0, 360.0);
   }
   s.flightPathDeg = prop("flight-path/gamma-deg");
   s.iasKt = std::fmax(prop("velocities/vc-kts"), 0.0);
@@ -633,20 +681,21 @@ void Simulation::refreshState() {
 
   // FMGC radio tuning: after takeoff the arrival ILS replaces the departure runway's.
   if (!s.onGround && lastAirborneS_ > 5.0) fms_.flown = true;
-  const int runways = static_cast<int>(airport_.runways.size());
+  const int runways = static_cast<int>(world_.runways.size());
   tunedIls_ = fms_.tunedIls() < runways ? fms_.tunedIls() : -1;
+  if (tunedIls_ >= 0 && world_.runways[static_cast<size_t>(tunedIls_)].ils.ident.empty()) tunedIls_ = -1;  // no ILS there
   s.depRunwayIndex = fms_.depRunway;
   s.arrRunwayIndex = fms_.arrRunway;
   s.ilsRunwayIndex = tunedIls_;
   s.ilsManual = fms_.manualIls >= 0 ? 1 : 0;
   ilsSignal_ = IlsSignal{};
   if (tunedIls_ >= 0) {
-    const Runway& r = airport_.runways[static_cast<size_t>(tunedIls_)];
+    const Runway& r = world_.runways[static_cast<size_t>(tunedIls_)];
     s.ilsCourseDeg = r.trueCourseDeg;
     s.ilsCourseMagDeg = fms_.manualCrsMagDeg >= 0.0 ? fms_.manualCrsMagDeg : r.ils.courseMagDeg;
     s.ilsFreqMHz = r.ils.frequencyMHz;
     std::snprintf(s.ilsIdent, sizeof(s.ilsIdent), "%s", r.ils.ident.c_str());
-    ilsSignal_ = ilsAll_[static_cast<size_t>(tunedIls_)].receive(enu);
+    ilsSignal_ = ilsAll_[static_cast<size_t>(tunedIls_)].receive(enuFor(tunedIls_));
   } else {
     s.ilsCourseDeg = s.ilsCourseMagDeg = s.ilsFreqMHz = 0.0;
     s.ilsIdent[0] = '\0';
@@ -657,7 +706,7 @@ void Simulation::refreshState() {
   s.gsDots = ilsSignal_.gsDots;
   s.dmeNm = tunedIls_ >= 0 ? ilsSignal_.dmeNm : 0.0;
   for (int i = 0; i < runways && i < 4; ++i) {
-    const PapiState papi = computePapi(ilsAll_[static_cast<size_t>(i)], enu);
+    const PapiState papi = computePapi(ilsAll_[static_cast<size_t>(i)], enuFor(i));
     for (int k = 0; k < 4; ++k) s.papiRunway[i][k] = papi.white[k] ? 1 : 0;
   }
   const int papiOf = tunedIls_ >= 0 ? tunedIls_ : runwayIndex_;
@@ -668,7 +717,7 @@ void Simulation::refreshState() {
   s.fmsFlexTempC = fms_.flexTempC;
   s.dhFt = fms_.dhFt;
   s.mdaFt = fms_.mdaFt;
-  s.vappKt = computeVapp(fms_, computeConfigSpeeds(weightLbs), airport_);
+  s.vappKt = computeVapp(fms_, computeConfigSpeeds(weightLbs), world_);
 
   WarningInput w;
   w.onGround = s.onGround != 0;
@@ -714,14 +763,15 @@ void Simulation::refreshState() {
     // Measured on the runway direction the aircraft is landing on.
     size_t landed = static_cast<size_t>(runwayIndex_);
     double best = 1e9;
-    for (size_t i = 0; i < airport_.runways.size(); ++i) {
-      const double d = std::fabs(std::remainder(s.headingTrueDeg - airport_.runways[i].trueCourseDeg, 360.0));
+    for (size_t i = 0; i < world_.runways.size(); ++i) {
+      if (world_.runways[i].airport != nearestAirport_) continue;
+      const double d = std::fabs(std::remainder(s.headingTrueDeg - world_.runways[i].trueCourseDeg, 360.0));
       if (d < best) {
         best = d;
         landed = i;
       }
     }
-    const RunwayPoint p = ilsAll_[landed].axes().fromEnu(enu);
+    const RunwayPoint p = ilsAll_[landed].axes().fromEnu(enuFor(static_cast<int>(landed)));
     s.touchdownFpm = s.verticalSpeedFpm;
     s.touchdownDistanceM = p.x;
     s.touchdownCenterlineM = p.y;

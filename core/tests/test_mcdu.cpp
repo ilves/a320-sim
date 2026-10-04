@@ -236,3 +236,29 @@ TEST(mcdu_minimums_and_vapp) {
   CHECK(above && minimum);
   a320_destroy(sim);
 }
+
+// INIT FROM/TO on the ground picks the airports; DEPARTURE and ARRIVAL then list their runways,
+// and the ILS follows the inserted arrival once airborne.
+TEST(mcdu_from_to_another_airport) {
+  char err[256] = {0};
+  A320Sim* sim = a320_create(A320_DATA_DIR, err, sizeof(err));
+  if (!sim) { CHECK(false); return; }
+  a320_reset(sim, A320_SCENARIO_RUNWAY, runwayIndex(sim, "26"));
+  run(sim, 0.1);
+  a320_mcdu_key(sim, A320_MCDU_INIT);
+  type(sim, "EETN/EEKE");
+  a320_mcdu_key(sim, A320_MCDU_LSK1R);
+  CHECK(row(sim, 2).find("EETN/EEKE") != std::string::npos);
+  a320_mcdu_key(sim, A320_MCDU_FPLN);
+  a320_mcdu_key(sim, A320_MCDU_LSK1L + 2);
+  a320_mcdu_key(sim, A320_MCDU_LSK1R);
+  CHECK(row(sim, 0).find("ARRIVAL TO EEKE") != std::string::npos);
+  dump(sim);
+  bool listed17 = false, noIls35 = false;
+  for (int r = 0; r < A320_MCDU_ROWS; ++r) {
+    listed17 = listed17 || row(sim, r).find("ILS17") != std::string::npos;
+    noIls35 = noIls35 || row(sim, r).find("NO ILS") != std::string::npos;
+  }
+  CHECK(listed17 && noIls35);
+  a320_destroy(sim);
+}

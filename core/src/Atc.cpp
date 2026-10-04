@@ -15,19 +15,27 @@ struct Station {
   int khz;
   const char* name;    // written, as in the log
   const char* spoken;  // as ATC says it
+  bool afis;           // an AFIS officer informs and relays, but gives no clearances
 };
-// EETN AD 2.18. Tower also gives the IFR clearance (AD 2.20).
-const Station kStations[] = {{124880, "TALLINN INFORMATION", "Tallinn Information"},
-                             {135905, "TALLINN TOWER", "Tallinn Tower"},
-                             {127905, "TALLINN RADAR", "Tallinn Radar"},
-                             {131905, "TALLINN HANDLING", "Tallinn Handling"}};
-constexpr int kAtis = 0, kTower = 1, kRadar = 2, kHandling = 3;
-constexpr int kStationCount = 4;
+// EETN AD 2.18 (Tower also gives the IFR clearance, AD 2.20) and EEKE AD 2.18. Tallinn Radar
+// serves the whole route; EEKE IFR clearances come from it through the AFIS.
+const Station kStations[] = {{124880, "TALLINN INFORMATION", "Tallinn Information", false},
+                             {135905, "TALLINN TOWER", "Tallinn Tower", false},
+                             {127905, "TALLINN RADAR", "Tallinn Radar", false},
+                             {131905, "TALLINN HANDLING", "Tallinn Handling", false},
+                             {118055, "KURESSAARE INFORMATION", "Kuressaare Information", true}};
+constexpr int kAtis = 0, kTower = 1, kRadar = 2, kHandling = 3, kKuressaare = 4;
+
+int towerOf(const Airport& a) { return a.icao == "EEKE" ? kKuressaare : kTower; }
+int atisOf(const Airport& a) { return a.icao == "EETN" ? kAtis : -1; }
+int groundOf(const Airport& a) { return a.icao == "EETN" ? kHandling : -1; }
 
 constexpr int kInitialAltFt = 4000;
 constexpr int kApproachAltFt = 3000;
 constexpr int kQnh = 1013;
 constexpr int kTransitionAltFt = 5000;
+constexpr int kCruiseAltFt = 9000;
+constexpr double kLongRouteNm = 40.0;
 constexpr size_t kLogSize = 80;
 
 const char* kPhonetic[26] = {"Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot", "Golf", "Hotel", "India",
@@ -95,6 +103,19 @@ std::string freqText(int khz) {
   return b;
 }
 std::string freqSpeech(int khz) { return spell(freqText(khz)); }
+// A plausible misheard frequency for a wrong readback: 135.905 -> 135.950.
+int confusable(int khz) { return khz % 100 == 5 ? khz + 45 : khz + 100; }
+
+std::string approachText(const Runway& r) { return r.ils.ident.empty() ? "visual approach" : "ILS approach"; }
+std::string approachSpeech(const Runway& r) { return r.ils.ident.empty() ? "visual approach" : "I L S approach"; }
+
+// Another landing direction at the same airport, for wrong-runway readbacks and requests.
+std::string otherIdent(const World& w, int runway) {
+  const Runway& r = w.runways[static_cast<size_t>(runway)];
+  for (const Runway& o : w.runways)
+    if (o.airport == r.airport && o.ident != r.ident) return o.ident;
+  return r.ident;
+}
 
 double estimateSeconds(const std::string& speech) {
   const long words = std::count(speech.begin(), speech.end(), ' ') + 1;
@@ -130,11 +151,28 @@ std::string Atc::stationName(int khz) const {
   return "";
 }
 
-void Atc::reset(A320Scenario scenario, int runwayIndex, A320Controls& controls, uint32_t seed, int utcMinutes) {
+int Atc::atisRunway() const { return phase_ <= A320_ATC_PHASE_DEPARTURE ? depRunway_ : runway_; }
+
+void Atc::reset(const World& world, A320Scenario scenario, int depRunway, int arrRunway, A320Controls& controls,
+                uint32_t seed, int utcMinutes) {
   const bool enabled = enabled_;
   *this = Atc{};
   enabled_ = enabled;
-  runway_ = runwayIndex;
+  depRunway_ = depRunway;
+  runway_ = arrRunway;
+  const int depAirport = world.runways[static_cast<size_t>(depRunway)].airport;
+  const int arrAirport = world.runways[static_cast<size_t>(arrRunway)].airport;
+  const Airport& dep = world.airports[static_cast<size_t>(depAirport)];
+  const Airport& arr = world.airports[static_cast<size_t>(arrAirport)];
+  depStation_ = towerOf(dep);
+  arrStation_ = towerOf(arr);
+  groundStation_ = groundOf(arr);
+  const bool onGround = scenario == A320_SCENARIO_RUNWAY || scenario == A320_SCENARIO_COLD_DARK;
+  // The ATIS the crew listens to: the departure's before takeoff, else the arrival's.
+  atisStation_ = onGround ? atisOf(dep) : atisOf(arr);
+  const double routeM = std::hypot(world.airportNorthM[static_cast<size_t>(arrAirport)] - world.airportNorthM[static_cast<size_t>(depAirport)],
+                                   world.airportEastM[static_cast<size_t>(arrAirport)] - world.airportEastM[static_cast<size_t>(depAirport)]);
+  longRoute_ = onGround && routeM > kLongRouteNm * kNmToM;
   // A discrete code: no 0, 7500/7600/7700 or the conspicuity codes.
   uint32_t r = seed ^ 0x5eed1234u;
   squawk_ = static_cast<int>(2 + nextRandom(r) % 5) * 1000 + static_cast<int>(1 + nextRandom(r) % 7) * 100 +
@@ -146,30 +184,32 @@ void Atc::reset(A320Scenario scenario, int runwayIndex, A320Controls& controls, 
   const int issuedAt = (issue * 30 + 20) % 1440;
   atisTime_ = issuedAt / 60 * 100 + issuedAt % 60;
 
-  const bool onGround = scenario == A320_SCENARIO_RUNWAY || scenario == A320_SCENARIO_COLD_DARK;
   if (onGround) {
     phase_ = A320_ATC_PHASE_CLEARANCE;
-    controls.com1ActiveKhz = kStations[kTower].khz;
-    controls.com1StandbyKhz = kStations[kAtis].khz;
+    // No ATIS: the AFIS gives runway, wind and QNH with the clearance.
+    atisHeard_ = atisStation_ < 0;
+    controls.com1ActiveKhz = kStations[depStation_].khz;
+    controls.com1StandbyKhz = kStations[atisStation_ >= 0 ? atisStation_ : kRadar].khz;
     controls.xpdrCode = 2000;
     controls.xpdrMode = A320_XPDR_STBY;
   } else if (scenario == A320_SCENARIO_APPROACH) {
-    // With Radar on a vector to the localizer: the approach clearance comes next.
+    // With Radar: near in, on a vector to the localizer and the approach clearance comes next;
+    // further out, vectors and a descent first. The cleared level is the one found at the start.
     phase_ = A320_ATC_PHASE_RADAR;
     ifrCleared_ = takeoffCleared_ = radarContact_ = checkedInRadar_ = atisHeard_ = true;
     approachScenario_ = true;
-    clearedAltFt_ = kApproachAltFt;
+    clearedAltFt_ = 0;
     controls.com1ActiveKhz = kStations[kRadar].khz;
-    controls.com1StandbyKhz = kStations[kTower].khz;
+    controls.com1StandbyKhz = kStations[arrStation_].khz;
     controls.xpdrCode = squawk_;
     controls.xpdrMode = A320_XPDR_AUTO;
   } else {
-    // On final, just handed over to Tower: check in.
+    // On final, just handed over to Tower (or the AFIS): check in.
     phase_ = A320_ATC_PHASE_TOWER;
     ifrCleared_ = takeoffCleared_ = radarContact_ = checkedInRadar_ = approachCleared_ = atisHeard_ = true;
     clearedAltFt_ = kApproachAltFt;
-    controls.com1ActiveKhz = kStations[kTower].khz;
-    controls.com1StandbyKhz = kStations[kHandling].khz;
+    controls.com1ActiveKhz = kStations[arrStation_].khz;
+    controls.com1StandbyKhz = kStations[groundStation_ >= 0 ? groundStation_ : kRadar].khz;
     controls.xpdrCode = squawk_;
     controls.xpdrMode = A320_XPDR_AUTO;
   }
@@ -213,7 +253,7 @@ void Atc::issue(Instruction in, const AtcContext& ctx, double delayS, const std:
 }
 
 Atc::Instruction Atc::headingInstruction(int headingMag, const AtcContext& ctx, const std::string& extra) const {
-  const double current = ctx.state.headingTrueDeg - ctx.airport.magneticVariationDeg;
+  const double current = ctx.state.headingTrueDeg - ctx.state.magneticVariationDeg;
   const bool left = wrap180(headingMag - current) < 0.0;
   const std::string dir = left ? "left" : "right", other = left ? "right" : "left";
   Instruction in;
@@ -244,18 +284,20 @@ void Atc::update(const AtcContext& ctx) {
   lastUpdate_ = t;
   if (!enabled_) return;
   const int active = ctx.controls.com1ActiveKhz;
+  if (approachScenario_ && clearedAltFt_ == 0)
+    clearedAltFt_ = std::max(kApproachAltFt, static_cast<int>(std::lround(s.altitudeFt / 1000.0)) * 1000);
 
   // ATIS: a loop while tuned, starting a moment after tuning in.
   if (active != lastActiveKhz_) {
     lastActiveKhz_ = active;
     nextAtisAt_ = t + 1.0;
   }
-  if (active == kStations[kAtis].khz) {
+  if (atisStation_ >= 0 && active == kStations[atisStation_].khz) {
     atisTunedS_ += dt;
     if (atisTunedS_ > 15.0) atisHeard_ = true;
     if (t >= nextAtisAt_) {
       Words w;
-      const std::string rwy = ctx.airport.runways[static_cast<size_t>(runway_)].ident;
+      const std::string rwy = ctx.world.runways[static_cast<size_t>(atisRunway())].ident;
       const std::string letter(1, atisLetter_);
       char time[8];
       std::snprintf(time, sizeof(time), "%04d", atisTime_);
@@ -268,7 +310,7 @@ void Atc::update(const AtcContext& ctx) {
       w.add("Temperature 15, dew point 9. QNH 1013.", "Temperature one five, dew point niner. Q N H one zero one three.");
       w.add("Acknowledge information " + letter + " on first contact.",
             "Acknowledge information " + spell(letter) + " on first contact.");
-      emit(A320_ATC_SPEAKER_ATIS, kStations[kAtis].name, kStations[kAtis].khz, w, ctx);
+      emit(A320_ATC_SPEAKER_ATIS, kStations[atisStation_].name, kStations[atisStation_].khz, w, ctx);
       nextAtisAt_ = t + estimateSeconds(w.speech) + 4.0;
     }
   }
@@ -309,13 +351,21 @@ void Atc::update(const AtcContext& ctx) {
   // Takeoff without a takeoff clearance, landing without a landing clearance.
   if (s.onGround && !takeoffCleared_ && s.iasKt > 40.0 && !noTakeoffHinted_ && phase_ <= A320_ATC_PHASE_DEPARTURE) {
     noTakeoffHinted_ = true;
-    hint_ = "ATC: you are taking off without a takeoff clearance. Ask Tower: \"ready for departure\", and read back "
-            "\"cleared for takeoff\" first.";
+    if (kStations[depStation_].afis)
+      hint_ = std::string("ATC: report \"ready for departure\" to ") + kStations[depStation_].spoken +
+              " and wait for \"runway free\" before taking off.";
+    else
+      hint_ = "ATC: you are taking off without a takeoff clearance. Ask Tower: \"ready for departure\", and read back "
+              "\"cleared for takeoff\" first.";
   }
   if (!s.onGround && takeoffCleared_ && !landingCleared_ && s.radioAltFt < 500.0 && s.verticalSpeedFpm < -200.0 &&
       (phase_ == A320_ATC_PHASE_APPROACH || phase_ == A320_ATC_PHASE_TOWER) && !noLandingHinted_) {
     noLandingHinted_ = true;
-    hint_ = "ATC: no landing clearance yet. Below 500 ft without one, go around (TOGA). Contact Tower in time.";
+    if (kStations[arrStation_].afis)
+      hint_ = std::string("ATC: no runway report from ") + kStations[arrStation_].spoken +
+              " yet. Below 500 ft without knowing the runway is free, go around (TOGA). Call in time.";
+    else
+      hint_ = "ATC: no landing clearance yet. Below 500 ft without one, go around (TOGA). Contact Tower in time.";
   }
 
   switch (phase_) {
@@ -324,14 +374,14 @@ void Atc::update(const AtcContext& ctx) {
       if (!s.onGround && s.radioAltFt > 1600.0 && s.verticalSpeedFpm > 0.0) {
         Instruction in;
         in.kind = Kind::ContactRadar;
-        in.station = kTower;
+        in.station = depStation_;
         in.freqKhz = kStations[kRadar].khz;
         in.body.add("contact Tallinn Radar " + freqText(in.freqKhz) + ", goodbye",
                     "contact Tallinn Radar " + freqSpeech(in.freqKhz) + ", goodbye");
         const Words me = cs(ctx);
         Reply ok, wrongFreq, roger;
         ok.words.add("Tallinn Radar " + freqText(in.freqKhz), "Tallinn Radar " + freqSpeech(in.freqKhz));
-        wrongFreq.words.add("Tallinn Radar 127.950", "Tallinn Radar " + freqSpeech(127950));
+        wrongFreq.words.add("Tallinn Radar " + freqText(confusable(in.freqKhz)), "Tallinn Radar " + freqSpeech(confusable(in.freqKhz)));
         wrongFreq.why = "Wrong frequency: Radar is 127.905. A wrong readback here puts you on a frequency nobody "
                         "listens to.";
         roger.words.add("Roger, goodbye");
@@ -373,20 +423,24 @@ void Atc::update(const AtcContext& ctx) {
       monitor(ctx);
       break;
     case A320_ATC_PHASE_APPROACH: {
-      const Runway& r = ctx.airport.runways[static_cast<size_t>(runway_)];
+      const Runway& r = ctx.world.runways[static_cast<size_t>(runway_)];
       const RunwayPoint p = RunwayAxes(ctx.frame, r).fromEnu({s.eastM, s.northM, 0.0});
       const bool established = s.latMode == A320_LAT_LOC || s.latMode == A320_LAT_LOC_STAR;
       if ((established && p.x > -15.0 * kNmToM) || p.x > -8.0 * kNmToM) {
+        const Station& arr = kStations[arrStation_];
+        const std::string spoken = arr.spoken;
+        // "Tower 135.905" for a Tower; an AFIS keeps its full name.
+        const std::string shortName = arr.afis ? spoken : "Tower";
         Instruction in;
         in.kind = Kind::ContactTower;
         in.station = kRadar;
-        in.freqKhz = kStations[kTower].khz;
-        in.body.add("contact Tallinn Tower " + freqText(in.freqKhz), "contact Tallinn Tower " + freqSpeech(in.freqKhz));
+        in.freqKhz = arr.khz;
+        in.body.add("contact " + spoken + " " + freqText(in.freqKhz), "contact " + spoken + " " + freqSpeech(in.freqKhz));
         const Words me = cs(ctx);
         Reply ok, wrongFreq;
-        ok.words.add("Tower " + freqText(in.freqKhz), "Tower " + freqSpeech(in.freqKhz));
-        wrongFreq.words.add("Tower 135.950", "Tower " + freqSpeech(135950));
-        wrongFreq.why = "Wrong frequency: Tower is 135.905.";
+        ok.words.add(shortName + " " + freqText(in.freqKhz), shortName + " " + freqSpeech(in.freqKhz));
+        wrongFreq.words.add(shortName + " " + freqText(confusable(in.freqKhz)), shortName + " " + freqSpeech(confusable(in.freqKhz)));
+        wrongFreq.why = "Wrong frequency: " + spoken + " is " + freqText(in.freqKhz) + ".";
         for (Reply* rr : {&ok, &wrongFreq}) rr->words.add(", " + me.text, ", " + me.speech);
         in.replies = {ok, wrongFreq};
         phase_ = A320_ATC_PHASE_TOWER;
@@ -401,17 +455,27 @@ void Atc::update(const AtcContext& ctx) {
     case A320_ATC_PHASE_LANDED: {
       Instruction in;
       in.kind = Kind::Vacate;
-      in.station = kTower;
-      in.freqKhz = kStations[kHandling].khz;
-      in.body.add("vacate the runway when able, contact Tallinn Handling " + freqText(in.freqKhz) + ", goodbye",
-                  "vacate the runway when able, contact Tallinn Handling " + freqSpeech(in.freqKhz) + ", goodbye");
+      in.station = arrStation_;
       const Words me = cs(ctx);
-      Reply ok, roger;
-      ok.words.add("Vacate when able, Handling " + freqText(in.freqKhz), "vacate when able, Handling " + freqSpeech(in.freqKhz));
-      roger.words.add("Roger");
-      roger.why = "Read back the frequency change: Handling " + freqText(in.freqKhz) + ".";
-      for (Reply* r : {&ok, &roger}) r->words.add(", " + me.text, ", " + me.speech);
-      in.replies = {ok, roger};
+      if (groundStation_ >= 0) {
+        const Station& g = kStations[groundStation_];
+        const std::string spoken = g.spoken;
+        in.freqKhz = g.khz;
+        in.body.add("vacate the runway when able, contact " + spoken + " " + freqText(in.freqKhz) + ", goodbye",
+                    "vacate the runway when able, contact " + spoken + " " + freqSpeech(in.freqKhz) + ", goodbye");
+        Reply ok, roger;
+        ok.words.add("Vacate when able, Handling " + freqText(in.freqKhz), "vacate when able, Handling " + freqSpeech(in.freqKhz));
+        roger.words.add("Roger");
+        roger.why = "Read back the frequency change: Handling " + freqText(in.freqKhz) + ".";
+        for (Reply* r : {&ok, &roger}) r->words.add(", " + me.text, ", " + me.speech);
+        in.replies = {ok, roger};
+      } else {
+        // No ground station: taxi to the apron on the same frequency.
+        in.body.add("vacate the runway when able, taxi to the apron, goodbye");
+        Reply ok;
+        ok.words.add("Vacate when able, taxi to the apron").add(", " + me.text, ", " + me.speech);
+        in.replies = {ok};
+      }
       phase_ = A320_ATC_PHASE_DONE;
       issue(in, ctx, 2.0);
       break;
@@ -421,130 +485,172 @@ void Atc::update(const AtcContext& ctx) {
   }
 }
 
-// Radar vectors to the ILS: downwind to a point 17 NM out and 5 NM to the side, a base turn,
-// then a 30 degree intercept with the approach clearance, so the localizer is captured about
-// 12 NM out and the glideslope from below at 3000 ft.
+// Radar vectors to the ILS. From ahead of the runway: downwind to a point 17 NM out and 5 NM to
+// the side, a base turn, then a 30 degree intercept with the approach clearance, so the localizer
+// is captured about 12 NM out and the glideslope from below at 3000 ft. From behind (another
+// airport, or far out on the approach side): to a point 20 NM out and 3 NM to the side, then the
+// intercept. On a route to another airport, a climb to the cruise level first; the descent to
+// 3000 ft comes in time for a 3:1 profile to the turn point.
 void Atc::vectors(const AtcContext& ctx) {
   if (approachCleared_ || awaiting_) return;
   const A320State& s = ctx.state;
-  const Runway& r = ctx.airport.runways[static_cast<size_t>(runway_)];
+  const Runway& r = ctx.world.runways[static_cast<size_t>(runway_)];
   const RunwayAxes axes(ctx.frame, r);
   const RunwayPoint p = axes.fromEnu({s.eastM, s.northM, 0.0});
-  const double courseMag = r.ils.courseMagDeg;
-  const double var = ctx.airport.magneticVariationDeg;
+  const double courseMag = r.ils.courseMagDeg > 0.0 ? r.ils.courseMagDeg : r.trueCourseDeg - s.magneticVariationDeg;
+  const double var = s.magneticVariationDeg;
   const double hdgMag = s.headingTrueDeg - var;
-  const std::string rwy = r.ident;
 
+  bool radarContactCall = true;
   if (approachScenario_) {
-    // Already on an intercept heading: clear the approach straight away.
     approachScenario_ = false;
-    Instruction in;
-    in.kind = Kind::Approach;
-    in.station = kRadar;
-    in.heading = roundHeading(hdgMag);
-    in.body.add("continue present heading, cleared ILS approach runway " + rwy,
-                "continue present heading, cleared I L S approach runway " + spell(rwy));
-    const Words me = cs(ctx);
-    Reply ok, wrongRwy, roger;
-    ok.words.add("Present heading, cleared ILS approach runway " + rwy,
-                 "present heading, cleared I L S approach runway " + spell(rwy));
-    const std::string other = ctx.airport.runways.size() > 1 ? ctx.airport.runways[static_cast<size_t>(1 - runway_)].ident : rwy;
-    wrongRwy.words.add("Present heading, cleared ILS approach runway " + other,
-                       "present heading, cleared I L S approach runway " + spell(other));
-    wrongRwy.why = "Wrong runway: the clearance is for runway " + rwy + ".";
-    roger.words.add("Roger");
-    roger.why = "An approach clearance is read back in full: heading and \"cleared ILS approach runway " + rwy + "\".";
-    for (Reply* rr : {&ok, &wrongRwy, &roger}) rr->words.add(", " + me.text, ", " + me.speech);
-    in.replies = {ok, wrongRwy, roger};
-    issue(in, ctx, 3.0);
-    return;
+    radarContactCall = false;
+    // Near in and already on an intercept heading: clear the approach straight away.
+    if (p.x > -22.5 * kNmToM) {
+      clearApproach(ctx, roundHeading(hdgMag), true);
+      return;
+    }
   }
 
-  // The side of the final approach course the aircraft is on (chosen once, at radar contact).
-  if (vectorStage_ == 0) side_ = p.y > 0.0 ? 1 : -1;
-  const double dx = -17.0 * kNmToM - p.x, dy = side_ * 5.0 * kNmToM - p.y;
-  const Enu target = axes.toEnu({-17.0 * kNmToM, side_ * 5.0 * kNmToM, 0.0});
+  // The turn point, chosen once at radar contact on the side of the final course the aircraft is on.
+  if (vectorStage_ == 0) {
+    side_ = p.y > 0.0 ? 1 : -1;
+    fromAhead_ = p.x > -17.0 * kNmToM;
+  }
+  const double tx = (fromAhead_ ? -17.0 : -20.0) * kNmToM, ty = side_ * (fromAhead_ ? 5.0 : 3.0) * kNmToM;
+  const Enu target = axes.toEnu({tx, ty, 0.0});
   const double brgTrue = std::atan2(target.e - s.eastM, target.n - s.northM) * kRadToDeg;
-  const double dist = std::hypot(dx, dy);
+  const double dist = std::hypot(tx - p.x, ty - p.y);
 
   if (vectorStage_ == 0) {
     vectorStage_ = 1;
     Instruction in = headingInstruction(roundHeading(brgTrue - var), ctx);
-    issue(in, ctx, 2.0, "Tallinn Radar, radar contact", "Tallinn Radar, radar contact");
+    if (radarContactCall)
+      issue(in, ctx, 2.0, "Tallinn Radar, radar contact", "Tallinn Radar, radar contact");
+    else
+      issue(in, ctx, 2.0, "for sequencing", "for sequencing");
     return;
   }
   if (vectorStage_ == 1) {
-    if (!descentIssued_ && clearedAltFt_ > kApproachAltFt && p.x < -4.0 * kNmToM) {
+    // Top of descent: a 3:1 profile to the turn point plus a few miles to slow down.
+    const double descentNm = std::max(12.0, (s.altitudeFt - kApproachAltFt) / 300.0 + 6.0);
+    if (!descentIssued_ && clearedAltFt_ > kApproachAltFt && dist < descentNm * kNmToM) {
       descentIssued_ = true;
-      Instruction in;
-      in.kind = Kind::Altitude;
-      in.station = kRadar;
-      in.altFt = kApproachAltFt;
-      in.body.add("descend " + altText(kApproachAltFt) + ", QNH 1013",
-                  "descend " + altSpeech(kApproachAltFt) + ", Q N H one zero one three");
-      const Words me = cs(ctx);
-      Reply ok, wrongAlt, wrongQnh;
-      ok.words.add("Descend " + altText(kApproachAltFt) + ", QNH 1013",
-                   "descend " + altSpeech(kApproachAltFt) + ", Q N H one zero one three");
-      wrongAlt.words.add("Descend " + altText(2000) + ", QNH 1013", "descend " + altSpeech(2000) + ", Q N H one zero one three");
-      wrongAlt.why = "Wrong altitude: ATC cleared 3000 ft. Descending below a cleared altitude is a level bust.";
-      wrongQnh.words.add("Descend " + altText(kApproachAltFt) + ", QNH 1003",
-                         "descend " + altSpeech(kApproachAltFt) + ", Q N H one zero zero three");
-      wrongQnh.why = "Wrong QNH: 1013. A 10 hPa error puts the aircraft 280 ft off its altitude.";
-      for (Reply* rp : {&ok, &wrongAlt, &wrongQnh}) rp->words.add(", " + me.text, ", " + me.speech);
-      in.replies = {ok, wrongAlt, wrongQnh};
-      issue(in, ctx, 1.0);
+      issueAltitude(kApproachAltFt, ctx);
+      return;
+    }
+    if (longRoute_ && !cruiseIssued_ && !descentIssued_ && dist > 40.0 * kNmToM) {
+      cruiseIssued_ = true;
+      issueAltitude(kCruiseAltFt, ctx);
+      return;
+    }
+    if (!fromAhead_ && dist < 2.5 * kNmToM) {
+      clearApproach(ctx, roundHeading(courseMag - side_ * 30.0), false);
       return;
     }
     // Base turn abeam the point, or when there.
-    if (dist < 2.0 * kNmToM || p.x < -17.0 * kNmToM) {
+    if (fromAhead_ && (dist < 2.0 * kNmToM || p.x < -17.0 * kNmToM)) {
       vectorStage_ = 2;
-      issue(headingInstruction(wrapHeading(courseMag - side_ * 90.0), ctx), ctx, 1.0);
+      issue(headingInstruction(roundHeading(courseMag - side_ * 90.0), ctx), ctx, 1.0);
       return;
     }
     // Re-vector once the aircraft flies the heading but the point has moved off it.
     const int wanted = roundHeading(brgTrue - var);
-    if (headingMag_ > 0 && dist > 5.0 * kNmToM && std::fabs(wrap180(wanted - headingMag_)) >= 30.0 &&
+    if (headingMag_ > 0 && dist > 5.0 * kNmToM && std::fabs(wrap180(wanted - headingMag_)) >= (dist > 30.0 * kNmToM ? 15.0 : 30.0) &&
         std::fabs(wrap180(hdgMag - headingMag_)) < 15.0 && now(ctx) - headingSetAt_ > 45.0) {
       issue(headingInstruction(wanted, ctx), ctx, 1.0);
     }
     return;
   }
-  if (vectorStage_ == 2 && (std::fabs(p.y) < 3.2 * kNmToM || p.y * side_ < 0.0)) {
-    const int intercept = wrapHeading(courseMag - side_ * 30.0);
-    const bool slow = s.iasKt > 195.0;
-    const std::string speedText = slow ? ", reduce speed 180 knots" : "";
-    Instruction in = headingInstruction(intercept, ctx, "cleared ILS approach runway " + rwy + speedText);
-    in.kind = Kind::Approach;
-    in.speedKt = slow ? 180 : 0;
-    in.body = Words{};
-    const double current = s.headingTrueDeg - var;
-    const std::string dir = wrap180(intercept - current) < 0.0 ? "left" : "right";
-    in.body.add("turn " + dir + " heading " + headingText(intercept) + ", cleared ILS approach runway " + rwy + speedText,
-                "turn " + dir + " heading " + headingSpeech(intercept) + ", cleared I L S approach runway " + spell(rwy) +
-                    (slow ? ", reduce speed one eight zero knots" : ""));
-    // The replies from headingInstruction carry "cleared ILS approach runway" as written; give the
-    // spoken form too, and a wrong-runway alternative.
-    for (Reply& rr : in.replies) {
-      const std::string from = "cleared ILS approach runway " + rwy + speedText;
-      const size_t at = rr.words.speech.find(from);
-      if (at != std::string::npos)
-        rr.words.speech.replace(at, from.size(), "cleared I L S approach runway " + spell(rwy) +
-                                                     (slow ? ", reduce speed one eight zero knots" : ""));
-    }
-    if (in.replies.size() == 3) {
-      const std::string other = ctx.airport.runways.size() > 1 ? ctx.airport.runways[static_cast<size_t>(1 - runway_)].ident : rwy;
-      Reply& wrong = in.replies[2];
-      wrong = in.replies[0];
-      const std::string from = "runway " + rwy;
-      size_t at = wrong.words.text.find(from);
-      if (at != std::string::npos) wrong.words.text.replace(at, from.size(), "runway " + other);
-      at = wrong.words.speech.find("runway " + spell(rwy));
-      if (at != std::string::npos) wrong.words.speech.replace(at, ("runway " + spell(rwy)).size(), "runway " + spell(other));
-      wrong.why = "Wrong runway: the approach clearance is for runway " + rwy + ".";
-    }
-    issue(in, ctx, 1.0);
+  if (vectorStage_ == 2 && (std::fabs(p.y) < 3.2 * kNmToM || p.y * side_ < 0.0))
+    clearApproach(ctx, roundHeading(courseMag - side_ * 30.0), false);
+}
+
+// The approach clearance: an intercept heading (or the present one) with "cleared ILS approach".
+void Atc::clearApproach(const AtcContext& ctx, int headingMag, bool presentHeading) {
+  const A320State& s = ctx.state;
+  const Runway& r = ctx.world.runways[static_cast<size_t>(runway_)];
+  const std::string rwy = r.ident, other = otherIdent(ctx.world, runway_);
+  const std::string appr = approachText(r), apprSpeech = approachSpeech(r);
+  const Words me = cs(ctx);
+  Instruction in;
+  in.kind = Kind::Approach;
+  in.station = kRadar;
+  in.heading = headingMag;
+  if (presentHeading) {
+    in.body.add("continue present heading, cleared " + appr + " runway " + rwy,
+                "continue present heading, cleared " + apprSpeech + " runway " + spell(rwy));
+    Reply ok, wrongRwy, roger;
+    ok.words.add("Present heading, cleared " + appr + " runway " + rwy, "present heading, cleared " + apprSpeech + " runway " + spell(rwy));
+    wrongRwy.words.add("Present heading, cleared " + appr + " runway " + other,
+                       "present heading, cleared " + apprSpeech + " runway " + spell(other));
+    wrongRwy.why = "Wrong runway: the clearance is for runway " + rwy + ".";
+    roger.words.add("Roger");
+    roger.why = "An approach clearance is read back in full: heading and \"cleared " + appr + " runway " + rwy + "\".";
+    for (Reply* rr : {&ok, &wrongRwy, &roger}) rr->words.add(", " + me.text, ", " + me.speech);
+    in.replies = {ok, wrongRwy, roger};
+    issue(in, ctx, 3.0);
+    return;
   }
+  const bool slow = s.iasKt > 195.0;
+  const std::string speedText = slow ? ", reduce speed 180 knots" : "";
+  const std::string speedSpeech = slow ? ", reduce speed one eight zero knots" : "";
+  const double current = s.headingTrueDeg - s.magneticVariationDeg;
+  const bool left = wrap180(headingMag - current) < 0.0;
+  const std::string dir = left ? "left" : "right";
+  in.speedKt = slow ? 180 : 0;
+  in.body.add("turn " + dir + " heading " + headingText(headingMag) + ", cleared " + appr + " runway " + rwy + speedText,
+              "turn " + dir + " heading " + headingSpeech(headingMag) + ", cleared " + apprSpeech + " runway " + spell(rwy) + speedSpeech);
+  const std::string turn = left ? "Left" : "Right", wrongTurn = left ? "Right" : "Left";
+  auto readback = [&](const std::string& t, const std::string& rw) {
+    Words w;
+    w.add(t + " heading " + headingText(headingMag) + ", cleared " + appr + " runway " + rw + speedText,
+          t + " heading " + headingSpeech(headingMag) + ", cleared " + apprSpeech + " runway " + spell(rw) + speedSpeech);
+    return w.add(", " + me.text, ", " + me.speech);
+  };
+  Reply ok, wrongDir, wrongRwy;
+  ok.words = readback(turn, rwy);
+  wrongDir.words = readback(wrongTurn, rwy);
+  wrongDir.why = "The turn direction is part of the instruction: ATC said turn " + dir + ".";
+  wrongRwy.words = readback(turn, other);
+  wrongRwy.why = "Wrong runway: the approach clearance is for runway " + rwy + ".";
+  in.replies = {ok, wrongDir, wrongRwy};
+  if (other == rwy) in.replies.pop_back();
+  issue(in, ctx, 1.0);
+}
+
+void Atc::issueAltitude(int altFt, const AtcContext& ctx) {
+  const bool climb = altFt > ctx.state.altitudeFt;
+  const std::string verb = climb ? "climb " : "descend ";
+  const std::string Verb = climb ? "Climb " : "Descend ";
+  // Below the transition altitude the QNH comes with the altitude.
+  const bool qnh = altFt <= kTransitionAltFt;
+  const std::string qText = qnh ? ", QNH 1013" : "", qSpeech = qnh ? ", Q N H one zero one three" : "";
+  Instruction in;
+  in.kind = Kind::Altitude;
+  in.station = kRadar;
+  in.altFt = altFt;
+  in.body.add(verb + altText(altFt) + qText, verb + altSpeech(altFt) + qSpeech);
+  const Words me = cs(ctx);
+  Reply ok, wrongAlt, wrongRef;
+  ok.words.add(Verb + altText(altFt) + qText, verb + altSpeech(altFt) + qSpeech);
+  const int off = climb ? altFt + 10000 : altFt - 1000;
+  wrongAlt.words.add(Verb + altText(off) + qText, verb + altSpeech(off) + qSpeech);
+  wrongAlt.why = "Wrong level: ATC said " + altText(altFt) + ". Flying another cleared level is a level bust.";
+  if (qnh) {
+    wrongRef.words.add(Verb + altText(altFt) + ", QNH 1003", verb + altSpeech(altFt) + ", Q N H one zero zero three");
+    wrongRef.why = "Wrong QNH: 1013. A 10 hPa error puts the aircraft 280 ft off its altitude.";
+  } else {
+    wrongRef.words.add(Verb + fmt("altitude %d feet", altFt), verb + "altitude " + passingSpeech(altFt));
+    wrongRef.why = "Above the transition altitude (5000 ft) levels are flight levels, on the standard setting 1013: "
+                   "read back \"" + altText(altFt) + "\".";
+  }
+  for (Reply* rp : {&ok, &wrongAlt, &wrongRef}) rp->words.add(", " + me.text, ", " + me.speech);
+  in.replies = {ok, wrongAlt, wrongRef};
+  issue(in, ctx, 1.0);
+  if (climb)
+    hint_ = "Set " + std::to_string(altFt) + " in the FCU ALT window and pull the knob to climb. Passing 5000 ft, "
+            "set the baro to STD.";
 }
 
 // Queries a heading or altitude that isn't being flown, once per instruction.
@@ -555,7 +661,7 @@ void Atc::monitor(const AtcContext& ctx) {
   // Time to set the FCU and turn at about 3 degrees per second, plus a margin.
   const double allowed = 25.0 + headingTurnDeg_ / 2.0;
   if (headingMag_ > 0 && !headingQueried_ && !approachCleared_ && t - headingSetAt_ > allowed) {
-    const double hdgMag = s.headingTrueDeg - ctx.airport.magneticVariationDeg;
+    const double hdgMag = s.headingTrueDeg - ctx.state.magneticVariationDeg;
     if (std::fabs(wrap180(hdgMag - headingMag_)) > 25.0) {
       headingQueried_ = true;
       Instruction in = headingInstruction(headingMag_, ctx);
@@ -564,7 +670,8 @@ void Atc::monitor(const AtcContext& ctx) {
       return;
     }
   }
-  if (clearedAltFt_ > 0 && !altQueried_ && !s.onGround) {
+  // Cleared for the approach, the glideslope takes the aircraft below the cleared altitude.
+  if (clearedAltFt_ > 0 && !altQueried_ && !s.onGround && !approachCleared_) {
     const double err = s.altitudeFt - clearedAltFt_;
     const bool bust = (err > 400.0 && s.verticalSpeedFpm > 0.0) || (err < -400.0 && s.verticalSpeedFpm < 0.0 && t - altSetAt_ > 5.0);
     if (bust && t - altSetAt_ > 20.0) {
@@ -591,7 +698,11 @@ std::vector<Atc::Option> Atc::buildOptions(const AtcContext& ctx) const {
   const A320State& s = ctx.state;
   const int active = ctx.controls.com1ActiveKhz;
   const Words me = cs(ctx);
-  const std::string rwy = ctx.airport.runways[static_cast<size_t>(runway_)].ident;
+  const std::string depRwy = ctx.world.runways[static_cast<size_t>(depRunway_)].ident;
+  const Runway& arr = ctx.world.runways[static_cast<size_t>(runway_)];
+  const std::string rwy = arr.ident;
+  const std::string depName = kStations[depStation_].spoken, arrName = kStations[arrStation_].spoken;
+  const std::string destCity = ctx.world.airportOf(runway_).city;
   auto on = [&](int station) { return active == kStations[station].khz; };
 
   if (awaiting_ && on(instr_.station) && pending_.empty()) {
@@ -614,24 +725,24 @@ std::vector<Atc::Option> Atc::buildOptions(const AtcContext& ctx) const {
   if (awaiting_ || !pending_.empty()) return out;
 
   const std::string letter(1, atisLetter_);
-  if (phase_ == A320_ATC_PHASE_CLEARANCE && s.onGround && on(kTower)) {
+  if (phase_ == A320_ATC_PHASE_CLEARANCE && s.onGround && on(depStation_)) {
     Option o;
-    o.words.add("Tallinn Tower,", "Tallinn Tower,").add(me.text + ", A320 at runway " + rwy,
-                                                       me.speech + ", A three twenty at runway " + spell(rwy));
-    if (atisHeard_) o.words.add("with information " + letter, "with information " + spell(letter));
-    o.words.add(", request IFR clearance to Tallinn", ", request I F R clearance to Tallinn");
+    o.words.add(depName + ",", depName + ",").add(me.text + ", A320 at runway " + depRwy,
+                                                  me.speech + ", A three twenty at runway " + spell(depRwy));
+    if (atisHeard_ && atisStation_ >= 0) o.words.add("with information " + letter, "with information " + spell(letter));
+    o.words.add(", request IFR clearance to " + destCity, ", request I F R clearance to " + destCity);
     o.request = Request::Clearance;
     out.push_back(o);
   }
-  if (phase_ == A320_ATC_PHASE_DEPARTURE && s.onGround && on(kTower) && !takeoffCleared_) {
+  if (phase_ == A320_ATC_PHASE_DEPARTURE && s.onGround && on(depStation_) && !takeoffCleared_) {
     Option o;
-    o.words.add(me.text + ", ready for departure runway " + rwy, me.speech + ", ready for departure runway " + spell(rwy));
+    o.words.add(me.text + ", ready for departure runway " + depRwy, me.speech + ", ready for departure runway " + spell(depRwy));
     o.request = Request::Ready;
     out.push_back(o);
   }
   if (phase_ == A320_ATC_PHASE_RADAR && !checkedInRadar_ && on(kRadar)) {
     const int passing = static_cast<int>(std::lround(s.altitudeFt / 100.0)) * 100;
-    const int hdg = roundHeading(s.headingTrueDeg - ctx.airport.magneticVariationDeg);
+    const int hdg = roundHeading(s.headingTrueDeg - ctx.state.magneticVariationDeg);
     Option o;
     o.words.add("Tallinn Radar, " + me.text + ",", "Tallinn Radar, " + me.speech + ",");
     if (std::fabs(s.verticalSpeedFpm) > 300.0 && clearedAltFt_ > 0)
@@ -643,17 +754,22 @@ std::vector<Atc::Option> Atc::buildOptions(const AtcContext& ctx) const {
     o.request = Request::CheckInRadar;
     out.push_back(o);
   }
-  if (phase_ == A320_ATC_PHASE_TOWER && !checkedInTower_ && on(kTower)) {
+  if (phase_ == A320_ATC_PHASE_TOWER && !checkedInTower_ && on(arrStation_)) {
     Option o;
-    o.words.add("Tallinn Tower, " + me.text + ", established ILS runway " + rwy,
-                "Tallinn Tower, " + me.speech + ", established I L S runway " + spell(rwy));
+    if (arr.ils.ident.empty())
+      o.words.add(arrName + ", " + me.text + ", on final runway " + rwy, arrName + ", " + me.speech + ", on final runway " + spell(rwy));
+    else
+      o.words.add(arrName + ", " + me.text + ", established ILS runway " + rwy,
+                  arrName + ", " + me.speech + ", established I L S runway " + spell(rwy));
     o.request = Request::CheckInTower;
     out.push_back(o);
   }
   if (phase_ == A320_ATC_PHASE_RADAR && radarContact_ && !approachCleared_ && on(kRadar)) {
-    for (size_t i = 0; i < ctx.airport.runways.size() && out.size() + 1 < A320_ATC_MAX_OPTIONS; ++i) {
-      if (static_cast<int>(i) == runway_) continue;
-      const std::string other = ctx.airport.runways[i].ident;
+    // Another ILS runway at the destination.
+    for (size_t i = 0; i < ctx.world.runways.size() && out.size() + 1 < A320_ATC_MAX_OPTIONS; ++i) {
+      const Runway& o2 = ctx.world.runways[i];
+      if (static_cast<int>(i) == runway_ || o2.airport != arr.airport || o2.ils.ident.empty()) continue;
+      const std::string other = o2.ident;
       Option o;
       o.words.add(me.text + ", request ILS approach runway " + other,
                   me.speech + ", request I L S approach runway " + spell(other));
@@ -715,7 +831,7 @@ void Atc::readbackDone(const Instruction& in, const AtcContext& ctx) {
       phase_ = A320_ATC_PHASE_DEPARTURE;
       Words w = cs(ctx);
       w.add(", readback correct, report ready for departure");
-      say(kTower, w, 1.2, ctx);
+      say(in.station, w, 1.2, ctx);
       break;
     }
     case Kind::Takeoff: takeoffCleared_ = true; break;
@@ -725,7 +841,7 @@ void Atc::readbackDone(const Instruction& in, const AtcContext& ctx) {
       headingMag_ = in.heading;
       headingSetAt_ = t;
       headingQueried_ = false;
-      const double hdgMag = ctx.state.headingTrueDeg - ctx.airport.magneticVariationDeg;
+      const double hdgMag = ctx.state.headingTrueDeg - ctx.state.magneticVariationDeg;
       headingTurnDeg_ = std::fabs(wrap180(in.heading - hdgMag));
       break;
     }
@@ -749,63 +865,86 @@ void Atc::readbackDone(const Instruction& in, const AtcContext& ctx) {
 }
 
 void Atc::request(const Option& o, const AtcContext& ctx) {
-  const std::string rwy = ctx.airport.runways[static_cast<size_t>(runway_)].ident;
+  const Runway& arr = ctx.world.runways[static_cast<size_t>(runway_)];
+  const std::string rwy = arr.ident;
+  const std::string depRwy = ctx.world.runways[static_cast<size_t>(depRunway_)].ident;
+  const std::string depOther = otherIdent(ctx.world, depRunway_);
+  const Station& dep = kStations[depStation_];
+  const Station& arrSt = kStations[arrStation_];
   const Words me = cs(ctx);
   const double delay = 1.5;
   switch (o.request) {
     case Request::Clearance: {
+      const std::string city = ctx.world.airportOf(runway_).city;
+      const std::string route = "cleared to " + city + " via radar vectors";
+      // An AFIS relays the clearance from the unit that issues it.
+      const std::string by = dep.afis ? "Tallinn Radar clears you to " + city + " via radar vectors" : route;
       Instruction in;
       in.kind = Kind::Clearance;
-      in.station = kTower;
+      in.station = depStation_;
       in.altFt = kInitialAltFt;
       const std::string code = fmt("%04d", squawk_);
-      in.body.add("cleared to Tallinn via radar vectors, after departure runway heading, climb " + altText(kInitialAltFt) +
-                      ", squawk " + code,
-                  "cleared to Tallinn via radar vectors, after departure runway heading, climb " + altSpeech(kInitialAltFt) +
-                      ", squawk " + spell(code));
+      in.body.add(by + ", after departure runway heading, climb " + altText(kInitialAltFt) + ", squawk " + code,
+                  by + ", after departure runway heading, climb " + altSpeech(kInitialAltFt) + ", squawk " + spell(code));
+      const std::string Route = "Cleared to " + city + " via radar vectors";
       Reply ok, wrongAlt, wrongCode;
-      ok.words.add("Cleared to Tallinn via radar vectors, runway heading, climb " + altText(kInitialAltFt) + ", squawk " + code,
-                   "cleared to Tallinn via radar vectors, runway heading, climb " + altSpeech(kInitialAltFt) + ", squawk " + spell(code));
-      wrongAlt.words.add("Cleared to Tallinn via radar vectors, runway heading, climb " + altText(5000) + ", squawk " + code,
-                         "cleared to Tallinn via radar vectors, runway heading, climb " + altSpeech(5000) + ", squawk " + spell(code));
+      ok.words.add(Route + ", runway heading, climb " + altText(kInitialAltFt) + ", squawk " + code,
+                   route + ", runway heading, climb " + altSpeech(kInitialAltFt) + ", squawk " + spell(code));
+      wrongAlt.words.add(Route + ", runway heading, climb " + altText(5000) + ", squawk " + code,
+                         route + ", runway heading, climb " + altSpeech(5000) + ", squawk " + spell(code));
       wrongAlt.why = "Wrong altitude: the clearance limit is 4000 ft. Set 4000 in the FCU ALT window.";
       std::string swapped = code;
       std::swap(swapped[1], swapped[2]);
-      wrongCode.words.add("Cleared to Tallinn via radar vectors, runway heading, climb " + altText(kInitialAltFt) + ", squawk " + swapped,
-                          "cleared to Tallinn via radar vectors, runway heading, climb " + altSpeech(kInitialAltFt) +
-                              ", squawk " + spell(swapped));
+      wrongCode.words.add(Route + ", runway heading, climb " + altText(kInitialAltFt) + ", squawk " + swapped,
+                          route + ", runway heading, climb " + altSpeech(kInitialAltFt) + ", squawk " + spell(swapped));
       wrongCode.why = "Wrong squawk: the code is " + code + ".";
       for (Reply* r : {&ok, &wrongAlt, &wrongCode}) r->words.add(", " + me.text, ", " + me.speech);
       in.replies = {ok, wrongAlt, wrongCode};
-      if (!atisHeard_) {
+      if (atisStation_ < 0) {
+        issue(in, ctx, delay, "runway in use " + depRwy + ", wind calm, QNH 1013",
+              "runway in use " + spell(depRwy) + ", wind calm, Q N H one zero one three");
+      } else if (!atisHeard_) {
         const std::string letter(1, atisLetter_);
         issue(in, ctx, delay, "information " + letter + " is current, QNH 1013",
               "information " + spell(letter) + " is current, Q N H one zero one three");
       } else {
         issue(in, ctx, delay);
       }
+      if (longRoute_)
+        hint_ = "A flight to " + city + ": after takeoff Tallinn Radar vectors you there and climbs you to the cruise "
+                "level. Insert the arrival on the MCDU (F-PLN > ARRIVAL) so its ILS is tuned.";
       break;
     }
     case Request::Ready: {
       if (!ifrCleared_) {
         Words w = me;
         w.add(", negative, you have no IFR clearance yet. Request your clearance first.");
-        say(kTower, w, delay, ctx);
-        hint_ = "IFR flights need a clearance before departure: request it from Tower first.";
+        say(depStation_, w, delay, ctx);
+        hint_ = std::string("IFR flights need a clearance before departure: request it from ") + dep.spoken + " first.";
         break;
       }
       Instruction in;
       in.kind = Kind::Takeoff;
-      in.station = kTower;
-      in.body.add("wind calm, runway " + rwy + ", cleared for takeoff", "wind calm, runway " + spell(rwy) + ", cleared for takeoff");
-      const std::string other = ctx.airport.runways.size() > 1 ? ctx.airport.runways[static_cast<size_t>(1 - runway_)].ident : rwy;
+      in.station = depStation_;
       Reply ok, wrongRwy, roger;
-      ok.words.add("Cleared for takeoff runway " + rwy, "cleared for takeoff runway " + spell(rwy));
-      wrongRwy.words.add("Cleared for takeoff runway " + other, "cleared for takeoff runway " + spell(other));
-      wrongRwy.why = "You are on runway " + rwy + ". A wrong runway in a takeoff readback is a classic error ATC must "
-                     "catch.";
-      roger.words.add("Roger, rolling");
-      roger.why = "A takeoff clearance is read back with the runway: \"cleared for takeoff runway " + rwy + "\".";
+      if (dep.afis) {
+        in.body.add("runway " + depRwy + " free, wind calm, take off at your discretion",
+                    "runway " + spell(depRwy) + " free, wind calm, take off at your discretion");
+        ok.words.add("Taking off runway " + depRwy, "taking off runway " + spell(depRwy));
+        wrongRwy.words.add("Cleared for takeoff runway " + depRwy, "cleared for takeoff runway " + spell(depRwy));
+        wrongRwy.why = std::string(dep.spoken) + " is an AFIS: it reports the runway free but gives no clearances. "
+                       "The decision to take off is yours: read back \"taking off runway " + depRwy + "\".";
+        roger.words.add("Roger");
+        roger.why = "Say what you will do, with the runway: \"taking off runway " + depRwy + "\".";
+      } else {
+        in.body.add("wind calm, runway " + depRwy + ", cleared for takeoff", "wind calm, runway " + spell(depRwy) + ", cleared for takeoff");
+        ok.words.add("Cleared for takeoff runway " + depRwy, "cleared for takeoff runway " + spell(depRwy));
+        wrongRwy.words.add("Cleared for takeoff runway " + depOther, "cleared for takeoff runway " + spell(depOther));
+        wrongRwy.why = "You are on runway " + depRwy + ". A wrong runway in a takeoff readback is a classic error ATC must "
+                       "catch.";
+        roger.words.add("Roger, rolling");
+        roger.why = "A takeoff clearance is read back with the runway: \"cleared for takeoff runway " + depRwy + "\".";
+      }
       for (Reply* r : {&ok, &wrongRwy, &roger}) r->words.add(", " + me.text, ", " + me.speech);
       in.replies = {ok, wrongRwy, roger};
       issue(in, ctx, delay);
@@ -818,21 +957,30 @@ void Atc::request(const Option& o, const AtcContext& ctx) {
       checkedInTower_ = true;
       Instruction in;
       in.kind = Kind::Landing;
-      in.station = kTower;
-      in.body.add("wind calm, runway " + rwy + ", cleared to land", "wind calm, runway " + spell(rwy) + ", cleared to land");
-      Reply ok, roger;
-      ok.words.add("Cleared to land runway " + rwy, "cleared to land runway " + spell(rwy));
-      roger.words.add("Roger");
-      roger.why = "Landing clearances are read back with the runway: \"cleared to land runway " + rwy + "\".";
-      for (Reply* r : {&ok, &roger}) r->words.add(", " + me.text, ", " + me.speech);
-      in.replies = {ok, roger};
-      issue(in, ctx, delay, "Tallinn Tower", "Tallinn Tower");
+      in.station = arrStation_;
+      Reply ok, wrong;
+      if (arrSt.afis) {
+        in.body.add("runway " + rwy + " free, wind calm, QNH 1013", "runway " + spell(rwy) + " free, wind calm, Q N H one zero one three");
+        ok.words.add("Landing runway " + rwy + ", QNH 1013", "landing runway " + spell(rwy) + ", Q N H one zero one three");
+        wrong.words.add("Cleared to land runway " + rwy, "cleared to land runway " + spell(rwy));
+        wrong.why = std::string(arrSt.spoken) + " is an AFIS: \"runway free\" is information, not a landing clearance. "
+                    "Read back what you will do and the QNH: \"landing runway " + rwy + ", QNH 1013\".";
+      } else {
+        in.body.add("wind calm, runway " + rwy + ", cleared to land", "wind calm, runway " + spell(rwy) + ", cleared to land");
+        ok.words.add("Cleared to land runway " + rwy, "cleared to land runway " + spell(rwy));
+        wrong.words.add("Roger");
+        wrong.why = "Landing clearances are read back with the runway: \"cleared to land runway " + rwy + "\".";
+      }
+      for (Reply* r : {&ok, &wrong}) r->words.add(", " + me.text, ", " + me.speech);
+      in.replies = {ok, wrong};
+      const std::string spoken = arrSt.spoken;
+      issue(in, ctx, delay, spoken, spoken);
       break;
     }
     case Request::OtherRunway: {
       runway_ = o.runway;
       vectorStage_ = 0;  // new vectors for the other runway
-      const std::string other = ctx.airport.runways[static_cast<size_t>(runway_)].ident;
+      const std::string other = ctx.world.runways[static_cast<size_t>(runway_)].ident;
       Words w = me;
       w.add(", roger, expect ILS approach runway " + other, ", roger, expect I L S approach runway " + spell(other));
       say(kRadar, w, delay, ctx);
@@ -873,7 +1021,7 @@ void Atc::fillState(A320State& s) const {
   s.atcLandingCleared = landingCleared_;
   s.atcRadarContact = radarContact_;
   s.atcAwaitingReadback = awaiting_;
-  s.atcRunwayIndex = runway_;
+  s.atcRunwayIndex = atisRunway();
   s.atcMessageSeq = seq_;
 }
 

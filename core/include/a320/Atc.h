@@ -13,21 +13,24 @@
 namespace a320 {
 
 struct AtcContext {
-  const Airport& airport;
+  const World& world;
   const LocalFrame& frame;
   const A320State& state;
   const A320Controls& controls;
   const Fms& fms;
 };
 
-// Air traffic control for a local IFR flight at EETN with ICAO phraseology: ATIS, IFR clearance
-// and takeoff from Tower, Radar vectors to the ILS, Tower again for landing. The crew answers
-// from a menu: readbacks (with wrong ones to learn from) and requests. Instructions not read
-// back are repeated; headings and altitudes not flown are queried.
+// Air traffic control for an IFR flight between the sim's airports, with ICAO phraseology: ATIS,
+// IFR clearance and takeoff from Tower (or the AFIS, which relays and informs but does not clear),
+// Tallinn Radar vectors to the ILS, then the arrival's Tower or AFIS. The crew answers from a
+// menu: readbacks (with wrong ones to learn from) and requests. Instructions not read back are
+// repeated; headings and altitudes not flown are queried.
 class Atc {
  public:
   // A new flight for the scenario; sets COM 1 and the transponder as the crew would have them.
-  void reset(A320Scenario scenario, int runwayIndex, A320Controls& controls, uint32_t seed, int utcMinutes);
+  // Ground starts depart from depRunway; every flight lands on arrRunway (World::runways).
+  void reset(const World& world, A320Scenario scenario, int depRunway, int arrRunway, A320Controls& controls,
+             uint32_t seed, int utcMinutes);
   void setEnabled(bool on) { enabled_ = on; }
   bool enabled() const { return enabled_; }
 
@@ -88,12 +91,18 @@ class Atc {
   void vectors(const AtcContext& ctx);
   void monitor(const AtcContext& ctx);
   Instruction headingInstruction(int headingMag, const AtcContext& ctx, const std::string& extra = "") const;
+  void clearApproach(const AtcContext& ctx, int headingMag, bool presentHeading);
+  void issueAltitude(int altFt, const AtcContext& ctx);
+  int atisRunway() const;
   Words cs(const AtcContext& ctx) const;
   double now(const AtcContext& ctx) const { return ctx.state.simTimeS; }
 
   bool enabled_ = true;
   int phase_ = A320_ATC_PHASE_CLEARANCE;
-  int runway_ = 0;          // runway in use (ATIS) and the one vectored to
+  int depRunway_ = 0;       // runway in use for departure
+  int runway_ = 0;          // arrival runway, the one vectored to
+  int depStation_ = 1, arrStation_ = 1, atisStation_ = -1, groundStation_ = -1;
+  bool longRoute_ = false;  // to another airport: a climb to the cruise level, a descent later
   int squawk_ = 2000;
   char atisLetter_ = 'A';
   int atisTime_ = 0;
@@ -108,9 +117,10 @@ class Atc {
   int clearedAltFt_ = 0, headingMag_ = -1, speedKt_ = 0;
   double headingSetAt_ = 0.0, altSetAt_ = 0.0, headingTurnDeg_ = 0.0;
   bool headingQueried_ = false, altQueried_ = false;
-  int vectorStage_ = 0;     // 0 none, 1 downwind, 2 base
+  int vectorStage_ = 0;     // 0 none, 1 to the turn point, 2 base
   int side_ = -1;           // -1 = left of the final approach course, +1 = right
-  bool descentIssued_ = false;
+  bool fromAhead_ = true;   // turn point is a downwind's end (else a straight-in intercept point)
+  bool descentIssued_ = false, cruiseIssued_ = false;
   bool noTakeoffHinted_ = false, noLandingHinted_ = false, notOnFreqHinted_ = false;
 
   bool awaiting_ = false;

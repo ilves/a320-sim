@@ -21,7 +21,7 @@
 extern "C" {
 #endif
 
-#define A320_API_VERSION 10
+#define A320_API_VERSION 11
 
 typedef enum A320Scenario {
   A320_SCENARIO_RUNWAY = 0,     /* lined up, engines idle, CONF 1+F, park brake set */
@@ -249,6 +249,13 @@ typedef struct A320State {
   int fmsFlightNumberSet;         /* INIT: FLT NBR entered */
   int fmsFlapsThsSet;             /* PERF TAKE OFF: FLAPS/THS entered */
   int fmsFlexTempC;               /* PERF TAKE OFF: FLEX TO TEMP, -100 = none */
+
+  /* Several airports (API 11). */
+  int nearestAirport;             /* a320_get_airport index; the flight model's ground is its elevation */
+  double magneticVariationDeg;    /* at the nearest airport, east positive */
+  /* Heading in the flat world (northM/eastM axes): true heading plus the meridian convergence,
+   * about 2 degrees at Kuressaare. Orient the aircraft and the map with this. */
+  double gridHeadingDeg, gridTrackDeg;
 } A320State;
 
 typedef struct A320RunwayInfo {
@@ -261,7 +268,21 @@ typedef struct A320RunwayInfo {
   double localizerNorthM, localizerEastM;
   double gsOriginNorthM, gsOriginEastM;
   double glideslopeDeg;
+  /* API 11. */
+  int airport;              /* a320_get_airport index */
+  char icao[8];
+  double elevationM;        /* threshold height in the flat world (above the first airport's field) */
+  int hasIls;
+  double gridCourseDeg;     /* course in the flat world: true course plus the meridian convergence */
 } A320RunwayInfo;
+
+typedef struct A320AirportInfo {
+  char icao[8];
+  char name[48];
+  double northM, eastM;     /* reference point in the flat world */
+  double elevationM;        /* above the first airport's field elevation */
+  double magneticVariationDeg;
+} A320AirportInfo;
 
 typedef struct A320Sim A320Sim;
 
@@ -271,6 +292,12 @@ A320_API void a320_destroy(A320Sim* sim);
 A320_API int a320_api_version(void);
 
 A320_API int a320_reset(A320Sim* sim, A320Scenario scenario, int runwayIndex);
+/* A flight between two runways (indices from a320_get_runway, any airport): ground scenarios start
+ * at depRunway, airborne ones distanceNm from arrRunway (APPROACH; the finals at 10 and 4 NM). The
+ * MCDU flight plan and ATC are set up for the trip. */
+A320_API int a320_start_flight(A320Sim* sim, A320Scenario scenario, int depRunway, int arrRunway, double distanceNm);
+A320_API int a320_airport_count(const A320Sim* sim);
+A320_API int a320_get_airport(const A320Sim* sim, int index, A320AirportInfo* info);
 A320_API void a320_set_controls(A320Sim* sim, const A320Controls* controls);
 /* The controls the core is using: after a reset, the scenario's switch and lever positions.
  * Start from these rather than a zeroed struct (zero means engine masters off). */
@@ -399,7 +426,8 @@ A320_API void a320_mcdu_key(A320Sim* sim, int key);
 A320_API void a320_mcdu_get_display(const A320Sim* sim, A320McduDisplay* display);
 
 /* ATC: Tallinn Information (ATIS) 124.880, Tallinn Tower 135.905 (also IFR clearances), Tallinn
- * Radar 127.905, Tallinn Handling 131.905 (EETN AD 2.18). Every transmission on the radio, ATC's
+ * Radar 127.905 (the whole route), Tallinn Handling 131.905 (EETN AD 2.18); Kuressaare Information
+ * 118.055, an AFIS (EEKE AD 2.18) that relays clearances and reports the runway. Every transmission on the radio, ATC's
  * and the crew's, is a message; the front end speaks it (speech) and logs it (text). */
 typedef enum A320AtcPhase {
   A320_ATC_PHASE_CLEARANCE = 0, /* on the ground: IFR clearance from Tower */

@@ -77,7 +77,7 @@ struct RunwayPos {
 RunwayPos runwayPos(A320Sim* sim, const A320State& s) {
   A320RunwayInfo r;
   a320_get_runway(sim, s.ilsRunwayIndex, &r);
-  const double c = r.trueCourseDeg * 3.14159265358979 / 180.0;
+  const double c = r.gridCourseDeg * 3.14159265358979 / 180.0;
   const double dn = s.northM - r.thresholdNorthM, de = s.eastM - r.thresholdEastM;
   return {de * std::sin(c) + dn * std::cos(c), de * std::cos(c) - dn * std::sin(c)};
 }
@@ -228,8 +228,8 @@ TEST(normal_law_holds_path_and_bank) {
 }
 
 // Scripted pilot: ILS tracking, speed on the thrust levers, manual flare and rollout.
-static void flyIlsLanding(A320Scenario scenario, double* touchdownOut = nullptr) {
-  Flight f(scenario);
+static void flyIlsLanding(A320Scenario scenario, double* touchdownOut = nullptr, const char* runway = "26") {
+  Flight f(scenario, runway);
   if (!f.sim) { CHECK(false); return; }
   A320RunwayInfo rw;
   a320_get_runway(f.sim, f.s.ilsRunwayIndex, &rw);
@@ -322,6 +322,22 @@ static void flyIlsLanding(A320Scenario scenario, double* touchdownOut = nullptr)
 }
 
 TEST(ils_approach_and_landing_from_4nm) { flyIlsLanding(A320_SCENARIO_FINAL_4NM); }
+
+// Kuressaare, 120 ft lower than Tallinn and 95 NM away: the ground, ILS and radio altimeter are
+// its own.
+TEST(ils_landing_at_kuressaare_17) {
+  flyIlsLanding(A320_SCENARIO_FINAL_10NM, nullptr, "17");
+  Flight f(A320_SCENARIO_RUNWAY, "17");
+  if (!f.sim) { CHECK(false); return; }
+  f.fly(3.0, [] { return true; });
+  A320AirportInfo eeke;
+  CHECK(a320_airport_count(f.sim) == 2 && a320_get_airport(f.sim, 1, &eeke) && std::strcmp(eeke.icao, "EEKE") == 0);
+  std::printf("  on runway 17: nearest %d, RA %.1f ft, height above Tallinn's field %.1f m (EEKE %.1f m)\n",
+              f.s.nearestAirport, f.s.radioAltFt, f.s.heightAboveFieldM, eeke.elevationM);
+  CHECK(f.s.nearestAirport == 1 && f.s.onGround && f.s.radioAltFt < 3.0);
+  CHECK(std::fabs(f.s.heightAboveFieldM - eeke.elevationM) < 6.0);
+  CHECK(std::fabs(std::remainder(f.s.gridHeadingDeg - f.s.headingTrueDeg, 360.0)) > 1.0);
+}
 
 TEST(ils_approach_and_landing_from_10nm) {
   flyIlsLanding(A320_SCENARIO_FINAL_10NM);

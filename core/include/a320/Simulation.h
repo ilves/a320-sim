@@ -25,7 +25,7 @@ namespace a320 {
 
 class Simulation {
  public:
-  explicit Simulation(Airport airport);
+  explicit Simulation(World world);
   ~Simulation();
   Simulation(const Simulation&) = delete;
   Simulation& operator=(const Simulation&) = delete;
@@ -34,6 +34,9 @@ class Simulation {
   bool init(const std::string& jsbsimRoot, std::string* error);
 
   bool reset(A320Scenario scenario, int runwayIndex);
+  // A flight from depRunway to arrRunway: on the ground at the departure, or in the air distanceNm
+  // from the arrival (A320_SCENARIO_APPROACH; the finals use their fixed distances).
+  bool startFlight(A320Scenario scenario, int depRunway, int arrRunway, double distanceNm);
   void setControls(const A320Controls& c);
   void fcuCommand(A320FcuCommand cmd);
   void setFcuTargets(double spdKt, double hdgMagDeg, double altFt, double vsFpm);
@@ -45,8 +48,9 @@ class Simulation {
   const A320State& state() const { return state_; }
   const A320Controls& controls() const { return controls_; }
   SimClock& clock() { return clock_; }
-  const Airport& airport() const { return airport_; }
+  const World& world() const { return world_; }
   const LocalFrame& frame() const { return frame_; }
+  const LocalFrame& airportFrame(int airport) const { return airportFrames_[static_cast<size_t>(airport)]; }
   // The scenario runway's ILS (where the aircraft was placed); the tuned one is tunedIls().
   const Ils& ils() const { return ilsAll_[static_cast<size_t>(runwayIndex_)]; }
   int activeRunway() const { return runwayIndex_; }
@@ -72,8 +76,11 @@ class Simulation {
   double prop(const char* name) const;
   void setProp(const char* name, double v);
 
-  Airport airport_;
-  LocalFrame frame_;
+  World world_;
+  LocalFrame frame_;                       // the flat world's
+  std::vector<LocalFrame> airportFrames_;  // each airport's own, for its ILS geometry
+  int nearestAirport_ = 0;
+  double magVar() const { return world_.airports[static_cast<size_t>(nearestAirport_)].magneticVariationDeg; }
   std::unique_ptr<JSBSim::FGFDMExec> fdm_;
   std::vector<Ils> ilsAll_;  // one per runway direction
   int runwayIndex_ = 0;

@@ -26,13 +26,15 @@ struct Runway {
   GeoPos end;             // physical far end
   double trueCourseDeg = 0.0;
   double widthM = 45.0;
-  IlsSpec ils;
+  IlsSpec ils;            // ident empty: no ILS on this runway
+  int airport = 0;        // index into World::airports
 };
 
 struct Airport {
   std::string icao;
   std::string name;
-  GeoPos reference;  // origin of the sim's local frame, at field elevation
+  std::string city;  // as ATC says it: "Tallinn"
+  GeoPos reference;  // aerodrome reference point at field elevation; its ILS geometry uses a frame here
   double magneticVariationDeg = 0.0;  // east positive: magnetic = true - variation
   std::vector<Runway> runways;
 
@@ -42,6 +44,26 @@ struct Airport {
 // Lennart Meri Tallinn (EETN), runway 08/26, from OurAirports (public domain); ILS data from
 // the Estonian eAIP, EETN AD 2.19 (AIRAC 2026-10-01).
 Airport makeTallinn();
+// Kuressaare (EEKE), runway 17/35, ILS 17, from the Estonian eAIP, EEKE AD 2.12 and 2.19.
+Airport makeKuressaare();
+
+// Every airport of the sim. The flat world (what the front end renders, the aircraft's north and
+// east metres) is the first airport's tangent plane; runways are listed together, each knowing
+// its airport.
+struct World {
+  std::vector<Airport> airports;
+  std::vector<Runway> runways;
+  GeoPos reference;
+
+  const Airport& airportOf(int runway) const { return airports[static_cast<size_t>(runways[static_cast<size_t>(runway)].airport)]; }
+  int findRunway(const std::string& ident) const;  // -1 if none
+  // The airport closest to a point of the flat world (metres north/east).
+  int nearestAirport(double northM, double eastM) const;
+  std::vector<double> airportNorthM, airportEastM;  // reference points in the flat world
+};
+
+World makeWorld(std::vector<Airport> airports);
+World makeEstonia();  // EETN, EEKE
 
 struct RunwayPoint {
   double x = 0.0;  // metres along the landing course from the threshold (negative = on approach)

@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <exception>
 #include <new>
@@ -10,7 +11,7 @@
 #include "a320/a320_api.h"
 
 struct A320Sim {
-  a320::Simulation sim{a320::makeTallinn()};
+  a320::Simulation sim{a320::makeEstonia()};
   a320::GuideRunner guide;
 };
 
@@ -55,6 +56,31 @@ int a320_reset(A320Sim* sim, A320Scenario scenario, int runwayIndex) {
   }
 }
 
+int a320_start_flight(A320Sim* sim, A320Scenario scenario, int depRunway, int arrRunway, double distanceNm) {
+  if (!sim) return 0;
+  try {
+    return sim->sim.startFlight(scenario, depRunway, arrRunway, distanceNm) ? 1 : 0;
+  } catch (...) {
+    return 0;
+  }
+}
+
+int a320_airport_count(const A320Sim* sim) { return sim ? static_cast<int>(sim->sim.world().airports.size()) : 0; }
+
+int a320_get_airport(const A320Sim* sim, int index, A320AirportInfo* info) {
+  if (!sim || !info || index < 0 || index >= a320_airport_count(sim)) return 0;
+  const a320::World& w = sim->sim.world();
+  const a320::Airport& a = w.airports[static_cast<size_t>(index)];
+  *info = A320AirportInfo{};
+  std::snprintf(info->icao, sizeof(info->icao), "%s", a.icao.c_str());
+  std::snprintf(info->name, sizeof(info->name), "%s", a.name.c_str());
+  info->northM = w.airportNorthM[static_cast<size_t>(index)];
+  info->eastM = w.airportEastM[static_cast<size_t>(index)];
+  info->elevationM = a.reference.altM - w.reference.altM;
+  info->magneticVariationDeg = a.magneticVariationDeg;
+  return 1;
+}
+
 void a320_set_controls(A320Sim* sim, const A320Controls* controls) {
   if (sim && controls) sim->sim.setControls(*controls);
 }
@@ -86,29 +112,39 @@ void a320_set_sim_rate(A320Sim* sim, double rate) {
   if (sim) sim->sim.clock().setRate(rate);
 }
 
-const char* a320_airport_icao(const A320Sim* sim) { return sim ? sim->sim.airport().icao.c_str() : ""; }
+// The first airport's: the flat world's origin.
+const char* a320_airport_icao(const A320Sim* sim) { return sim ? sim->sim.world().airports[0].icao.c_str() : ""; }
 
 double a320_field_elevation_ft(const A320Sim* sim) {
-  return sim ? sim->sim.airport().reference.altM / 0.3048 : 0.0;
+  return sim ? sim->sim.world().reference.altM / 0.3048 : 0.0;
 }
 
 double a320_magnetic_variation_deg(const A320Sim* sim) {
-  return sim ? sim->sim.airport().magneticVariationDeg : 0.0;
+  return sim ? sim->sim.world().airports[0].magneticVariationDeg : 0.0;
 }
 
 int a320_runway_count(const A320Sim* sim) {
-  return sim ? static_cast<int>(sim->sim.airport().runways.size()) : 0;
+  return sim ? static_cast<int>(sim->sim.world().runways.size()) : 0;
 }
 
 int a320_get_runway(const A320Sim* sim, int index, A320RunwayInfo* info) {
   if (!sim || !info || index < 0 || index >= a320_runway_count(sim)) return 0;
   const a320::Simulation& s = sim->sim;
-  const a320::Runway& rw = s.airport().runways[static_cast<size_t>(index)];
-  const a320::Ils ils(s.frame(), rw);
+  const a320::World& w = s.world();
+  const a320::Runway& rw = w.runways[static_cast<size_t>(index)];
+  const a320::Airport& airport = w.airports[static_cast<size_t>(rw.airport)];
+  // Geometry in the runway's own airport frame, placed in the flat world through geodetic
+  // coordinates like the aircraft (see Simulation::refreshState).
+  const a320::LocalFrame& af = s.airportFrame(rw.airport);
+  const a320::Ils ils(af, rw);
   const a320::RunwayAxes& axes = ils.axes();
 
   *info = A320RunwayInfo{};
   std::snprintf(info->ident, sizeof(info->ident), "%s", rw.ident.c_str());
+  std::snprintf(info->icao, sizeof(info->icao), "%s", airport.icao.c_str());
+  info->airport = rw.airport;
+  info->elevationM = rw.threshold.altM - w.reference.altM;
+  info->hasIls = rw.ils.ident.empty() ? 0 : 1;
   info->trueCourseDeg = rw.trueCourseDeg;
   info->widthM = rw.widthM;
   info->landingDistanceM = axes.landingDistanceM();
@@ -116,7 +152,7 @@ int a320_get_runway(const A320Sim* sim, int index, A320RunwayInfo* info) {
   info->glideslopeDeg = ils.glideslopeDeg();
 
   auto put = [&](double x, double& north, double& east) {
-    const a320::Enu p = axes.toEnu({x, 0.0, 0.0});
+    const a320::Enu p = s.frame().toEnu(af.toGeo(axes.toEnu({x, 0.0, 0.0})));
     north = p.n;
     east = p.e;
   };
@@ -125,6 +161,8 @@ int a320_get_runway(const A320Sim* sim, int index, A320RunwayInfo* info) {
   put(axes.landingDistanceM(), info->endNorthM, info->endEastM);
   put(ils.localizerX(), info->localizerNorthM, info->localizerEastM);
   put(ils.glideslopeOriginX(), info->gsOriginNorthM, info->gsOriginEastM);
+  info->gridCourseDeg = std::atan2(info->endEastM - info->startEastM, info->endNorthM - info->startNorthM) * 57.29577951308232;
+  if (info->gridCourseDeg < 0.0) info->gridCourseDeg += 360.0;
   return 1;
 }
 

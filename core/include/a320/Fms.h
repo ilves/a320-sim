@@ -7,6 +7,7 @@ namespace a320 {
 // What the crew entered in the MCDU: departure and arrival, radio tuning and performance data.
 // Indices refer to Airport::runways (one per landing direction); -1 = none.
 struct Fms {
+  int originAirport = 0, destAirport = 0;  // World::airports (INIT FROM/TO)
   int depRunway = -1;
   int arrRunway = -1;      // inserted arrival approach (the runway's ILS)
   int manualIls = -1;      // RAD NAV entry; -1 = auto-tuned

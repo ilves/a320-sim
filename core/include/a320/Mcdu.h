@@ -20,10 +20,10 @@ ConfigSpeeds computeConfigSpeeds(double weightLbs);
 
 // VAPP: the entered value, else VLS of the landing configuration plus a third of the headwind
 // component (5 to 15 kt).
-double computeVapp(const Fms& fms, const ConfigSpeeds& speeds, const Airport& airport);
+double computeVapp(const Fms& fms, const ConfigSpeeds& speeds, const World& world);
 
 struct McduContext {
-  const Airport& airport;
+  const World& world;
   const LocalFrame& frame;
   const A320State& state;
   Fms& fms;
