@@ -9,6 +9,9 @@
 #include "Components/SkyLightComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
+#include "Engine/World.h"
+#include "GameFramework/Pawn.h"
+#include "GameFramework/PlayerController.h"
 #include "Materials/MaterialInterface.h"
 #include "Math/RandomStream.h"
 #include "UObject/ConstructorHelpers.h"
@@ -55,7 +58,10 @@ namespace
 
 AA320World::AA320World()
 {
-	PrimaryActorTick.bCanEverTick = false;
+	// Ticks only to stream the terrain around the aircraft, also while the sim is paused.
+	PrimaryActorTick.bCanEverTick = true;
+	PrimaryActorTick.bStartWithTickEnabled = true;
+	PrimaryActorTick.bTickEvenWhenPaused = true;
 	Shapes.LoadInConstructor();
 	// The 3D widget material: opaque, unlit, one texture. Terrain fallback where no material compiler exists.
 	static ConstructorHelpers::FObjectFinder<UMaterialInterface> UnlitFinder(
@@ -86,6 +92,36 @@ AA320World::AA320World()
 	Fog->SetupAttachment(Root);
 	Fog->SetFogDensity(0.004f);
 	Fog->SetFogHeightFalloff(0.05f);
+}
+
+void AA320World::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+	if (!TerrainStreamer)
+	{
+		return;
+	}
+	// The aircraft is the pawn; before it is possessed, the aircraft that spawned this world.
+	const APlayerController* Controller = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr;
+	const AActor* Viewer = Controller ? Controller->GetPawn() : nullptr;
+	if (!Viewer)
+	{
+		Viewer = GetOwner();
+	}
+	if (Viewer)
+	{
+		TerrainStreamer->Tick(Viewer->GetActorLocation());
+	}
+}
+
+void AA320World::EndPlay(const EEndPlayReason::Type Reason)
+{
+	if (TerrainStreamer)
+	{
+		TerrainStreamer->Shutdown();
+		TerrainStreamer.Reset();
+	}
+	Super::EndPlay(Reason);
 }
 
 UStaticMeshComponent* AA320World::AddMesh(UStaticMesh* Mesh, const FVector& CentreM, double YawDeg,
@@ -127,6 +163,7 @@ void AA320World::Build(const TArray<A320RunwayInfo>& Runways)
 	}
 
 	const FA320TerrainResult Terrain = A320Terrain::Build(this, Root, Shapes, UnlitTextureMaterial);
+	TerrainStreamer = Terrain.Streamer;
 	if (!Terrain.bLoaded)
 	{
 		// Flat stand-in: grass to 40 km, with the Baltic to the north (Tallinn Bay, ~6 km).

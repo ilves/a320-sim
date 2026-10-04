@@ -9,9 +9,12 @@ the ILS and land, from a glass cockpit with a working PFD, ND and E/WD.
   through the THS, protections (bank, pitch and alpha) and the flare law.
 - **Airport:** EETN runway 08/26 at its real coordinates. It has ILS on both runways, PAPI,
   approach and edge lights and runway markings.
-- **Scenery:** real terrain around Tallinn from open data. That is 80 × 80 km of satellite
-  imagery (about 10 m per pixel) on real elevation, with lower detail out to 300 km, plus about
-  135,000 OpenStreetMap buildings within 20 km. See [Scenery](#scenery).
+- **Scenery:** real terrain from open data, satellite imagery on real elevation:
+  - **All of Estonia:** about 20 m per pixel, islands included.
+  - **Around Tallinn:** 80 × 80 km at about 10 m per pixel.
+  - **Buildings:** about 135,000 OpenStreetMap buildings within 20 km of the airport.
+  - **Performance:** only what is near the aircraft is loaded, streamed in the background. See
+    [Scenery](#scenery).
 - **Cockpit:**
   - PFD: attitude, speed tape with VLS/VMAX, altitude, vertical speed, heading and ILS
     deviation.

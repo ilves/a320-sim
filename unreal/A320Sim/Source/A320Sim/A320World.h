@@ -4,6 +4,7 @@
 #include "GameFramework/Actor.h"
 
 #include "A320Shapes.h"
+#include "A320Terrain.h"
 #include "a320/a320_api.h"
 
 #include "A320World.generated.h"
@@ -27,6 +28,9 @@ class AA320World : public AActor
 public:
 	AA320World();
 
+	virtual void Tick(float DeltaSeconds) override;
+	virtual void EndPlay(const EEndPlayReason::Type Reason) override;
+
 	void Build(const TArray<A320RunwayInfo>& Runways);
 	// papiWhite: left to right as seen on approach.
 	void UpdatePapi(int32 RunwayIndex, const int PapiWhite[4]);
@@ -48,4 +52,6 @@ private:
 	UPROPERTY() FA320Shapes Shapes;
 	UPROPERTY() TObjectPtr<UMaterialInterface> UnlitTextureMaterial;
 	TArray<int32> PapiShown;
+	// Streams terrain tiles and buildings around the aircraft each tick; null without streamed data.
+	TSharedPtr<FA320TerrainStreamer> TerrainStreamer;
 };
