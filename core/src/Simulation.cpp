@@ -12,6 +12,7 @@
 #include "initialization/FGTrim.h"
 #include "models/FGInertial.h"
 #include "models/FGPropulsion.h"
+#include "models/atmosphere/FGWinds.h"
 #include "models/propulsion/FGTurbine.h"
 #include "simgear/misc/sg_path.hxx"
 
@@ -181,7 +182,7 @@ bool Simulation::startFlight(A320Scenario scenario, int depRunway, int arrRunway
     ic->SetPsiDegIC(headingDeg);
     ic->SetPhiDegIC(0.0);
     ic->SetThetaDegIC(0.0);
-    ic->SetWindNEDFpsIC(0.0, 0.0, 0.0);
+    ic->SetWindNEDFpsIC(0.0, 0.0, 0.0);  // applyWind() sets it after the reset
     if (onRunway) {
       ic->SetVcalibratedKtsIC(0.0);
       ic->SetAltitudeAGLFtIC(kRadioAltOffsetFt);
@@ -192,6 +193,7 @@ bool Simulation::startFlight(A320Scenario scenario, int depRunway, int arrRunway
     }
 
     fdm_->ResetToInitialConditions(0);
+    applyWind();
     // Commands must be set after the reset (it zeroes the FCS); positions are set too so
     // gear and flaps start where they are commanded instead of travelling there.
     setProp("gear/gear-cmd-norm", controls_.gearDown ? 1.0 : 0.0);
@@ -469,6 +471,25 @@ void Simulation::fcuCommand(A320FcuCommand cmd) {
     hint("No ILS is tuned: insert the approach on the MCDU (F-PLN, the destination line, ARRIVAL, the ILS, INSERT) "
          "or type the ILS on RAD NAV.");
   refreshState();
+}
+
+void Simulation::setFcuFpa(double fpaDeg) {
+  ap_.setFpa(fpaDeg);
+  refreshState();
+}
+
+void Simulation::setWind(double fromTrueDeg, double kt) {
+  windFromTrueDeg_ = std::fmod(std::fmod(fromTrueDeg, 360.0) + 360.0, 360.0);
+  windKt_ = std::max(0.0, kt);
+  applyWind();
+  refreshState();
+}
+
+void Simulation::applyWind() {
+  if (!fdm_) return;
+  // It blows from windFromTrueDeg_: the air moves the other way. JSBSim wants feet per second.
+  const double fps = windKt_ * kKtToMps * kMToFt, toRad = (windFromTrueDeg_ + 180.0) * kDegToRad;
+  fdm_->GetWinds()->SetWindNED(fps * std::cos(toRad), fps * std::sin(toRad), 0.0);
 }
 
 void Simulation::setFcuTargets(double spdKt, double hdgMagDeg, double altFt, double vsFpm) {
@@ -921,6 +942,10 @@ void Simulation::refreshState() {
   s.fcuHdgMagDeg = ap_.hdgMagDeg();
   s.fcuAltFt = ap_.altFt();
   s.fcuVsFpm = ap_.vsFpm();
+  s.fcuFpaDeg = ap_.fpaDeg();
+  s.fcuTrkFpa = ap_.trkFpa() ? 1 : 0;
+  s.windFromTrueDeg = windFromTrueDeg_;
+  s.windKt = windKt_;
   s.apDisconnectSeq = ap_.disconnectSeq();
 
   s.apuN = apu_.n();

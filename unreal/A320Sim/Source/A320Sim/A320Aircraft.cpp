@@ -385,6 +385,24 @@ void AA320Aircraft::AdjustFcu(double DSpd, double DHdg, double DAlt, double DVs)
 	}
 }
 
+void AA320Aircraft::AdjustVs(int32 Clicks)
+{
+	// A click of the V/S knob is 100 ft/min, or 0.1 degree in TRK-FPA.
+	if (!Sim)
+	{
+		return;
+	}
+	if (State.fcuTrkFpa)
+	{
+		a320_fcu_set_fpa(Sim, State.fcuFpaDeg + 0.1 * Clicks);
+		a320_get_state(Sim, &State);
+	}
+	else
+	{
+		AdjustFcu(0.0, 0.0, 0.0, 100.0 * Clicks);
+	}
+}
+
 void AA320Aircraft::UpdateTransform()
 {
 	// Flat world: X north, Y east, Z up from field elevation, in centimetres. FRotator's
@@ -439,7 +457,10 @@ void AA320Aircraft::ExecuteCommand(EA320Command Command, bool bLarge, int32 Para
 	case EA320Command::FcuAp: Fcu(A320_FCU_AP1); break;
 	case EA320Command::FcuAp2: Fcu(A320_FCU_AP2); break;
 	case EA320Command::FcuAthr: Fcu(A320_FCU_ATHR); break;
-	case EA320Command::FcuHdgPull: Fcu(A320_FCU_HDG_PULL); break;
+	// Shift (keyboard or click) pushes a knob instead of pulling it, as the joystick's bLarge.
+	case EA320Command::FcuHdgPull: Fcu(bLarge ? A320_FCU_HDG_PUSH : A320_FCU_HDG_PULL); break;
+	case EA320Command::FcuHdgPush: Fcu(A320_FCU_HDG_PUSH); break;
+	case EA320Command::FcuTrkFpa: Fcu(A320_FCU_TRK_FPA); break;
 	case EA320Command::FcuLoc: Fcu(A320_FCU_LOC); break;
 	case EA320Command::FcuAppr:
 		Fcu(A320_FCU_APPR);
@@ -543,16 +564,17 @@ void AA320Aircraft::ExecuteCommand(EA320Command Command, bool bLarge, int32 Para
 		break;
 	case EA320Command::SignSeatbelts: Controls.signs ^= A320_SIGN_SEATBELTS; break;
 	case EA320Command::SignNoSmoking: Controls.signs ^= A320_SIGN_NO_SMOKING; break;
-	case EA320Command::FcuAltPull: Fcu(A320_FCU_ALT_PULL); break;
-	case EA320Command::FcuVsPull: Fcu(A320_FCU_VS_PULL); break;
+	case EA320Command::FcuAltPull: Fcu(bLarge ? A320_FCU_ALT_PUSH : A320_FCU_ALT_PULL); break;
+	case EA320Command::FcuAltPush: Fcu(A320_FCU_ALT_PUSH); break;
+	case EA320Command::FcuVsPull: Fcu(bLarge ? A320_FCU_VS_PUSH : A320_FCU_VS_PULL); break;
 	case EA320Command::SpdDec: AdjustFcu(-Step, 0.0, 0.0, 0.0); break;
 	case EA320Command::SpdInc: AdjustFcu(Step, 0.0, 0.0, 0.0); break;
 	case EA320Command::HdgDec: AdjustFcu(0.0, -Step, 0.0, 0.0); break;
 	case EA320Command::HdgInc: AdjustFcu(0.0, Step, 0.0, 0.0); break;
 	case EA320Command::AltDec: AdjustFcu(0.0, 0.0, -100.0 * Step, 0.0); break;
 	case EA320Command::AltInc: AdjustFcu(0.0, 0.0, 100.0 * Step, 0.0); break;
-	case EA320Command::VsDec: AdjustFcu(0.0, 0.0, 0.0, bLarge ? -500.0 : -100.0); break;
-	case EA320Command::VsInc: AdjustFcu(0.0, 0.0, 0.0, bLarge ? 500.0 : 100.0); break;
+	case EA320Command::VsDec: AdjustVs(bLarge ? -5 : -1); break;
+	case EA320Command::VsInc: AdjustVs(bLarge ? 5 : 1); break;
 	case EA320Command::MasterWarnAck:
 		if (Sim)
 		{
@@ -587,16 +609,7 @@ void AA320Aircraft::ExecuteCommand(EA320Command Command, bool bLarge, int32 Para
 	case EA320Command::LsToggle: bLsOn = !bLsOn; break;
 	case EA320Command::NdRangeDown: NdRangeNm = FMath::Max(NdRangeNm / 2, 5); break;
 	case EA320Command::NdRangeUp: NdRangeNm = FMath::Min(NdRangeNm * 2, 320); break;
-	case EA320Command::FcuVsPush:
-		// Push the V/S knob: level off at V/S 0.
-		if (Sim)
-		{
-			// The pull takes the current V/S as its target, so 0 is set after it.
-			a320_fcu_command(Sim, A320_FCU_VS_PULL);
-			a320_fcu_set_targets(Sim, State.fcuSpdKt, State.fcuHdgMagDeg, State.fcuAltFt, 0.0);
-			a320_get_state(Sim, &State);
-		}
-		break;
+	case EA320Command::FcuVsPush: Fcu(A320_FCU_VS_PUSH); break;
 	case EA320Command::PauseToggle:
 		if (Sim)
 		{

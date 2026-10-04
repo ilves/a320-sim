@@ -21,7 +21,7 @@
 extern "C" {
 #endif
 
-#define A320_API_VERSION 12
+#define A320_API_VERSION 13
 
 typedef enum A320Scenario {
   A320_SCENARIO_RUNWAY = 0,     /* lined up, engines idle, CONF 1+F, park brake set */
@@ -33,12 +33,14 @@ typedef enum A320Scenario {
 
 /* Autoflight (FCU) modes, as shown on the PFD's flight mode annunciator. */
 typedef enum A320LatMode {
-  A320_LAT_NONE = 0, A320_LAT_HDG, A320_LAT_LOC_STAR, A320_LAT_LOC, A320_LAT_ROLLOUT
+  A320_LAT_NONE = 0, A320_LAT_HDG, A320_LAT_LOC_STAR, A320_LAT_LOC, A320_LAT_ROLLOUT,
+  A320_LAT_TRK /* API 13: the selected track (TRK-FPA reference) */
 } A320LatMode;
 typedef enum A320VertMode {
   A320_VERT_NONE = 0, A320_VERT_ALT, A320_VERT_ALT_STAR, A320_VERT_VS, A320_VERT_OP_CLB, A320_VERT_OP_DES,
   A320_VERT_GS, A320_VERT_LAND, A320_VERT_FLARE,
-  A320_VERT_GS_STAR /* glideslope capture, before G/S */
+  A320_VERT_GS_STAR, /* glideslope capture, before G/S */
+  A320_VERT_FPA      /* API 13: the selected flight path angle (TRK-FPA reference) */
 } A320VertMode;
 typedef enum A320AthrMode {
   A320_ATHR_OFF = 0, A320_ATHR_SPEED, A320_ATHR_THR_CLB, A320_ATHR_THR_IDLE, A320_ATHR_RETARD,
@@ -58,7 +60,12 @@ typedef enum A320FcuCommand {
   A320_FCU_APPR,      /* arm (or disarm) localizer + glideslope capture, autoland */
   A320_FCU_ALT_PULL,  /* open climb / descent to the selected altitude */
   A320_FCU_VS_PULL,   /* hold the selected vertical speed */
-  A320_FCU_AP2        /* second autopilot: both only with LOC or APPR (autoland CAT 3 DUAL) */
+  A320_FCU_AP2,       /* second autopilot: both only with LOC or APPR (autoland CAT 3 DUAL) */
+  /* API 13. */
+  A320_FCU_TRK_FPA,   /* HDG-V/S / TRK-FPA pushbutton: the heading and V/S windows become track and FPA */
+  A320_FCU_HDG_PUSH,  /* NAV is not simulated: hold the present heading (track), wings level */
+  A320_FCU_ALT_PUSH,  /* managed climb/descent is not simulated: level off at the present altitude */
+  A320_FCU_VS_PUSH    /* level off: V/S 0 (FPA 0) */
 } A320FcuCommand;
 
 /* Sounds the front end can trigger in addition to the ones the core raises itself. */
@@ -213,7 +220,7 @@ typedef struct A320State {
   uint32_t touchdownSeq;
   double touchdownFpm, touchdownDistanceM, touchdownCenterlineM;
 
-  /* Autoflight. FCU heading is magnetic. */
+  /* Autoflight. FCU heading is magnetic; in TRK-FPA (fcuTrkFpa) it is the selected track. */
   int apEngaged, athrEngaged, athrActive;
   int latMode, vertMode, athrMode, armed; /* A320LatMode, A320VertMode, A320AthrMode, A320_ARMED_* bits */
   double fcuSpdKt, fcuHdgMagDeg, fcuAltFt, fcuVsFpm;
@@ -286,6 +293,10 @@ typedef struct A320State {
   /* After a breakup: [0] the nose section, [1] the rest (wings, engines, tail), falling. After
    * a crash both are the aircraft where it hit. */
   A320Section sections[2];
+  /* API 13. */
+  int fcuTrkFpa;       /* HDG-V/S / TRK-FPA pushbutton in TRK-FPA */
+  double fcuFpaDeg;    /* selected flight path angle */
+  double windFromTrueDeg, windKt;
 } A320State;
 
 typedef struct A320RunwayInfo {
@@ -362,6 +373,10 @@ A320_API int a320_get_runway(const A320Sim* sim, int index, A320RunwayInfo* info
 A320_API void a320_fcu_command(A320Sim* sim, A320FcuCommand command);
 /* Selected targets; the FCU rounds them like the real knobs (1 kt, 1 deg, 100 ft, 100 fpm). */
 A320_API void a320_fcu_set_targets(A320Sim* sim, double spdKt, double hdgMagDeg, double altFt, double vsFpm);
+/* The selected flight path angle (API 13), rounded to 0.1 degree, at most 9.9 either way. */
+A320_API void a320_fcu_set_fpa(A320Sim* sim, double fpaDeg);
+/* A steady wind (API 13), the direction it blows from (true). It stays for later flights. */
+A320_API void a320_set_wind(A320Sim* sim, double fromTrueDeg, double kt);
 A320_API const char* a320_lat_mode_name(int latMode);
 A320_API const char* a320_vert_mode_name(int vertMode);
 A320_API const char* a320_athr_mode_name(int athrMode);

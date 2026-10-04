@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 
 #include "a320/a320_api.h"
 
@@ -41,6 +42,7 @@ class Autopilot {
   // Scenario start: AP1 in HDG and ALT, A/THR in SPEED.
   void engageCruise();
   void setTargets(double spdKt, double hdgMagDeg, double altFt, double vsFpm);
+  void setFpa(double fpaDeg);
   ApOutput update(const ApInput& in);
 
   bool apEngaged() const { return ap1_ || ap2_; }
@@ -55,6 +57,8 @@ class Autopilot {
   double hdgMagDeg() const { return hdg_; }
   double altFt() const { return alt_; }
   double vsFpm() const { return vs_; }
+  double fpaDeg() const { return fpa_; }
+  bool trkFpa() const { return trkFpa_; }
   uint32_t disconnectSeq() const { return disconnects_; }
 
  private:
@@ -68,14 +72,23 @@ class Autopilot {
   void enterVertical(A320VertMode mode, const ApInput& in);
   // The selected speed kept between VLS and VMAX, as the flight guidance does.
   double protectedSpeed(const ApInput& in) const;
+  // The modes the HDG and V/S knobs engage under the HDG-V/S / TRK-FPA pushbutton.
+  A320LatMode selectedLateral() const { return trkFpa_ ? A320_LAT_TRK : A320_LAT_HDG; }
+  A320VertMode selectedVertical() const { return trkFpa_ ? A320_VERT_FPA : A320_VERT_VS; }
+  // The present heading, or track in TRK-FPA, magnetic and rounded as the window shows it.
+  double presentDirection(const ApInput& in) const;
+  void syncVerticalTargets(const ApInput& in);
 
   bool ap1_ = false, ap2_ = false, athr_ = false;
   A320LatMode lat_ = A320_LAT_NONE;
   A320VertMode vert_ = A320_VERT_NONE;
   A320AthrMode athrMode_ = A320_ATHR_OFF;
   bool locArmed_ = false, gsArmed_ = false;
-  double spd_ = 160.0, hdg_ = 0.0, alt_ = 3000.0, vs_ = 0.0;
+  double spd_ = 160.0, hdg_ = 0.0, alt_ = 3000.0, vs_ = 0.0, fpa_ = 0.0;
+  bool trkFpa_ = false;
+  std::string hint_;  // a formatted hint, returned by command()
   double fpaIntegral_ = 0.0;
+  double pathTrim_ = 0.0;  // V/S and FPA: slow integral of the path error
   double gsIntegral_ = 0.0;
   double modeTimeS_ = 0.0;  // time in G/S*
   double speedIntegral_ = 0.0;

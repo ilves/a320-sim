@@ -309,7 +309,10 @@ void FA320WingFlex::HandleFcu(AA320Aircraft& Aircraft, const FcuInput& In)
 		{kLoc, EA320Command::FcuLoc},
 		{kAppr, EA320Command::FcuAppr},
 		{kHdgPull, EA320Command::FcuHdgPull},
+		{kHdgPush, EA320Command::FcuHdgPush},
+		{kHdgTrk, EA320Command::FcuTrkFpa},
 		{kAltPull, EA320Command::FcuAltPull},
+		{kAltPush, EA320Command::FcuAltPush},
 		{kVsPull, EA320Command::FcuVsPull},
 		{kVsPush, EA320Command::FcuVsPush},
 	};
@@ -406,11 +409,15 @@ void FA320WingFlex::SendOutputs(const AA320Aircraft& Aircraft, double Now)
 		O.athr = St.athrEngaged != 0;
 		// On the localizer the heading window shows dashes; out of V/S mode the V/S window does.
 		O.hdgDashed = St.latMode == A320_LAT_LOC_STAR || St.latMode == A320_LAT_LOC || St.latMode == A320_LAT_ROLLOUT;
-		O.vsDashed = St.vertMode != A320_VERT_VS;
+		O.vsDashed = St.vertMode != A320_VERT_VS && St.vertMode != A320_VERT_FPA;
+		O.trkFpa = St.fcuTrkFpa != 0;
 		O.spd = static_cast<uint16>(FMath::Clamp(FMath::RoundToInt(St.fcuSpdKt), 0, 999));
 		O.hdg = static_cast<uint16>((FMath::RoundToInt(St.fcuHdgMagDeg) + 359) % 360 + 1);
 		O.alt = static_cast<uint16>(FMath::Clamp(FMath::RoundToInt(St.fcuAltFt), 0, 65000));
-		O.vs = static_cast<int16>(FMath::Clamp(FMath::RoundToInt(St.fcuVsFpm), -9900, 9900));
+		// FPA in tenths of a degree (-2.5 as -25). MobiFlight's driver doesn't document the FPA
+		// format; this assumes the panel adds the point itself in TRK-FPA.
+		O.vs = static_cast<int16>(St.fcuTrkFpa ? FMath::RoundToInt(St.fcuFpaDeg * 10.0)
+			: FMath::Clamp(FMath::RoundToInt(St.fcuVsFpm), -9900, 9900));
 		O.backlight = Backlight;
 		O.lcd = LcdBrightness;
 		const Payload Out = buildFcu(O);

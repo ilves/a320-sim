@@ -26,7 +26,7 @@ struct ApFlight {
   A320RunwayInfo rw{};
   double magVar = 0.0;
   int maxLat = 0, maxVert = 0;
-  bool sawLat[5] = {}, sawVert[12] = {};
+  bool sawLat[8] = {}, sawVert[12] = {};
 
   explicit ApFlight(A320Scenario scenario) {
     char err[256] = {0};
@@ -256,4 +256,111 @@ TEST(alpha_floor_and_toga_lock) {
   std::printf("  after A/THR off: mode %s, N1 %.0f %% (levers at idle)\n", a320_athr_mode_name(f.s.athrMode), f.s.n1[0]);
   CHECK(!f.s.athrEngaged && f.s.athrMode == A320_ATHR_OFF);
   CHECK(f.s.n1[0] < 50.0);
+}
+
+TEST(ap_track_holds_the_ground_track_in_a_crosswind) {
+  ApFlight f(A320_SCENARIO_APPROACH);
+  if (!f.sim) { CHECK(false); return; }
+  // Wind from the north at 40 kt: a pure crosswind on a westerly track.
+  a320_set_wind(f.sim, 0.0, 40.0);
+  f.refresh();
+  const double trackMag = 270.0;
+  auto trkMag = [&] { return std::fmod(f.s.trackTrueDeg - f.magVar + 360.0, 360.0); };
+  auto hdgMag = [&] { return std::fmod(f.s.headingTrueDeg - f.magVar + 360.0, 360.0); };
+  CHECK(f.s.apEngaged == 1 && f.s.latMode == A320_LAT_HDG);
+  f.fcu(A320_FCU_TRK_FPA);
+  // An engaged HDG becomes TRK on the present track; ALT stays ALT.
+  CHECK(f.s.fcuTrkFpa == 1 && f.s.latMode == A320_LAT_TRK && f.s.vertMode == A320_VERT_ALT);
+  CHECK(std::fabs(wrap180(f.s.fcuHdgMagDeg - trkMag())) < 1.0);
+  CHECK(std::strcmp(a320_lat_mode_name(A320_LAT_TRK), "TRK") == 0);
+  f.targets(220, trackMag, 3000, 0);
+  f.fly(120.0);
+  const double crab = wrap180(f.s.trackTrueDeg - f.s.headingTrueDeg);
+  std::printf("  TRK 270 in 40 kt from 360: track %.1f, heading %.1f (drift %.1f), bank %.1f\n", trkMag(), hdgMag(),
+              crab, f.s.bankDeg);
+  CHECK(std::fabs(wrap180(trkMag() - trackMag)) < 1.0);
+  CHECK(std::fabs(crab) > 6.0);  // into the wind: heading right of the track
+  CHECK(std::fabs(f.s.bankDeg) < 3.0);
+
+  // Back to HDG (synced to the present heading), then HDG 270: the wind takes the track away.
+  f.fcu(A320_FCU_TRK_FPA);
+  CHECK(f.s.fcuTrkFpa == 0 && f.s.latMode == A320_LAT_HDG);
+  CHECK(std::fabs(wrap180(f.s.fcuHdgMagDeg - hdgMag())) < 1.0);
+  f.targets(220, trackMag, 3000, 0);
+  f.fly(60.0);
+  std::printf("  HDG 270: heading %.1f, track %.1f\n", hdgMag(), trkMag());
+  CHECK(std::fabs(wrap180(hdgMag() - trackMag)) < 1.0);
+  CHECK(wrap180(trkMag() - trackMag) < -6.0);  // blown south of west
+}
+
+TEST(ap_fpa_holds_the_path_angle_down_to_the_altitude) {
+  ApFlight f(A320_SCENARIO_APPROACH);
+  if (!f.sim) { CHECK(false); return; }
+  f.fcu(A320_FCU_TRK_FPA);
+  f.targets(200, f.s.fcuHdgMagDeg, 1500, 0);
+  f.fcu(A320_FCU_VS_PULL);
+  CHECK(f.s.vertMode == A320_VERT_FPA && std::fabs(f.s.fcuFpaDeg) < 0.5);
+  a320_fcu_set_fpa(f.sim, -3.04);
+  f.refresh();
+  CHECK_NEAR(f.s.fcuFpaDeg, -3.0, 1e-9);
+  CHECK(f.s.armed & A320_ARMED_ALT);
+  double minFpa = 0.0, maxFpa = -10.0, t = 0.0;
+  f.fly(60.0, [&] {
+    t += kDt;
+    if (t > 25.0) {
+      minFpa = std::fmin(minFpa, f.s.flightPathDeg);
+      maxFpa = std::fmax(maxFpa, f.s.flightPathDeg);
+    }
+    return true;
+  });
+  std::printf("  FPA -3.0: path %.2f..%.2f deg, V/S %.0f fpm, IAS %.0f\n", minFpa, maxFpa, f.s.verticalSpeedFpm, f.s.iasKt);
+  CHECK(f.s.vertMode == A320_VERT_FPA);
+  CHECK(minFpa > -3.4 && maxFpa < -2.6);
+  f.fly(120.0);
+  std::printf("  then %s at %.0f ft (1500)\n", a320_vert_mode_name(f.s.vertMode), f.s.altitudeFt);
+  CHECK(f.sawVert[A320_VERT_ALT_STAR] && f.s.vertMode == A320_VERT_ALT);
+  CHECK_NEAR(f.s.altitudeFt, 1500.0, 60.0);
+  CHECK(std::strcmp(a320_vert_mode_name(A320_VERT_FPA), "FPA") == 0);
+}
+
+TEST(ap_hdg_alt_and_vs_pushes_level_off) {
+  ApFlight f(A320_SCENARIO_APPROACH);
+  if (!f.sim) { CHECK(false); return; }
+  // Climbing in a turn: V/S +1500 towards 6000 ft, a heading 60 degrees off.
+  f.targets(220, std::fmod(f.s.fcuHdgMagDeg + 60.0, 360.0), 6000, 0);
+  f.fcu(A320_FCU_HDG_PULL);
+  f.fcu(A320_FCU_VS_PULL);
+  f.targets(220, f.s.fcuHdgMagDeg, 6000, 1500);
+  f.fly(12.0);
+  CHECK(std::fabs(f.s.bankDeg) > 10.0 && f.s.verticalSpeedFpm > 1000.0);
+
+  f.fcu(A320_FCU_HDG_PUSH);
+  const double hdgNow = std::fmod(f.s.headingTrueDeg - f.magVar + 360.0, 360.0);
+  CHECK(f.s.latMode == A320_LAT_HDG && std::fabs(wrap180(f.s.fcuHdgMagDeg - hdgNow)) < 1.0);
+  CHECK(std::strstr(f.s.hint, "NAV") != nullptr);
+  f.fcu(A320_FCU_ALT_PUSH);
+  const double pushedAt = f.s.altitudeFt, levelAt = f.s.fcuAltFt;
+  CHECK(std::fabs(levelAt - pushedAt) <= 50.0);
+  CHECK(f.s.vertMode == A320_VERT_ALT_STAR || f.s.vertMode == A320_VERT_ALT);
+  f.fly(40.0);
+  std::printf("  pushed at %.0f ft: holds %.0f ft (window %.0f), V/S %.0f, bank %.1f, heading %.0f (%.0f)\n", pushedAt,
+              f.s.altitudeFt, levelAt, f.s.verticalSpeedFpm, f.s.bankDeg,
+              std::fmod(f.s.headingTrueDeg - f.magVar + 360.0, 360.0), f.s.fcuHdgMagDeg);
+  CHECK(f.s.vertMode == A320_VERT_ALT);
+  CHECK_NEAR(f.s.altitudeFt, levelAt, 80.0);
+  CHECK(std::fabs(f.s.bankDeg) < 2.0);
+  CHECK(std::fabs(wrap180(f.s.headingTrueDeg - f.magVar - f.s.fcuHdgMagDeg)) < 8.0);
+
+  // V/S push: level off with FPA 0 in TRK-FPA.
+  f.targets(220, f.s.fcuHdgMagDeg, 1000, 0);
+  f.fcu(A320_FCU_TRK_FPA);
+  f.fcu(A320_FCU_VS_PULL);
+  a320_fcu_set_fpa(f.sim, -4.0);
+  f.fly(15.0);
+  CHECK(f.s.verticalSpeedFpm < -800.0);
+  f.fcu(A320_FCU_VS_PUSH);
+  CHECK(f.s.vertMode == A320_VERT_FPA && f.s.fcuFpaDeg == 0.0);
+  f.fly(25.0);
+  std::printf("  V/S push in FPA: V/S %.0f fpm\n", f.s.verticalSpeedFpm);
+  CHECK(std::fabs(f.s.verticalSpeedFpm) < 150.0);
 }

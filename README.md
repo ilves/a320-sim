@@ -39,6 +39,12 @@ working PFD, ND and E/WD. A FLIGHT menu at start picks the airports and how the 
 - **Autopilot and autothrust** through the FCU: HDG, LOC, APPR with **autoland** (LOC*, LOC,
   G/S*, G/S, LAND, FLARE, ROLL OUT), OPEN CLIMB/DESCENT, V/S, ALT capture and hold, and SPEED
   autothrust with RETARD.
+  - HDG-V/S / TRK-FPA pushbutton: TRK holds the ground track (the wind correction comes by
+    itself) and FPA a flight path angle (−9.9° to +9.9°). The windows, the FMA and your
+    hardware FCU switch with it; the PFD shows the flight path vector ("bird").
+  - Knob pushes: HDG push holds the present heading (track) wings level and ALT push levels off
+    at the present altitude, since NAV and managed climb/descent are not built; V/S push
+    levels off with V/S 0 (FPA 0).
   - AP1 and AP2: both engage only with LOC or APPR armed (CAT 3 DUAL), as on the aircraft.
   - The PFD's flight mode annunciator boxes a new mode for 10 s and shows CAT 3 SINGLE/DUAL.
   - Speed protection: A/THR and the autopilot never fly slower than VLS or faster than VMAX,
@@ -150,6 +156,7 @@ Other scripts:
 | Approach / localizer | K (APPR, autoland) / J (LOC) | |
 | FCU targets | 1/2 SPD, 3/4 HDG, 5/6 ALT, 7/8 V/S (Shift = ×10) | |
 | FCU modes | U fly the HDG, 9 climb/descend to ALT (LVL/CH), 0 hold V/S | |
+| FCU pushes, TRK-FPA | Shift+U hold heading, Shift+9 level off, Shift+0 V/S 0; \ HDG-V/S / TRK-FPA | |
 | Sound on/off, silence master warning | - (minus), M or click MASTER WARN | |
 | Overhead panel | O | |
 | MCDU | Tab (type on the keyboard while it's open, Backspace = CLR, Esc closes) | |
@@ -188,7 +195,7 @@ needs no drivers or plugins. Plug it in before or while the sim runs; it's picke
   - Selector positions set on press: ND mode ARC/NAV/LS, ND range 10…320, gear UP/DOWN,
     autobrake OFF/LO/MED/MAX.
   - Knobs and buttons act once per click: AP1, AP2, A/THR, LOC, APPR, SPD/HDG/ALT/V/S +/−,
-    HDG/ALT/V/S pull, V/S push (level off), LS, ND range +/−, the A/THR instinctive disconnect
+    HDG/ALT/V/S pull and push, HDG-V/S / TRK-FPA, LS, ND range +/−, the A/THR instinctive disconnect
     and more.
 - **Settings file:** `unreal\A320Sim\Saved\A320Joystick.ini` (`bind=` lines). Older
   `buttonN=` / `throttleButtonN=` lines still work.
@@ -232,12 +239,12 @@ simulated yet.
 
 **WingFlex FCU Cube and EFIS Cube:** the sim talks to them directly over USB, so nothing
 needs assigning:
-- **Buttons and knobs:** AP1, AP2, A/THR, LOC and APPR. The SPD, HDG, ALT and V/S knobs turn
-  the targets, HDG/ALT/V/S pull, and V/S push levels off. ALT steps 100 or 1000 ft with the
+- **Buttons and knobs:** AP1, AP2, A/THR, LOC, APPR and HDG-V/S / TRK-FPA. The SPD, HDG, ALT
+  and V/S knobs turn the targets; HDG, ALT and V/S pull and push. ALT steps 100 or 1000 ft with the
   100/1000 switch. On the EFIS: LS, the ND mode and range knobs, and MASTER WARN/CAUT.
 - **Lights and displays:** the AP1, AP2, A/THR, LOC and APPR lights. The SPD, HDG, ALT and V/S
   windows show the sim's targets, with dashes where the real FCU shows them (HDG on the
-  localizer, V/S outside V/S mode). The EFIS shows LS and flashing MASTER WARN/CAUT, and the
+  localizer, V/S outside V/S or FPA mode) and TRK-FPA lit when it is selected. The EFIS shows LS and flashing MASTER WARN/CAUT, and the
   baro window shows STD.
 - The panels' own brightness knobs set the brightness.
 - **Close WingFlex Bridge while flying this sim,** or both programs drive the displays. The
@@ -490,7 +497,8 @@ The lesson ends once you have stopped on the runway.
 - the selected values are in the amber windows;
 - −/+ change them, and Shift-click changes them ten times faster;
 - the HDG, LVL/CH and V/S buttons "pull" the knob, which tells the autopilot to fly the
-  selected value.
+  selected value, and Shift-click "pushes" it (hold the heading, level off, V/S 0);
+- HDG V/S switches to TRK FPA: the same windows then select a track and a flight path angle.
 
 1. **After takeoff.** The FCU is preset to 200 kt and 5000 ft.
    1. Above 100 ft, press **Ins** to put the thrust levers in CL, **T** for A/THR and **A**
@@ -651,7 +659,8 @@ The flight tests fly the real JSBSim A320 with a scripted pilot:
   runway, at Tallinn and at Kuressaare (its own ground elevation and ILS);
 - ATC flights: a Tallinn circuit, Kuressaare to Tallinn (AFIS, FL090, descent, ILS 26) and a
   40 NM straight-in to Kuressaare, flown by a crew that reads back, tunes and squawks;
-- the autopilot: OP CLB with ALT capture, a HDG turn, a V/S descent with capture, LOC
+- the autopilot: OP CLB with ALT capture, a HDG turn, a V/S descent with capture, TRK in a
+  40 kt crosswind, an FPA descent with capture, the HDG/ALT/V/S pushes, LOC
   intercept from a heading, instinctive disconnect, and a full autoland to a stop;
 - the audio engine: WAV loading, engine level following thrust, pause, callouts, and the
   master warning and its acknowledgment;
@@ -699,7 +708,7 @@ These are marked `a320-sim:` in `unreal/A320Sim/Content/JSBSim/aircraft/A320/A32
 - weather radar and TCAS;
 - trees as 3D objects (forests are in the imagery only), and buildings in the villages;
 - a 3D clickable cockpit;
-- wind and low visibility;
+- wind and low visibility (the core takes a steady wind, `a320_set_wind`; only the tests use it);
 - failures.
 
 **Approximations:**

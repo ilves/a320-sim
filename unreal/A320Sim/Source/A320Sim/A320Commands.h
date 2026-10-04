@@ -136,6 +136,10 @@ enum class EA320Command : uint8
 	MapZoomOut,
 	MapCentreAircraft,
 	MapFly,
+	// FCU: the HDG-V/S / TRK-FPA pushbutton and the HDG and ALT knob pushes (FcuVsPush above).
+	FcuTrkFpa,
+	FcuHdgPush,
+	FcuAltPush,
 };
 
 // Levers dragged with the mouse; the value is the handle position, 0 at the top of its slot.

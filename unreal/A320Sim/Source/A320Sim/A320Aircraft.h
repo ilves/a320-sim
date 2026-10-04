@@ -140,6 +140,7 @@ private:
 	void StartAudio();
 	void PumpAudio(float DeltaSeconds);
 	void AdjustFcu(double DSpd, double DHdg, double DAlt, double DVs);
+	void AdjustVs(int32 Clicks);
 
 	A320Sim* Sim = nullptr;
 	A320State State{};

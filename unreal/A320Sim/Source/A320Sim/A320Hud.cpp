@@ -344,6 +344,22 @@ void AA320Hud::DrawPfd(const AA320Aircraft& Aircraft, double X, double Y, double
 		Line(CX + Side * 0.07 * S, CY, CX + Side * 0.07 * S, CY + 0.025 * S, Yellow, 4.0);
 	}
 	Fill(CX - 0.008 * S, CY - 0.008 * S, 0.016 * S, 0.016 * S, Yellow);
+	// TRK-FPA: the flight path vector ("bird"), where the aircraft is going: below the aircraft
+	// symbol by the angle of attack, aside by the drift.
+	if (St.fcuTrkFpa && !St.onGround)
+	{
+		const double Drift = FMath::Clamp(Wrap180(St.trackTrueDeg - St.headingTrueDeg), -20.0, 20.0);
+		const FVector2D Fpv = FVector2D(CX, CY) + Down * ((St.pitchDeg - St.flightPathDeg) * Ppd) + Along * (Drift * Ppd);
+		if (Fpv.X > Att.x0 && Fpv.X < Att.x1 && Fpv.Y > Att.y0 && Fpv.Y < Att.y1)
+		{
+			const double BirdR = 0.014 * S;
+			Arc(Fpv.X, Fpv.Y, BirdR, -180.0, 180.0, Green, 2.0);
+			const FVector2D WingIn = Along * BirdR, WingOut = Along * (BirdR + 0.035 * S), Fin = -Down * (BirdR + 0.018 * S);
+			Line(Fpv.X + WingIn.X, Fpv.Y + WingIn.Y, Fpv.X + WingOut.X, Fpv.Y + WingOut.Y, Green, 2.0);
+			Line(Fpv.X - WingIn.X, Fpv.Y - WingIn.Y, Fpv.X - WingOut.X, Fpv.Y - WingOut.Y, Green, 2.0);
+			Line(Fpv.X - Down.X * BirdR, Fpv.Y - Down.Y * BirdR, Fpv.X + Fin.X, Fpv.Y + Fin.Y, Green, 2.0);
+		}
+	}
 
 	// Speed tape: VLS (amber), stall (red) and VMAX (red barber pole).
 	const double TapeTop = Y + 0.14 * S, TapeH = 0.64 * S, TapeBottom = TapeTop + TapeH;
@@ -641,6 +657,12 @@ void AA320Hud::DrawNd(const AA320Aircraft& Aircraft, double X, double Y, double 
 		const FVector2D B1 = Polar(AcX, AcY, R + 0.005 * S, BugA + 2.5);
 		const FVector2D B2 = Polar(AcX, AcY, R + 0.035 * S, BugA);
 		Triangle(B0, B1, B2, Cyan);
+	}
+	// The green track line while the AP flies a selected heading or track: where the wind takes you.
+	if (St.groundSpeedKt > 30.0 && !bLs && (St.latMode == A320_LAT_HDG || St.latMode == A320_LAT_TRK))
+	{
+		const FVector2D T = Polar(AcX, AcY, R - 0.02 * S, Wrap180(St.trackTrueDeg - Hdg));
+		Line(AcX, AcY, T.X, T.Y, Green, 1.5);
 	}
 	if (St.groundSpeedKt > 30.0)
 	{
@@ -981,6 +1003,7 @@ void AA320Hud::DrawHelp()
 		TEXT("MCDU           Tab (or MCDU, top right): arrival ILS, RAD NAV, PERF; type on the keyboard, Backspace = CLR"),
 		TEXT("Radio / ATC    F10 (or RADIO, top right): COM 1, transponder, ATC log; keys 1-6 pick a reply while it's open"),
 		TEXT("FCU            1/2 SPD,  3/4 HDG,  5/6 ALT,  7/8 V/S  (Shift = x10);  U fly HDG,  9 climb/descend to ALT,  0 hold V/S"),
+		TEXT("               \\ HDG-V/S / TRK-FPA;  Shift+U, Shift+9, Shift+0 (or Shift+click) push the knob: hold heading, level off, V/S 0"),
 		TEXT("Sound          - (minus) on/off,  M silence master warning"),
 		TEXT("Takeoff        N (release brake), Home (TOGA), rotate ~150 kt with Down arrow, G at positive climb"),
 		TEXT("Landing        Vapp = VLS + 5 (amber strip), keep diamonds centred, flare ~30 ft, End at RETARD"),
@@ -1022,16 +1045,20 @@ void AA320Hud::DrawFcu(const AA320Aircraft& Aircraft, double X, double Y, double
 		const TCHAR* PullLabel;
 		bool bPullLit;
 	};
-	const bool bVs = St.vertMode == A320_VERT_VS;
+	// The HDG-V/S / TRK-FPA pushbutton turns the heading and V/S windows into track and FPA.
+	const bool bTrkFpa = St.fcuTrkFpa != 0;
+	const bool bVs = St.vertMode == A320_VERT_VS || St.vertMode == A320_VERT_FPA;
+	const FString VsValue = !bVs ? FString(TEXT("-----"))
+		: (bTrkFpa ? FString::Printf(TEXT("%+.1f"), St.fcuFpaDeg) : FString::Printf(TEXT("%+05d"), FMath::RoundToInt(St.fcuVsFpm)));
 	const FWindow FcuWindows[] = {
 		{TEXT("SPD"), FString::Printf(TEXT("%03d"), FMath::RoundToInt(St.fcuSpdKt)), EA320Command::SpdDec, EA320Command::SpdInc, EA320Command::None, TEXT(""), false},
-		{TEXT("HDG"), FString::Printf(TEXT("%03d"), (FMath::RoundToInt(St.fcuHdgMagDeg) + 359) % 360 + 1), EA320Command::HdgDec, EA320Command::HdgInc, EA320Command::FcuHdgPull, TEXT("HDG"), St.latMode == A320_LAT_HDG},
+		{bTrkFpa ? TEXT("TRK") : TEXT("HDG"), FString::Printf(TEXT("%03d"), (FMath::RoundToInt(St.fcuHdgMagDeg) + 359) % 360 + 1), EA320Command::HdgDec, EA320Command::HdgInc, EA320Command::FcuHdgPull, bTrkFpa ? TEXT("TRK") : TEXT("HDG"), St.latMode == A320_LAT_HDG || St.latMode == A320_LAT_TRK},
 		{TEXT("ALT"), FString::Printf(TEXT("%05d"), FMath::RoundToInt(St.fcuAltFt)), EA320Command::AltDec, EA320Command::AltInc, EA320Command::FcuAltPull, TEXT("LVL/CH"), St.vertMode == A320_VERT_OP_CLB || St.vertMode == A320_VERT_OP_DES},
-		{TEXT("V/S"), bVs ? FString::Printf(TEXT("%+05d"), FMath::RoundToInt(St.fcuVsFpm)) : FString(TEXT("-----")), EA320Command::VsDec, EA320Command::VsInc, EA320Command::FcuVsPull, TEXT("V/S"), bVs},
+		{bTrkFpa ? TEXT("FPA") : TEXT("V/S"), VsValue, EA320Command::VsDec, EA320Command::VsInc, EA320Command::FcuVsPull, bTrkFpa ? TEXT("FPA") : TEXT("V/S"), bVs},
 	};
 	Fill(X, Y, W, H, FLinearColor(0.09f, 0.095f, 0.1f));
 	const double Gap = 6.0 * Scale;
-	const double WindowW = W * 0.118, ButtonW = W * 0.047;
+	const double WindowW = W * 0.112, ButtonW = W * 0.047;
 	double CX = X + Gap;
 	// Captain's EFIS control panel: LS, ND mode and range.
 	const double EfisW = W * 0.045;
@@ -1076,6 +1103,7 @@ void AA320Hud::DrawFcu(const AA320Aircraft& Aircraft, double X, double Y, double
 		St.vertMode == A320_VERT_LAND || St.vertMode == A320_VERT_FLARE;
 	DrawWindow(FcuWindows[0]);
 	DrawWindow(FcuWindows[1]);
+	DrawButton(bTrkFpa ? TEXT("TRK FPA") : TEXT("HDG V/S"), EA320Command::FcuTrkFpa, bTrkFpa);
 	DrawButton(TEXT("LOC"), EA320Command::FcuLoc, bLocLit && !bApprLit);
 	DrawButton(TEXT("AP1"), EA320Command::FcuAp, St.ap1Engaged != 0);
 	DrawButton(TEXT("AP2"), EA320Command::FcuAp2, St.ap2Engaged != 0);

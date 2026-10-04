@@ -222,6 +222,14 @@ void a320_fcu_set_targets(A320Sim* sim, double spdKt, double hdgMagDeg, double a
   if (sim) sim->sim.setFcuTargets(spdKt, hdgMagDeg, altFt, vsFpm);
 }
 
+void a320_fcu_set_fpa(A320Sim* sim, double fpaDeg) {
+  if (sim) sim->sim.setFcuFpa(fpaDeg);
+}
+
+void a320_set_wind(A320Sim* sim, double fromTrueDeg, double kt) {
+  if (sim) sim->sim.setWind(fromTrueDeg, kt);
+}
+
 const char* a320_lat_mode_name(int latMode) { return a320::latModeName(latMode); }
 const char* a320_vert_mode_name(int vertMode) { return a320::vertModeName(vertMode); }
 const char* a320_athr_mode_name(int athrMode) { return a320::athrModeName(athrMode); }

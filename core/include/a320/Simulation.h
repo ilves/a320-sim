@@ -49,6 +49,8 @@ class Simulation {
   void setControls(const A320Controls& c);
   void fcuCommand(A320FcuCommand cmd);
   void setFcuTargets(double spdKt, double hdgMagDeg, double altFt, double vsFpm);
+  void setFcuFpa(double fpaDeg);
+  void setWind(double fromTrueDeg, double kt);
   AudioEngine& audio() { return audio_; }
   void update(double realDtS);
   // One fixed step regardless of pause; used by update() and by tests.
@@ -149,6 +151,8 @@ class Simulation {
   bool impact_ = false;  // this step's ground contact is a crash
   double impactFpm_ = 0.0;
   double groundHeightM_ = 0.0;
+  double windFromTrueDeg_ = 0.0, windKt_ = 0.0;
+  void applyWind();
   double wreckIasFactor_ = 1.0;  // the flight model's airspeed over the standard atmosphere's, at the breakup
   double groundSetM_ = 1e9;  // what the flight model's ground was last set to
 
