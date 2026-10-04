@@ -197,6 +197,7 @@ void AudioEngine::detectEvents(const A320State& s, double blockS) {
   if (!synced_) {
     // First block after start or reset: adopt the counters without replaying old events.
     calloutSeq_ = s.calloutSeq;
+    calloutQueue_.clear();
     touchdownSeq_ = s.touchdownSeq;
     apSeq_ = s.apDisconnectSeq;
     gearPos_ = s.gearPos;
@@ -209,7 +210,15 @@ void AudioEngine::detectEvents(const A320State& s, double blockS) {
   }
   if (s.calloutSeq != calloutSeq_) {
     calloutSeq_ = s.calloutSeq;
-    play(clipName(s.callout));
+    if (calloutQueue_.size() < 3) calloutQueue_.push_back(clipName(s.callout));
+  }
+  calloutBusyS_ -= blockS;
+  while (calloutBusyS_ <= 0.0 && !calloutQueue_.empty()) {
+    const auto it = clips_.find(calloutQueue_.front());
+    calloutQueue_.pop_front();
+    if (it == clips_.end() || it->second.empty()) continue;
+    voices_.push_back({&it->second, 0, 1.0f});
+    calloutBusyS_ = static_cast<double>(it->second.size()) / rate_ + 0.05;
   }
   if (s.touchdownSeq != touchdownSeq_) {
     touchdownSeq_ = s.touchdownSeq;

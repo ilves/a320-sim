@@ -97,3 +97,26 @@ TEST(audio_callouts_and_warnings) {
   renderSeconds(w, warn, 1.0);  // let the last chime ring out
   CHECK(rms(renderSeconds(w, warn, 2.0)) < 0.001);
 }
+
+// V1 and ROTATE come half a second apart: the second waits for the first instead of talking over it.
+TEST(audio_callouts_do_not_overlap) {
+  AudioEngine a;
+  a.init(kRate, A320_SOUNDS_DIR);
+  A320State s{};
+  renderSeconds(a, s, 0.1);
+  std::vector<int16_t> buf(512);
+  s.calloutSeq = 1;
+  std::strcpy(s.callout, "V ONE");
+  a.render(buf.data(), 512, s);
+  CHECK(a.activeVoices() == 1);
+  renderSeconds(a, s, 0.3);
+  s.calloutSeq = 2;
+  std::strcpy(s.callout, "ROTATE");
+  a.render(buf.data(), 512, s);
+  CHECK(a.activeVoices() == 1);  // still V ONE
+  renderSeconds(a, s, 0.5);      // V ONE (0.66 s) has ended, ROTATE speaks
+  CHECK(a.activeVoices() == 1);
+  CHECK(rms(renderSeconds(a, s, 0.3)) > 0.02);
+  renderSeconds(a, s, 1.0);
+  CHECK(a.activeVoices() == 0);
+}

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <deque>
 #include <map>
 #include <string>
 #include <vector>
@@ -66,6 +67,9 @@ class AudioEngine {
   int signs_ = 0;
   uint32_t acked_ = 0;
   double chimeTimer_ = 0.0, voiceTimer_ = 0.0;
+  // Callouts speak one at a time (V1 and ROTATE can be half a second apart).
+  std::deque<std::string> calloutQueue_;
+  double calloutBusyS_ = 0.0;
   bool clickPending_ = false;
 };
 
