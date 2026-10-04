@@ -130,7 +130,8 @@ private:
 	void StartCrash();
 	void ClearDestruction();
 	AA320Fx* SpawnFx(const FVector& LocationCm, const FA320FxSpec& Spec);
-	void WatchFromOutside(double ArmLengthCm, double PitchDeg, double YawFromHeadingDeg);
+	// The chase view of a wreck: steady instead of tumbling with the pieces, the view kept as it was.
+	void SteadyChaseView(double ArmLengthCm);
 	void ResetScenario(A320Scenario Scenario);
 	void StartGuide(int32 Guide);
 	void UpdateExteriorLights();
@@ -170,7 +171,7 @@ private:
 	TSharedPtr<class FA320Voice> Voice;
 	uint32 LastAtcSeq = 0;
 	uint32 LastDestroyedSeq = 0;
-	bool bCockpitBeforeDestroyed = false;  // the view to go back to on a new flight
+	double WreckViewYawDeg = 0.0;  // the chase camera's look direction at a breakup or crash
 	uint32 LastImpactSeq[2] = {0, 0};
 	TArray<A320AtcMessage> RadioLog;
 	FString XpdrEntry;

@@ -425,10 +425,12 @@ more as you zoom in.
 
 - **Breakup:** in the air at 380 kt (indicated) or more, the airframe breaks in two just ahead
   of the wings. The nose section dives, the rest with the wings spins down; both trail fire and
-  smoke and explode where they hit the ground. The flight model stops; the camera watches from
-  outside.
+  smoke and explode where they hit the ground. The flight model stops.
 - **Crash:** a ground contact far too hard (1500 fpm or more), a wing tip or the nose first,
   or the fuselage on the ground (gear up): an explosion, fire, a smoke column and debris.
+- The view stays as it was (C still switches). From the seat you fall with the nose section and
+  the instruments keep showing how it falls: altitude, vertical speed, airspeed, attitude and
+  heading, with the engines winding down. The outside camera follows without tumbling.
 - A new flight (F11, or F5) puts everything back.
 
 380 kt is the A320's design dive speed (VD), the highest it is shown to survive. Normal flight

@@ -549,6 +549,7 @@ void Simulation::breakUp() {
     p.dragK = 9.81 / (terminal[i] * terminal[i]);
   }
   hint("The airframe broke up beyond the design dive speed (380 kt; VMO is 350). Start a new flight (F11, or F5).");
+  cockpitFromPiece(0.0);
   fillDestroyed(state_);
 }
 
@@ -567,6 +568,11 @@ void Simulation::crash() {
     p.onGround = true;
   }
   hint("Crash: the aircraft hit the ground. Start a new flight (F11, or F5).");
+  // Stopped where it hit: the instruments show it.
+  A320State& st = state_;
+  st.iasKt = st.tasKt = st.groundSpeedKt = st.mach = st.verticalSpeedFpm = st.radioAltFt = 0.0;
+  st.velNorthMps = st.velEastMps = st.velUpMps = 0.0;
+  for (int i = 0; i < 2; ++i) st.n1[i] = st.n2[i] = st.fuelFlowKgH[i] = 0.0;
   fillDestroyed(state_);
 }
 
@@ -596,7 +602,62 @@ void Simulation::updatePieces(double dt) {
       ++impactSeq_[i];
     }
   }
+  cockpitFromPiece(dt);
   fillDestroyed(state_);
+}
+
+void Simulation::cockpitFromPiece(double dt) {
+  A320State& s = state_;
+  const Piece& p = pieces_[0];
+  // Grid (the flat world) to true: the convergence at the moment of the breakup.
+  const double convergence = s.gridHeadingDeg - s.headingTrueDeg;
+  const Enu cg{p.e, p.n, p.u};  // only the latitude and longitude are taken from it
+  const GeoPos geo = frame_.toGeo(cg);
+  s.northM = p.n;
+  s.eastM = p.e;
+  s.latDeg = geo.latDeg;
+  s.lonDeg = geo.lonDeg;
+  s.heightAboveFieldM = p.u;
+  s.altitudeFt = (p.u + world_.reference.altM) * kMToFt;
+  groundHeightM_ = groundAt(p.n, p.e);
+  s.groundHeightM = groundHeightM_;
+  s.radioAltFt = std::max(0.0, (p.u - 2.0 - groundHeightM_) * kMToFt);
+  s.gridHeadingDeg = p.hdg;
+  s.headingTrueDeg = std::fmod(p.hdg - convergence + 720.0, 360.0);
+  s.pitchDeg = p.pitch;
+  s.bankDeg = p.bank;
+  const double horizontal = std::hypot(p.vn, p.ve);
+  if (horizontal > 0.5) {
+    s.gridTrackDeg = std::fmod(std::atan2(p.ve, p.vn) * kRadToDeg + 720.0, 360.0);
+    s.trackTrueDeg = std::fmod(s.gridTrackDeg - convergence + 720.0, 360.0);
+  }
+  s.flightPathDeg = std::atan2(p.vu, std::max(horizontal, 0.1)) * kRadToDeg;
+  s.alphaDeg = s.pitchDeg - s.flightPathDeg;
+  s.verticalSpeedFpm = p.vu * kMToFt * 60.0;
+  s.velNorthMps = p.vn;
+  s.velEastMps = p.ve;
+  s.velUpMps = p.vu;
+  // Airspeed from the true speed and the standard atmosphere's density at this height.
+  const double tasMps = std::sqrt(horizontal * horizontal + p.vu * p.vu);
+  const double hM = std::max(0.0, s.altitudeFt * kFtToM);
+  const double densityRatio = std::pow(std::max(0.05, 1.0 - 2.25577e-5 * hM), 4.2559);
+  const double temperatureRatio = std::max(0.75, 1.0 - 2.25577e-5 * hM);
+  const double rawIasKt = tasMps * 1.943844 * std::sqrt(densityRatio);
+  // At the breakup itself (dt 0): match the flight model's reading, so the speed tape doesn't jump.
+  if (dt <= 0.0) wreckIasFactor_ = rawIasKt > 1.0 ? s.iasKt / rawIasKt : 1.0;
+  s.tasKt = tasMps * 1.943844;
+  s.iasKt = rawIasKt * wreckIasFactor_;
+  s.groundSpeedKt = horizontal * 1.943844;
+  s.mach = s.tasKt / (661.47 * std::sqrt(temperatureRatio));
+  s.loadFactor = std::cos(s.flightPathDeg * kDegToRad);
+  s.onGround = p.onGround ? 1 : 0;
+  // The engines stayed with the wings: no fuel, and N1/N2 run down.
+  const double decay = std::exp(-dt / 4.0);
+  for (int i = 0; i < 2; ++i) {
+    s.n1[i] *= decay;
+    s.n2[i] *= decay;
+    s.fuelFlowKgH[i] = 0.0;
+  }
 }
 
 void Simulation::fillDestroyed(A320State& s) const {
@@ -739,6 +800,11 @@ void Simulation::refreshState() {
   s.simTimeS = clock_.simTimeS();
   s.paused = clock_.paused() ? 1 : 0;
   s.simRate = clock_.rate();
+  // Destroyed, the flight model is stopped: the state follows the wreck (cockpitFromPiece).
+  if (destroyed_ != A320_DESTROYED_NONE) {
+    fillDestroyed(s);
+    return;
+  }
 
   s.latDeg = prop("position/lat-geod-deg");
   s.lonDeg = prop("position/long-gc-deg");

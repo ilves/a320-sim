@@ -381,6 +381,14 @@ TEST(overspeed_breaks_the_aircraft_in_two) {
   CHECK(maxIasIntact < A320_BREAKUP_IAS_KT && f.s.iasKt >= A320_BREAKUP_IAS_KT);
   const A320Section front0 = f.s.sections[0], rear0 = f.s.sections[1];
   CHECK(!front0.onGround && !rear0.onGround);
+  // The cockpit's instruments go on, from the falling nose section.
+  const double n1AtBreakup = f.s.n1[0], altAtBreakup = f.s.altitudeFt;
+  f.fly(10.0, [] { return true; });
+  std::printf("  10 s later: alt %.0f ft, VS %.0f fpm, IAS %.0f kt, pitch %.0f, bank %.0f, N1 %.0f%% (was %.0f%%)\n", f.s.altitudeFt,
+              f.s.verticalSpeedFpm, f.s.iasKt, f.s.pitchDeg, f.s.bankDeg, f.s.n1[0], n1AtBreakup);
+  CHECK(f.s.altitudeFt < altAtBreakup - 500.0 && f.s.verticalSpeedFpm < -3000.0 && f.s.iasKt > 100.0);
+  CHECK(f.s.pitchDeg < -20.0 && f.s.n1[0] < n1AtBreakup * 0.2);
+  CHECK(std::fabs(f.s.northM - f.s.sections[0].northM) < 30.0);  // the cockpit is the nose section
   // The pieces fall apart and reach the ground; the flight model is stopped meanwhile.
   double t = 0.0;
   f.fly(400.0, [&] {

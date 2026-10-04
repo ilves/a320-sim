@@ -140,6 +140,8 @@ class Simulation {
   void crash();
   void updatePieces(double dt);
   void fillDestroyed(A320State& s) const;
+  // The cockpit's instruments after a breakup: what the nose section is doing; engines winding down.
+  void cockpitFromPiece(double dt);
   int destroyed_ = A320_DESTROYED_NONE;
   uint32_t destroyedSeq_ = 0;
   uint32_t impactSeq_[2] = {0, 0};
@@ -147,6 +149,7 @@ class Simulation {
   bool impact_ = false;  // this step's ground contact is a crash
   double impactFpm_ = 0.0;
   double groundHeightM_ = 0.0;
+  double wreckIasFactor_ = 1.0;  // the flight model's airspeed over the standard atmosphere's, at the breakup
   double groundSetM_ = 1e9;  // what the flight model's ground was last set to
 
   // Where the scenery is flattened to an airport's level: each runway's length plus 1000 m at

@@ -900,7 +900,12 @@ void AA320Aircraft::ApplyView()
 	CockpitCamera->SetRelativeRotation(FRotator(CockpitPitchDeg + LookOffset.Pitch, LookOffset.Yaw, 0.0));
 	if (State.destroyed == A320_DESTROYED_NONE)
 	{
-		ChaseArm->SetRelativeRotation(FRotator(-12.0 + LookOffset.Pitch, LookOffset.Yaw, 0.0));  // else fixed on the wreck
+		ChaseArm->SetRelativeRotation(FRotator(-12.0 + LookOffset.Pitch, LookOffset.Yaw, 0.0));
+	}
+	else
+	{
+		// The arm is absolute then (see SteadyChaseView): looking around still works.
+		ChaseArm->SetWorldRotation(FRotator(-12.0 + LookOffset.Pitch, WreckViewYawDeg + LookOffset.Yaw, 0.0));
 	}
 	CockpitCamera->SetActive(bCockpitView);
 	ChaseCamera->SetActive(!bCockpitView);
@@ -1012,17 +1017,14 @@ AA320Fx* AA320Aircraft::SpawnFx(const FVector& LocationCm, const FA320FxSpec& Sp
 	return Fx;
 }
 
-void AA320Aircraft::WatchFromOutside(double ArmLengthCm, double PitchDeg, double YawFromHeadingDeg)
+void AA320Aircraft::SteadyChaseView(double ArmLengthCm)
 {
-	// A fixed look at the wreck from outside, so the camera doesn't tumble with the pieces.
-	bCockpitBeforeDestroyed = bCockpitView;
-	bCockpitView = false;
-	LookOffset = FRotator::ZeroRotator;
-	ApplyView();
+	// The cockpit camera rides the nose section, so from the seat the fall is felt; the chase
+	// camera keeps the heading it had and follows the nose without its pitch and roll.
+	WreckViewYawDeg = State.sections[0].gridHeadingDeg;
 	ChaseArm->SetUsingAbsoluteRotation(true);
-	ChaseArm->SetWorldRotation(FRotator(PitchDeg, State.sections[0].gridHeadingDeg + YawFromHeadingDeg, 0.0));
 	ChaseArm->TargetArmLength = static_cast<float>(ArmLengthCm);
-	ChaseArm->TargetOffset = FVector::ZeroVector;
+	ApplyView();
 }
 
 void AA320Aircraft::UpdateDestruction()
@@ -1080,7 +1082,7 @@ void AA320Aircraft::StartBreakup()
 	RearRoot->SetUsingAbsoluteLocation(true);
 	RearRoot->SetUsingAbsoluteRotation(true);
 	UpdateTransform();
-	WatchFromOutside(9000.0, -12.0, 150.0);
+	SteadyChaseView(ChaseArmCm);
 
 	const FTransform Pose(SectionRotation(State.sections[0]), SectionLocation(State.sections[0]));
 	const FVector BreakPoint = Pose.TransformPosition(FVector(A320_BREAKUP_SPLIT_X_M * 100.0, 0.0, 90.0));
@@ -1107,8 +1109,7 @@ void AA320Aircraft::StartBreakup()
 
 void AA320Aircraft::StartCrash()
 {
-	ApplyView();  // hides the aircraft: what is left is fire and debris
-	WatchFromOutside(25000.0, -18.0, 150.0);
+	SteadyChaseView(ChaseArmCm * 2.0);  // also hides the aircraft: what is left is fire and debris
 	FA320FxSpec Crash;
 	Crash.SizeM = 35.0;
 	Crash.DebrisCount = 36;
@@ -1119,7 +1120,6 @@ void AA320Aircraft::StartCrash()
 
 void AA320Aircraft::ClearDestruction()
 {
-	const bool bHadWreck = !Effects.IsEmpty();
 	for (AA320Fx* Fx : Effects)
 	{
 		if (IsValid(Fx))
@@ -1133,11 +1133,7 @@ void AA320Aircraft::ClearDestruction()
 	LastDestroyedSeq = State.destroyedSeq;
 	LastImpactSeq[0] = State.sections[0].impactSeq;
 	LastImpactSeq[1] = State.sections[1].impactSeq;
-	// The rest of the aircraft back in place, and the view as it was.
-	if (bHadWreck)
-	{
-		bCockpitView = bCockpitBeforeDestroyed;
-	}
+	// The rest of the aircraft back in place.
 	RearRoot->SetUsingAbsoluteLocation(false);
 	RearRoot->SetUsingAbsoluteRotation(false);
 	RearRoot->SetRelativeLocationAndRotation(FVector::ZeroVector, FRotator::ZeroRotator);
