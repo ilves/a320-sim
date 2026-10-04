@@ -40,7 +40,11 @@ the ILS and land, from a glass cockpit with a working PFD, ND and E/WD.
   - touchdown thump and gear clunks;
   - master-warning chimes and the autopilot-disconnect "cavalry charge";
   - spoken radio-altimeter callouts ("FIFTY … RETARD") and GPWS ("GLIDE SLOPE", "SINK RATE",
-    "STALL").
+    "STALL");
+  - takeoff calls: "ONE HUNDRED KNOTS", "V ONE", "ROTATE" and "POSITIVE CLIMB". V1, VR and V2
+    come from the weight and flaps, and show under the PFD speed tape before takeoff, with V1
+    as a cyan "1" on the tape. Pulling the levers back before V1 (a rejected takeoff) stops
+    the calls.
 - **Systems behind the switches:**
   - APU start;
   - engine start from cold and dark (starter, fuel at about 20% N2, spool to idle);
@@ -234,7 +238,8 @@ maker's software, so they don't show this sim's values; the FCU strip on screen 
 
 **Takeoff (F5).** You start lined up on runway 26 in CONF 1+F, with the parking brake set.
 1. Press **N** to release the parking brake and **Home** for TOGA.
-2. At about **150 kt**, hold **Down arrow** to rotate to about 10°. Then hold 15° pitch.
+2. At **"ROTATE"** (VR, about 150 kt; V1, VR and V2 are under the speed tape), hold **Down
+   arrow** to rotate to about 10°. Then hold 15° pitch.
 3. Once the vertical speed is positive, press **G** to raise the gear.
 4. At 1500 ft, press **Ins** to set CL thrust, and **F** to retract the flaps as the speed
    builds.
@@ -353,6 +358,8 @@ The flight tests fly the real JSBSim A320 with a scripted pilot:
   negative V/S;
 - throttle quadrants: detent calibration (including a backwards axis and reverse), devices
   kept by name, and automatic quadrant set-up;
+- takeoff callouts: V-speeds from the weight and flaps, the four calls in order on a real
+  takeoff, none after a rejected takeoff or while taxiing;
 - cockpit systems: a cold-and-dark start (APU, starter, light-off, crossbleed, shutdown),
   ground spoilers, autobrake LO/MED deceleration and stopping distance, and the autobrake
   disarming when the pilot brakes;

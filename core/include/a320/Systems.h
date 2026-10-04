@@ -142,6 +142,29 @@ class GroundDecel {
 };
 
 // Radio-altitude callouts announced when descending through each height.
+struct TakeoffSpeeds {
+  double v1Kt = 0.0, vrKt = 0.0, v2Kt = 0.0;
+};
+
+// V2 a safe margin above the stall speed in the takeoff configuration, VR a few knots below it
+// and V1 just below VR: what the A320's FMS gives for a long dry runway such as Tallinn's.
+TakeoffSpeeds computeTakeoffSpeeds(double stallKt);
+
+// The pilot-monitoring calls on the takeoff roll: "ONE HUNDRED KNOTS", "V ONE", "ROTATE", then
+// "POSITIVE CLIMB" after liftoff. A takeoff rejected before V1 (levers back) stops them.
+class TakeoffCallouts {
+ public:
+  const char* update(bool onGround, double iasKt, double thrustLever, double verticalSpeedFpm, double radioAltFt,
+                     const TakeoffSpeeds& speeds);
+  void reset() { *this = TakeoffCallouts{}; }
+  bool rolling() const { return rolling_; }
+
+ private:
+  bool rolling_ = false;
+  int next_ = 0;  // index of the next call
+  double previousIas_ = 0.0;
+};
+
 class Callouts {
  public:
   // Returns the callout text for this step, or nullptr.

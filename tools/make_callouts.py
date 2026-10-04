@@ -26,6 +26,10 @@ CALLOUTS = {
     "stall": "stall, stall",
     "glide_slope": "glide slope",
     "sink_rate": "sink rate",
+    "one_hundred_knots": "one hundred knots",
+    "v_one": "vee one",
+    "rotate": "rotate",
+    "positive_climb": "positive climb",
 }
 RATE = 22050
 OUT_DIR = os.path.join(os.path.dirname(__file__), "..", "unreal", "A320Sim", "Content", "Sounds")
@@ -63,8 +67,11 @@ def resample(samples, src, dst):
 
 
 def main():
+    # Optional clip names on the command line: only those are (re)generated.
+    names = sys.argv[1:] or list(CALLOUTS)
     os.makedirs(OUT_DIR, exist_ok=True)
-    for name, text in CALLOUTS.items():
+    for name in names:
+        text = CALLOUTS[name]
         samples, rate = speak(text)
         samples = resample(samples, rate, RATE)
         # Cockpit speaker: 300 Hz - 3.4 kHz, then normalise to -3 dBFS and trim silence.

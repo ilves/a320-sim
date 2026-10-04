@@ -16,7 +16,8 @@ constexpr float kTwoPi = 6.28318530718f;
 // Spoken callouts shipped as WAV files (file name = callout text, lower case, '_' for spaces).
 const char* const kVoiceClips[] = {
     "two_thousand_five_hundred", "one_thousand", "five_hundred", "one_hundred", "fifty", "forty",
-    "thirty", "twenty", "ten", "retard", "stall", "glide_slope", "sink_rate"};
+    "thirty", "twenty", "ten", "retard", "stall", "glide_slope", "sink_rate",
+    "one_hundred_knots", "v_one", "rotate", "positive_climb"};
 
 uint32_t readU32(const uint8_t* p) { return p[0] | (p[1] << 8) | (p[2] << 16) | (uint32_t(p[3]) << 24); }
 uint16_t readU16(const uint8_t* p) { return static_cast<uint16_t>(p[0] | (p[1] << 8)); }

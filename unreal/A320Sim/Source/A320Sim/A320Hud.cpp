@@ -335,6 +335,17 @@ void AA320Hud::DrawPfd(const AA320Aircraft& Aircraft, double X, double Y, double
 			Fill(SX + SW - 0.012 * S, Top, 0.012 * S, Bottom - Top, Red);
 		}
 	}
+	// Takeoff: V1 as a cyan "1" on the tape (as on the A320), and the three speeds below it.
+	if (St.onGround && St.v1Kt > 0.0)
+	{
+		const double V1Y = SpeedY(St.v1Kt);
+		if (V1Y > TapeTop && V1Y < TapeBottom)
+		{
+			Text(TEXT("1"), SX + SW + 0.012 * S, V1Y, Cyan, 1, 1);
+		}
+		Text(FString::Printf(TEXT("V1 %d  VR %d  V2 %d"), FMath::RoundToInt(St.v1Kt), FMath::RoundToInt(St.vrKt), FMath::RoundToInt(St.v2Kt)),
+			SX, TapeBottom + 0.035 * S, Cyan, 0, 0);
+	}
 	if (FMath::Abs(SpeedTrendKtS) * 10.0 > 2.0)
 	{
 		const double TipY = FMath::Clamp(SpeedY(St.iasKt + SpeedTrendKtS * 10.0), TapeTop, TapeBottom);

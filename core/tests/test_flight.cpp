@@ -146,17 +146,24 @@ TEST(takeoff_and_climb) {
 
   f.c.parkBrake = 0;
   f.c.thrustLever = 1.0;  // TOGA
+  const double v1 = f.s.v1Kt, vr = f.s.vrKt, v2 = f.s.v2Kt;
+  std::string calls;
+  uint32_t calloutSeq = f.s.calloutSeq;
   double maxGroundPitch = 0.0, liftoffX = 0.0, liftoffY = 0.0, liftoffIas = 0.0;
   bool airborne = false;
   double t = 0.0;
   f.fly(90.0, [&] {
     t += kDt;
+    if (f.s.calloutSeq != calloutSeq) {
+      calloutSeq = f.s.calloutSeq;
+      calls += std::string(f.s.callout) + ", ";
+    }
     const RunwayPos p = runwayPos(f.sim, f.s);
     if (f.s.onGround) {
       maxGroundPitch = std::fmax(maxGroundPitch, f.s.pitchDeg);
       f.c.pedals = clampd(-0.02 * p.y - 0.15 * wrap180(f.s.headingTrueDeg - rw.trueCourseDeg), -1, 1);
       // Rotate at VR towards 10 degrees, held until the aircraft flies off.
-      f.c.stickPitch = f.s.iasKt > 148.0 ? clampd(0.12 * (10.0 - f.s.pitchDeg), -0.3, 0.7) : 0.0;
+      f.c.stickPitch = f.s.iasKt > vr ? clampd(0.12 * (10.0 - f.s.pitchDeg), -0.3, 0.7) : 0.0;
     } else {
       if (!airborne) {
         airborne = true;
@@ -179,6 +186,9 @@ TEST(takeoff_and_climb) {
               "max ground pitch %.1f; after 90 s: RA %.0f ft IAS %.0f kt VS %.0f fpm gear %.2f law %d\n",
               liftoffX, rw.landingDistanceM, liftoffY, liftoffIas, maxGroundPitch, f.s.radioAltFt,
               f.s.iasKt, f.s.verticalSpeedFpm, f.s.gearPos, f.s.pitchLaw);
+  std::printf("  V1 %.0f VR %.0f V2 %.0f; calls: %s\n", v1, vr, v2, calls.c_str());
+  CHECK(v1 > 110.0 && v1 < vr && vr < v2 && v2 < 170.0);
+  CHECK(calls.rfind("ONE HUNDRED KNOTS, V ONE, ROTATE, POSITIVE CLIMB, ", 0) == 0);
   CHECK(airborne);
   CHECK(liftoffX < rw.landingDistanceM - 500.0);
   CHECK(std::fabs(liftoffY) < 10.0);

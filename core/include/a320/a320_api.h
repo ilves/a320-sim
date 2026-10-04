@@ -21,7 +21,7 @@
 extern "C" {
 #endif
 
-#define A320_API_VERSION 6
+#define A320_API_VERSION 7
 
 typedef enum A320Scenario {
   A320_SCENARIO_RUNWAY = 0,     /* lined up, engines idle, CONF 1+F, park brake set */
@@ -208,6 +208,9 @@ typedef struct A320State {
   /* Sim tutor: why a button press did nothing, or what to watch for (empty when none). */
   uint32_t hintSeq;
   char hint[256];
+
+  /* Takeoff speeds for the current weight and flaps, frozen once the takeoff roll starts. */
+  double v1Kt, vrKt, v2Kt;
 } A320State;
 
 typedef struct A320RunwayInfo {

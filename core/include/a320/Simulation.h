@@ -71,6 +71,7 @@ class Simulation {
   double throttle_ = 0.0;
   bool athrActive_ = false;
   Callouts callouts_;
+  TakeoffCallouts takeoffCallouts_;
   A320Controls controls_{};
   A320State state_{};
   bool wasOnGround_ = true;

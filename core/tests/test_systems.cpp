@@ -1,3 +1,5 @@
+#include <string>
+
 #include "Check.h"
 #include "a320/FlyByWire.h"
 #include "a320/SimClock.h"
@@ -104,4 +106,27 @@ TEST(fbw_ground_law_is_direct) {
   const FbwOutput out = f.update(in);
   CHECK(out.law == PitchLaw::Ground);
   CHECK_NEAR(out.elevatorCmd, -1.0, 1e-9);
+}
+
+TEST(takeoff_callouts_and_rejected_takeoff) {
+  const a320::TakeoffSpeeds speeds = a320::computeTakeoffSpeeds(125.0);
+  CHECK(speeds.v1Kt < speeds.vrKt && speeds.vrKt < speeds.v2Kt && speeds.v2Kt >= 1.18 * 125.0);
+  // Normal takeoff: one call per speed, then positive climb once airborne.
+  a320::TakeoffCallouts c;
+  std::string calls;
+  for (double ias = 0.0; ias < 160.0; ias += 0.5)
+    if (const char* t = c.update(true, ias, 1.0, 0.0, 0.0, speeds)) calls += std::string(t) + ",";
+  if (const char* t = c.update(false, 160.0, 1.0, 1200.0, 50.0, speeds)) calls += t;
+  CHECK(calls == "ONE HUNDRED KNOTS,V ONE,ROTATE,POSITIVE CLIMB");
+  // Rejected at 90 kt: levers to idle, no further calls.
+  a320::TakeoffCallouts r;
+  int count = 0;
+  for (double ias = 0.0; ias < 90.0; ias += 0.5) count += r.update(true, ias, 1.0, 0.0, 0.0, speeds) ? 1 : 0;
+  for (double ias = 90.0; ias < 150.0; ias += 0.5) count += r.update(true, ias, 0.0, 0.0, 0.0, speeds) ? 1 : 0;
+  CHECK(count == 0 && !r.rolling());
+  // No takeoff thrust (taxiing): nothing.
+  a320::TakeoffCallouts taxi;
+  count = 0;
+  for (double ias = 0.0; ias < 30.0; ias += 0.5) count += taxi.update(true, ias, 0.3, 0.0, 0.0, speeds) ? 1 : 0;
+  CHECK(count == 0);
 }

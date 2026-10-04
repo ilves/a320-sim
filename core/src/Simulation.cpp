@@ -71,6 +71,7 @@ bool Simulation::reset(A320Scenario scenario, int runwayIndex) {
   controls_.gearDown = 1;
   flaps_ = FlapsSystem{};
   callouts_.reset();
+  takeoffCallouts_.reset();
   // Sequence counters stay monotonic so front ends never mistake a reset for a new event.
   const uint32_t calloutSeq = state_.calloutSeq, touchdownSeq = state_.touchdownSeq, hintSeq = state_.hintSeq;
   state_ = A320State{};
@@ -560,7 +561,21 @@ void Simulation::refreshState() {
   w.gsDots = s.gsDots;
   s.warnings = computeWarnings(w);
 
-  if (const char* text = callouts_.update(s.radioAltFt, s.onGround != 0, forwardLever)) {
+  // Takeoff speeds follow weight and flaps until the takeoff roll starts.
+  if (!takeoffCallouts_.rolling() && s.onGround && s.groundSpeedKt < 30.0) {
+    const SpeedLimits takeoff = computeSpeedLimits(s.flapsLever, s.onePlusF != 0, s.flapDeg, weightLbs, true, true);
+    const TakeoffSpeeds speeds = computeTakeoffSpeeds(takeoff.vsKt);
+    s.v1Kt = speeds.v1Kt;
+    s.vrKt = speeds.vrKt;
+    s.v2Kt = speeds.v2Kt;
+  }
+  const TakeoffSpeeds speeds{s.v1Kt, s.vrKt, s.v2Kt};
+  const char* takeoffCall =
+      takeoffCallouts_.update(s.onGround != 0, s.iasKt, forwardLever, s.verticalSpeedFpm, s.radioAltFt, speeds);
+  if (takeoffCall) {
+    std::snprintf(s.callout, sizeof(s.callout), "%s", takeoffCall);
+    ++s.calloutSeq;
+  } else if (const char* text = callouts_.update(s.radioAltFt, s.onGround != 0, forwardLever)) {
     std::snprintf(s.callout, sizeof(s.callout), "%s", text);
     ++s.calloutSeq;
   }

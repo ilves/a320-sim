@@ -204,6 +204,42 @@ double GroundDecel::update(const GroundDecelInput& in) {
   return brake_;
 }
 
+TakeoffSpeeds computeTakeoffSpeeds(double stallKt) {
+  TakeoffSpeeds t;
+  t.v2Kt = std::ceil(std::fmax(1.18 * stallKt, 120.0));
+  t.vrKt = std::fmax(t.v2Kt - 4.0, 118.0);  // VMCA-type floor
+  t.v1Kt = std::fmax(t.vrKt - 2.0, 112.0);  // VMCG-type floor
+  return t;
+}
+
+const char* TakeoffCallouts::update(bool onGround, double iasKt, double thrustLever, double verticalSpeedFpm,
+                                    double radioAltFt, const TakeoffSpeeds& speeds) {
+  const double prev = previousIas_;
+  previousIas_ = iasKt;
+  if (onGround && !rolling_) {
+    // A takeoff starts with takeoff thrust (FLX/MCT or TOGA) from low speed.
+    if (iasKt < 60.0 && thrustLever >= kLeverFlexMct - 0.02) {
+      rolling_ = true;
+      next_ = 0;
+    }
+    return nullptr;
+  }
+  if (!rolling_) return nullptr;
+  if (onGround && thrustLever < kLeverClimb - 0.05) {
+    rolling_ = false;  // rejected takeoff
+    return nullptr;
+  }
+  struct Call { double kt; const char* text; };
+  const Call calls[] = {{100.0, "ONE HUNDRED KNOTS"}, {speeds.v1Kt, "V ONE"}, {speeds.vrKt, "ROTATE"}};
+  if (next_ < 3 && prev < calls[next_].kt && iasKt >= calls[next_].kt) return calls[next_++].text;
+  if (next_ >= 1 && next_ <= 3 && !onGround && verticalSpeedFpm > 300.0 && radioAltFt > 30.0) {
+    next_ = 4;
+    rolling_ = false;
+    return "POSITIVE CLIMB";
+  }
+  return nullptr;
+}
+
 const char* Callouts::update(double radioAltFt, bool onGround, double thrustLever) {
   struct Callout { double ft; const char* text; };
   static const Callout kCallouts[] = {
