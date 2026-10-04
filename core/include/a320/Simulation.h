@@ -36,7 +36,8 @@ class Simulation {
   bool reset(A320Scenario scenario, int runwayIndex);
   // A flight from depRunway to arrRunway: on the ground at the departure, or in the air distanceNm
   // from the arrival (A320_SCENARIO_APPROACH; the finals use their fixed distances).
-  bool startFlight(A320Scenario scenario, int depRunway, int arrRunway, double distanceNm);
+  bool startFlight(A320Scenario scenario, int depRunway, int arrRunway, double distanceNm,
+                   int flightPlan = A320_PLAN_ROUTE);
   void setControls(const A320Controls& c);
   void fcuCommand(A320FcuCommand cmd);
   void setFcuTargets(double spdKt, double hdgMagDeg, double altFt, double vsFpm);
@@ -73,6 +74,8 @@ class Simulation {
   ApInput apInput() const;
   void applyControls();
   void refreshState();
+  // The MCDU's data for a new flight, as much as flightPlan (A320FlightPlan) says.
+  void loadFlightPlan(int flightPlan, bool onRunway, int depRunway, int arrRunway);
   double prop(const char* name) const;
   void setProp(const char* name, double v);
 

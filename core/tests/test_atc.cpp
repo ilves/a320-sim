@@ -142,7 +142,7 @@ struct AtcFlight {
 static AtcFlight flyAtcFlight(A320Sim* sim, A320Scenario scenario, const char* dep, const char* arr, double distanceNm,
                               double maxS) {
   AtcFlight out;
-  a320_start_flight(sim, scenario, runwayIndex(sim, dep), runwayIndex(sim, arr), distanceNm);
+  a320_start_flight(sim, scenario, runwayIndex(sim, dep), runwayIndex(sim, arr), distanceNm, A320_PLAN_ROUTE);
   A320Controls c;
   a320_get_controls(sim, &c);
   Radio& radio = out.radio;
@@ -321,7 +321,7 @@ TEST(atc_flight_kuressaare_to_tallinn) {
   A320Sim* sim = a320_create(A320_DATA_DIR, err, sizeof(err));
   if (!sim) { CHECK(false); return; }
   A320Controls c;
-  a320_start_flight(sim, A320_SCENARIO_RUNWAY, runwayIndex(sim, "17"), runwayIndex(sim, "26"), 0.0);
+  a320_start_flight(sim, A320_SCENARIO_RUNWAY, runwayIndex(sim, "17"), runwayIndex(sim, "26"), 0.0, A320_PLAN_ROUTE);
   a320_get_controls(sim, &c);
   CHECK(c.com1ActiveKhz == 118055);
   const AtcFlight f = flyAtcFlight(sim, A320_SCENARIO_RUNWAY, "17", "26", 0.0, 4000.0);

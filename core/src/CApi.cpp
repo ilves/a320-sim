@@ -56,10 +56,11 @@ int a320_reset(A320Sim* sim, A320Scenario scenario, int runwayIndex) {
   }
 }
 
-int a320_start_flight(A320Sim* sim, A320Scenario scenario, int depRunway, int arrRunway, double distanceNm) {
+int a320_start_flight(A320Sim* sim, A320Scenario scenario, int depRunway, int arrRunway, double distanceNm,
+                      int flightPlan) {
   if (!sim) return 0;
   try {
-    return sim->sim.startFlight(scenario, depRunway, arrRunway, distanceNm) ? 1 : 0;
+    return sim->sim.startFlight(scenario, depRunway, arrRunway, distanceNm, flightPlan) ? 1 : 0;
   } catch (...) {
     return 0;
   }

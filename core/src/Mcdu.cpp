@@ -255,6 +255,10 @@ void Mcdu::lineSelect(int line, bool right, McduContext& ctx) {
   switch (page_) {
     case Page::Init: lineSelectInit(line, right, ctx); return;
     case Page::Fpln:
+      if (ctx.fms.originAirport < 0 || ctx.fms.destAirport < 0) {
+        if (!right && line <= 5) show("ENTER FROM/TO ON INIT");
+        return;
+      }
       if (!right && line == 0) page_ = Page::LatRevOrigin;
       else if (!right && (line == 2 || line == 5)) page_ = Page::LatRevDest;
       return;
@@ -524,8 +528,10 @@ void Mcdu::render(const McduContext& ctx, A320McduDisplay& out) const {
   Screen s(out);
   const A320State& st = ctx.state;
   const Fms& f = ctx.fms;
-  const std::string from = ctx.world.airports[static_cast<size_t>(f.originAirport)].icao;
-  const std::string to = ctx.world.airports[static_cast<size_t>(f.destAirport)].icao;
+  // An empty flight plan has no FROM/TO yet (-1).
+  const bool route = f.originAirport >= 0 && f.destAirport >= 0;
+  const std::string from = route ? ctx.world.airports[static_cast<size_t>(f.originAirport)].icao : "";
+  const std::string to = route ? ctx.world.airports[static_cast<size_t>(f.destAirport)].icao : "";
   const int count = static_cast<int>(ctx.world.runways.size());
   const ConfigSpeeds cs = computeConfigSpeeds(ctx.weightLbs);
 
@@ -535,7 +541,8 @@ void Mcdu::render(const McduContext& ctx, A320McduDisplay& out) const {
       s.left(1, " CO RTE", A320_MCDU_WHITE);
       s.right(1, "FROM/TO  ", A320_MCDU_WHITE);
       s.left(2, "----------", A320_MCDU_WHITE);
-      s.right(2, from + "/" + to, A320_MCDU_CYAN);
+      if (route) s.right(2, from + "/" + to, A320_MCDU_CYAN);
+      else s.right(2, boxes(4) + "/" + boxes(4), A320_MCDU_AMBER);
       s.left(3, "ALTN/CO RTE", A320_MCDU_WHITE);
       s.left(4, "----/---------", A320_MCDU_WHITE);
       s.left(5, "FLT NBR", A320_MCDU_WHITE);
@@ -559,8 +566,14 @@ void Mcdu::render(const McduContext& ctx, A320McduDisplay& out) const {
       break;
     }
     case Page::Fpln: {
-      s.left(0, " FROM", A320_MCDU_WHITE, 1);
       if (!f.flightNumber.empty()) s.right(0, f.flightNumber + " ", A320_MCDU_WHITE, 1);
+      if (!route) {
+        s.centre(2, "---- END OF F-PLN ----", A320_MCDU_WHITE);
+        s.centre(4, "-- NO ALTN F-PLN --", A320_MCDU_WHITE);
+        s.centre(8, "INIT: ENTER FROM/TO", A320_MCDU_AMBER);
+        break;
+      }
+      s.left(0, " FROM", A320_MCDU_WHITE, 1);
       s.right(1, "SPD/ALT   ", A320_MCDU_WHITE);
       const std::string origin = from + runwayName(ctx, f.depRunway);
       auto elevFt = [&](int airport) {

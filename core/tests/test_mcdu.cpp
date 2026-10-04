@@ -262,3 +262,52 @@ TEST(mcdu_from_to_another_airport) {
   CHECK(listed17 && noIls35);
   a320_destroy(sim);
 }
+
+// The FLIGHT menu's choice: the whole flight plan entered, or none of it.
+TEST(mcdu_flight_plan_full_or_empty) {
+  char err[256] = {0};
+  A320Sim* sim = a320_create(A320_DATA_DIR, err, sizeof(err));
+  if (!sim) { CHECK(false); return; }
+  const int r26 = runwayIndex(sim, "26"), r17 = runwayIndex(sim, "17");
+
+  a320_start_flight(sim, A320_SCENARIO_COLD_DARK, r26, r17, 0.0, A320_PLAN_FULL);
+  run(sim, 0.1);
+  A320State s = state(sim);
+  CHECK(s.fmsFlightNumberSet && s.vSpeedsEntered && s.fmsFlapsThsSet && s.fmsFlexTempC == 50);
+  CHECK(s.depRunwayIndex == r26 && s.arrRunwayIndex == r17);
+  a320_mcdu_key(sim, A320_MCDU_PERF);
+  a320_mcdu_key(sim, A320_MCDU_NEXTPAGE);
+  dump(sim);
+  CHECK(row(sim, 2).rfind("1013", 0) == 0);
+  CHECK(row(sim, 2).find("ILS17") != std::string::npos);
+
+  a320_start_flight(sim, A320_SCENARIO_RUNWAY, r26, r17, 0.0, A320_PLAN_EMPTY);
+  run(sim, 0.1);
+  s = state(sim);
+  CHECK(!s.fmsFlightNumberSet && !s.vSpeedsEntered && s.depRunwayIndex == -1 && s.arrRunwayIndex == -1);
+  CHECK(s.ilsFreqMHz <= 0.0 || s.ilsIdent[0] == '\0');
+  a320_mcdu_key(sim, A320_MCDU_INIT);
+  CHECK(row(sim, 2).find("####/####") != std::string::npos);
+  a320_mcdu_key(sim, A320_MCDU_FPLN);
+  a320_mcdu_key(sim, A320_MCDU_LSK1L);
+  CHECK(row(sim, 13).rfind("ENTER FROM/TO ON INIT", 0) == 0);
+  a320_mcdu_key(sim, A320_MCDU_CLR);
+  // The crew's way: INIT FROM/TO, then F-PLN > departure > DEPARTURE > 26 > INSERT.
+  a320_mcdu_key(sim, A320_MCDU_INIT);
+  type(sim, "EETN/EEKE");
+  a320_mcdu_key(sim, A320_MCDU_LSK1R);
+  a320_mcdu_key(sim, A320_MCDU_FPLN);
+  a320_mcdu_key(sim, A320_MCDU_LSK1L);
+  a320_mcdu_key(sim, A320_MCDU_LSK1L);
+  dump(sim);
+  int line = -1;
+  for (int r = 4; r <= 8; r += 2)
+    if (row(sim, r).find("<26") == 0) line = r / 2 - 1;
+  CHECK(line >= 0);
+  a320_mcdu_key(sim, A320_MCDU_LSK1L + line);
+  a320_mcdu_key(sim, A320_MCDU_LSK1R + 5);
+  run(sim, 0.1);
+  s = state(sim);
+  CHECK(s.depRunwayIndex == r26 && std::strcmp(s.ilsIdent, "ILK") == 0);
+  a320_destroy(sim);
+}

@@ -291,11 +291,21 @@ A320_API A320Sim* a320_create(const char* jsbsimRoot, char* error, int errorSize
 A320_API void a320_destroy(A320Sim* sim);
 A320_API int a320_api_version(void);
 
+/* How much of the MCDU flight plan a new flight starts with. */
+typedef enum A320FlightPlan {
+  A320_PLAN_EMPTY = 0, /* the crew enters it: INIT FROM/TO, runways, PERF (in the air FROM/TO is set) */
+  A320_PLAN_ROUTE,     /* FROM/TO and the departure runway, the arrival for a trip elsewhere or in the air */
+  A320_PLAN_FULL       /* all of it: flight number, cost index, cruise level, runways and arrival,
+                          PERF TAKE OFF (V-speeds, flaps, FLEX) and PERF APPR (QNH, wind, minimum) */
+} A320FlightPlan;
+
+/* Same as a320_start_flight(sim, scenario, runwayIndex, runwayIndex, 20, A320_PLAN_ROUTE). */
 A320_API int a320_reset(A320Sim* sim, A320Scenario scenario, int runwayIndex);
 /* A flight between two runways (indices from a320_get_runway, any airport): ground scenarios start
- * at depRunway, airborne ones distanceNm from arrRunway (APPROACH; the finals at 10 and 4 NM). The
- * MCDU flight plan and ATC are set up for the trip. */
-A320_API int a320_start_flight(A320Sim* sim, A320Scenario scenario, int depRunway, int arrRunway, double distanceNm);
+ * at depRunway, airborne ones distanceNm from arrRunway (APPROACH; the finals at 10 and 4 NM). ATC
+ * is set up for the trip, the MCDU flight plan as flightPlan (A320FlightPlan) says. */
+A320_API int a320_start_flight(A320Sim* sim, A320Scenario scenario, int depRunway, int arrRunway, double distanceNm,
+                               int flightPlan);
 A320_API int a320_airport_count(const A320Sim* sim);
 A320_API int a320_get_airport(const A320Sim* sim, int index, A320AirportInfo* info);
 A320_API void a320_set_controls(A320Sim* sim, const A320Controls* controls);

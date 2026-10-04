@@ -71,7 +71,7 @@ bool Simulation::reset(A320Scenario scenario, int runwayIndex) {
   return startFlight(scenario, runwayIndex, runwayIndex, 20.0);
 }
 
-bool Simulation::startFlight(A320Scenario scenario, int depRunway, int arrRunway, double distanceNm) {
+bool Simulation::startFlight(A320Scenario scenario, int depRunway, int arrRunway, double distanceNm, int flightPlan) {
   if (!fdm_ || world_.runways.empty()) return false;
   const int last = static_cast<int>(world_.runways.size()) - 1;
   depRunway = clamp(depRunway, 0, last);
@@ -200,18 +200,7 @@ bool Simulation::startFlight(A320Scenario scenario, int depRunway, int arrRunway
     }
   }
   fbw_.reset(onRunway ? PitchLaw::Ground : PitchLaw::Flight, 0.0, thsDeg);
-  // A new flight: on the runway the departure is loaded; in the air, the arrival to this runway.
-  fms_ = Fms{};
-  fms_.originAirport = world_.runways[static_cast<size_t>(depRunway)].airport;
-  fms_.destAirport = world_.runways[static_cast<size_t>(arrRunway)].airport;
-  if (onRunway) {
-    fms_.depRunway = runwayIndex_;
-    // A flight to somewhere else starts with its arrival in the flight plan; a circuit doesn't.
-    if (arrRunway != depRunway) fms_.arrRunway = arrRunway;
-  } else {
-    fms_.arrRunway = runwayIndex_;
-    fms_.flown = true;
-  }
+  loadFlightPlan(flightPlan, onRunway, depRunway, arrRunway);
   mcdu_.reset();
   {
     // The real UTC time gives the ATIS letter and time; the squawk differs per flight.
@@ -396,8 +385,54 @@ void Simulation::mcduDisplay(A320McduDisplay& out) const {
   mcdu_.render(ctx, out);
 }
 
+void Simulation::loadFlightPlan(int flightPlan, bool onRunway, int depRunway, int arrRunway) {
+  fms_ = Fms{};
+  const Runway& dep = world_.runways[static_cast<size_t>(depRunway)];
+  const Runway& arr = world_.runways[static_cast<size_t>(arrRunway)];
+  fms_.flown = !onRunway;
+  // In the air the route is always known (INIT FROM/TO can only be entered on the ground).
+  const bool route = flightPlan != A320_PLAN_EMPTY || !onRunway;
+  fms_.originAirport = route ? dep.airport : -1;
+  fms_.destAirport = route ? arr.airport : -1;
+  if (flightPlan == A320_PLAN_EMPTY) return;
+  if (onRunway) {
+    fms_.depRunway = depRunway;
+    // A trip elsewhere starts with its arrival; a circuit gets it in the full plan only.
+    if (arrRunway != depRunway || flightPlan == A320_PLAN_FULL) fms_.arrRunway = arrRunway;
+  } else {
+    fms_.arrRunway = arrRunway;
+  }
+  if (flightPlan != A320_PLAN_FULL) return;
+
+  fms_.flightNumber = "SIM320";
+  fms_.costIndex = 30;
+  const double routeM = std::hypot(world_.airportNorthM[static_cast<size_t>(arr.airport)] - world_.airportNorthM[static_cast<size_t>(dep.airport)],
+                                   world_.airportEastM[static_cast<size_t>(arr.airport)] - world_.airportEastM[static_cast<size_t>(dep.airport)]);
+  fms_.cruiseFl = routeM > 40.0 * kNmToM ? 90 : 40;  // what ATC gives: FL090 to the other airport, 4000 ft around
+  if (onRunway) {
+    // CONF 1+F, as the departure is flown; the same speeds the PERF page suggests.
+    const double weightLbs = prop("inertia/weight-lbs");
+    const TakeoffSpeeds t = computeTakeoffSpeeds(computeSpeedLimits(1, true, 10.0, weightLbs, true, true).vsKt);
+    fms_.v1Kt = t.v1Kt;
+    fms_.vrKt = t.vrKt;
+    fms_.v2Kt = t.v2Kt;
+    fms_.flapsThs = "1/UP0.0";
+    fms_.flexTempC = 50;
+  }
+  // The ATIS weather, and a CAT I minimum: 200 ft above the threshold on the baro altimeter.
+  fms_.qnhHpa = 1013;
+  fms_.tempC = 15;
+  fms_.windDirMag = 0;
+  fms_.windKt = 0;
+  const int thresholdFt = static_cast<int>(std::lround(arr.threshold.altM / kFtToM));
+  fms_.mdaFt = (thresholdFt + 200 + 5) / 10 * 10;
+}
+
 void Simulation::fcuCommand(A320FcuCommand cmd) {
   hint(ap_.command(cmd, apInput()));
+  if ((cmd == A320_FCU_APPR || cmd == A320_FCU_LOC) && fms_.tunedIls() < 0)
+    hint("No ILS is tuned: insert the approach on the MCDU (F-PLN, the destination line, ARRIVAL, the ILS, INSERT) "
+         "or type the ILS on RAD NAV.");
   refreshState();
 }
 
