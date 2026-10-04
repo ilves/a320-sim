@@ -27,6 +27,13 @@ struct FbwOutput {
   PitchLaw law = PitchLaw::Ground;
 };
 
+// Angle-of-attack protection: the stick commands alpha above alpha prot, up to alpha max. The
+// JSBSim model's lift peaks at about 16-17 degrees (CLalpha table in A320.xml). Alpha floor
+// (autothrust TOGA) sits between them.
+constexpr double kAlphaProtDeg = 12.5;
+constexpr double kAlphaFloorDeg = 13.5;
+constexpr double kAlphaMaxDeg = 15.0;
+
 constexpr double kThsMinDeg = -13.5;
 constexpr double kThsMaxDeg = 4.0;
 
@@ -51,6 +58,7 @@ class FlyByWire {
   double elevator_ = 0.0;      // last elevator command, for bumpless transfer
   double thsDeg_ = 0.0;
   double pitchIntegral_ = 0.0;  // acts as auto-trim
+  double lastAlphaDeg_ = -100.0;  // for the alpha rate, -100 = none yet
   double rollIntegral_ = 0.0;
   double bankHoldDeg_ = 0.0;
   bool bankHeld_ = false;

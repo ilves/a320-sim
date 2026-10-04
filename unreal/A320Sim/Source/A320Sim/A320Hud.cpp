@@ -652,6 +652,10 @@ void AA320Hud::DrawEwd(const AA320Aircraft& Aircraft, double X, double Y, double
 	{
 		Text(TEXT("REV"), X + 0.48 * S, Y + 0.30 * S, Green, 1, 1);
 	}
+	else if (St.athrMode == A320_ATHR_AFLOOR)
+	{
+		Text(TEXT("A FLOOR"), X + 0.48 * S, Y + 0.30 * S, Green, 1, 1);
+	}
 	Text(FString::Printf(TEXT("FOB %d KG"), FMath::RoundToInt(St.fuelKg / 10.0) * 10), X + 0.04 * S, Y + 0.50 * S, Green, 0, 0);
 	Text(FString::Printf(TEXT("GW %d KG"), FMath::RoundToInt(St.grossWeightKg / 100.0) * 100), X + S - 0.04 * S, Y + 0.50 * S, Green, 0, 2);
 
@@ -1013,6 +1017,11 @@ void AA320Hud::DrawFma(const A320State& St, double X, double Y, double S)
 	if (!Thrust.IsEmpty() || !(St.athrEngaged && !St.onGround))
 	{
 		Mode(0, Thrust, X + 0.1 * S, 0.18 * S, ThrustColor);
+		if (St.athrMode == A320_ATHR_AFLOOR && FMath::Fmod(Now, 0.8) < 0.5)
+		{
+			// Alpha floor: amber flashing box around A.FLOOR.
+			Frame(X + 0.01 * S, Row1 - 0.02 * S, 0.18 * S, 0.04 * S, Amber, 2.0);
+		}
 	}
 	else if (FMath::Fmod(Now, 1.0) < 0.6)
 	{
@@ -1600,6 +1609,7 @@ namespace
 		case EA320Command::LsToggle: return A320_GT_EFIS_LS;
 		case EA320Command::NdModeToggle: return A320_GT_EFIS_ND_MODE;
 		case EA320Command::GearToggle: return A320_GT_GEAR;
+		case EA320Command::ParkBrakeToggle: return A320_GT_PARK_BRAKE;
 		case EA320Command::SpoilerArm: return A320_GT_SPOILERS;
 		case EA320Command::AutobrakeLo:
 		case EA320Command::AutobrakeMed:

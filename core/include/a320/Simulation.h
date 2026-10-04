@@ -74,6 +74,7 @@ class Simulation {
   A320Controls controls_{};
   A320State state_{};
   bool wasOnGround_ = true;
+  bool wasAlphaFloor_ = false;
   double airborneS_ = 0.0;
   double lastAirborneS_ = 0.0;
   double speedbrakePos_ = 0.0;

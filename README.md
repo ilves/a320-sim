@@ -25,6 +25,11 @@ the ILS and land, from a glass cockpit with a working PFD, ND and E/WD.
   autothrust with RETARD.
   - AP1 and AP2: both engage only with LOC or APPR armed (CAT 3 DUAL), as on the aircraft.
   - The PFD's flight mode annunciator boxes a new mode for 10 s and shows CAT 3 SINGLE/DUAL.
+  - Speed protection: A/THR and the autopilot never fly slower than VLS or faster than VMAX,
+    whatever speed is selected.
+  - **Alpha floor:** close to the stall, A/THR engages by itself with TOGA thrust (A.FLOOR,
+    amber box). It then stays in TOGA LK until you press A/THR, as on the aircraft. Auto-trim
+    stops in alpha protection.
 - **Lessons (F3)** that guide you step by step, highlight the control or display to use, tick
   each step off when you've done it, and say what the same thing is in MSFS 2024. The first
   one is an ILS approach and autoland, from a 20 NM intercept to a stop on the runway.
@@ -206,7 +211,9 @@ were from the centreline.
 
 **Lessons (F3).** Pick a lesson and press START. The aircraft resets to the lesson's start, and
 a panel on the left takes you through it:
-- **DO** says what to do. The control is outlined in yellow, with a line from the panel.
+- **DO** says which cockpit control to use and what to do with it. The control is outlined in
+  yellow, with a line from the panel. Keyboard shortcuts are added in brackets, e.g.
+  [Key: K].
 - **LOOK FOR** says what changes when it worked, usually on the FMA.
 - **HOW IT WORKS** explains why, and **IN MSFS 2024** gives the same action in Microsoft Flight
   Simulator.
@@ -306,7 +313,10 @@ The flight tests fly the real JSBSim A320 with a scripted pilot:
   NM out to a stop: every step must tick off, the FMA must show LOC*, G/S* and G/S, and the
   touchdown must be in the touchdown zone below 600 fpm near VAPP;
 - the 20 NM intercept scenario holding 3000 ft and 220 kt, the AP1/AP2 rules, and the sim
-  tutor messages.
+  tutor messages;
+- speed protection: SPD 100 selected, A/THR holds VLS;
+- alpha floor: full back stick at idle thrust triggers A.FLOOR (TOGA, alpha held below the
+  stall), then TOGA LK until A/THR is disconnected.
 
 CI runs these tests on Linux and Windows, and runs `Setup.ps1 -CoreOnly` on Windows.
 

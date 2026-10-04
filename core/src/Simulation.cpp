@@ -179,6 +179,7 @@ bool Simulation::reset(A320Scenario scenario, int runwayIndex) {
   clock_.resetTime();
   refreshState();
   wasOnGround_ = state_.onGround != 0;
+  wasAlphaFloor_ = false;
   airborneS_ = lastAirborneS_ = wasOnGround_ ? 0.0 : 60.0;
   return true;
 }
@@ -245,7 +246,7 @@ void Simulation::setControls(const A320Controls& c) {
   // Sim tutor: explain switch and lever moves the aircraft refuses or ignores.
   const A320Controls& old = controls_;
   const A320State& s = state_;
-  char text[160];
+  char text[256];
   if (!c.gearDown && old.gearDown && s.onGround) hint("GEAR: the lever can't be raised with weight on the wheels.");
   if (((c.reverse && !old.reverse) || (c.reverse2 && !old.reverse2)) && !s.onGround)
     hint("REVERSE: the reversers only deploy on the ground. In flight the levers give idle thrust.");
@@ -291,6 +292,9 @@ ApInput Simulation::apInput() const {
   in.pilotStickPitch = controls_.stickPitch;
   in.pilotStickRoll = controls_.stickRoll;
   in.thrustLever = thrustLevers(controls_).forward();
+  in.alphaDeg = s.alphaDeg;
+  in.vlsKt = s.vlsKt;
+  in.vmaxKt = s.vmaxKt;
   in.currentThrottle = throttle_;
   in.dtS = clock_.stepS();
   return in;
@@ -302,7 +306,11 @@ void Simulation::fcuCommand(A320FcuCommand cmd) {
 }
 
 void Simulation::setFcuTargets(double spdKt, double hdgMagDeg, double altFt, double vsFpm) {
+  const double oldSpd = ap_.spdKt();
   ap_.setTargets(spdKt, hdgMagDeg, altFt, vsFpm);
+  const double vls = std::ceil(state_.vlsKt);
+  if (!state_.onGround && ap_.spdKt() < vls && oldSpd >= vls)
+    hint("SPD below VLS (top of the amber band): the autopilot and A/THR will not fly slower than VLS.");
   refreshState();
 }
 
@@ -332,6 +340,11 @@ void Simulation::applyControls() {
   updateEngines((c.apuBleed && apu_.avail()) || anyEngineRunning);
 
   const ApOutput ap = ap_.update(apInput());
+  const bool alphaFloor = ap_.athrMode() == A320_ATHR_AFLOOR;
+  if (alphaFloor && !wasAlphaFloor_)
+    hint("ALPHA FLOOR: the angle of attack came close to the stall, so A/THR set TOGA thrust. Once the speed is back, "
+         "press A/THR to end TOGA LK, then set the thrust levers.");
+  wasAlphaFloor_ = alphaFloor;
   const double stickPitch = ap.apActive ? ap.stickPitch : c.stickPitch;
   const double stickRoll = ap.apActive ? ap.stickRoll : c.stickRoll;
   const double pedals = clamp(c.pedals + (ap.apActive ? ap.pedals : 0.0), -1.0, 1.0);
@@ -368,7 +381,7 @@ void Simulation::applyControls() {
     const bool engReverse = levers.reverse[i] && onGround;
     double cmd = levers.reverse[i] ? (engReverse ? levers.lever[i] : 0.0) : levers.lever[i];
     // A/THR works below each engine's own lever, so a retarded lever keeps its engine back.
-    if (athrActive_ && !levers.reverse[i]) cmd = std::fmin(ap.throttle, levers.lever[i]);
+    if (athrActive_ && !levers.reverse[i]) cmd = ap.thrustOverride ? ap.throttle : std::fmin(ap.throttle, levers.lever[i]);
     char name[64];
     std::snprintf(name, sizeof(name), "fcs/throttle-cmd-norm[%d]", i);
     setProp(name, cmd);

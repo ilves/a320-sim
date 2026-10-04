@@ -2,6 +2,7 @@
 
 #include <cmath>
 
+#include "a320/FlyByWire.h"
 #include "a320/Systems.h"
 #include "a320/Units.h"
 
@@ -44,6 +45,7 @@ void Autopilot::reset(double spdKt, double hdgMagDeg, double altFt) {
   alt_ = altFt;
   vs_ = 0.0;
   athrWasActive_ = false;
+  aFloor_ = togaLock_ = false;
 }
 
 int Autopilot::armed() const {
@@ -125,6 +127,12 @@ const char* Autopilot::command(A320FcuCommand cmd, const ApInput& in) {
     case A320_FCU_AP2:
       return engageAp(ap2_, ap1_, in);
     case A320_FCU_ATHR:
+      if (aFloor_ || togaLock_) {
+        // The only way out of alpha floor / TOGA LK: disconnect the autothrust.
+        aFloor_ = togaLock_ = false;
+        athr_ = false;
+        return "A/THR disconnected: thrust follows the thrust levers again. Set them where you need thrust.";
+      }
       athr_ = !athr_;
       if (athr_ && athrMode_ == A320_ATHR_OFF) spd_ = std::round(in.iasKt);
       if (athr_ && !in.onGround && (in.thrustLever > kLeverClimb + 0.03 || in.thrustLever <= 0.02))
@@ -248,7 +256,7 @@ double Autopilot::verticalFpa(const ApInput& in) {
       // Speed on pitch: faster than target -> pitch up.
       const double lo = vert_ == A320_VERT_OP_CLB ? 0.5 : -8.0;
       const double hi = vert_ == A320_VERT_OP_CLB ? 15.0 : 0.0;
-      const double err = in.iasKt - spd_;
+      const double err = in.iasKt - protectedSpeed(in);
       fpaIntegral_ = clamp(fpaIntegral_ + 0.05 * err * in.dtS, lo, hi);
       return clamp(fpaIntegral_ + 0.3 * err, lo, hi);
     }
@@ -267,7 +275,18 @@ double Autopilot::verticalFpa(const ApInput& in) {
   }
 }
 
+double Autopilot::protectedSpeed(const ApInput& in) const {
+  const double lo = in.vlsKt, hi = std::fmax(in.vmaxKt - 3.0, lo);
+  return lo > 0.0 ? clamp(spd_, lo, hi) : spd_;
+}
+
 double Autopilot::autothrust(const ApInput& in, bool& active) {
+  if (aFloor_ || togaLock_) {
+    athrMode_ = aFloor_ ? A320_ATHR_AFLOOR : A320_ATHR_TOGA_LK;
+    active = true;
+    athrWasActive_ = false;
+    return 1.0;
+  }
   // A/THR works with the levers between idle and CL; at TOGA/FLX the pilot has manual thrust.
   active = athr_ && in.thrustLever > 0.02 && in.thrustLever <= kLeverClimb + 0.03 && !in.onGround;
   if (vert_ == A320_VERT_FLARE && in.radioAltFt < kRetardFt) athrMode_ = A320_ATHR_RETARD;
@@ -281,7 +300,7 @@ double Autopilot::autothrust(const ApInput& in, bool& active) {
   }
 
   const double limit = std::fmin(in.thrustLever, kLeverClimb);
-  const double err = spd_ - in.iasKt;
+  const double err = protectedSpeed(in) - in.iasKt;
   if (!athrWasActive_) speedIntegral_ = in.currentThrottle - 0.03 * err;  // bumpless
   athrWasActive_ = true;
   switch (athrMode_) {
@@ -305,11 +324,24 @@ ApOutput Autopilot::update(const ApInput& in) {
     disconnectAp();
   // Touchdown with the levers at idle disconnects autothrust.
   if (athr_ && in.onGround && in.thrustLever < 0.02) athr_ = false;
+  // Alpha floor: TOGA thrust from the autothrust (even if it was off) when the angle of attack
+  // gets close to the stall, or with full back stick in alpha protection. Not near the ground.
+  const bool floorCondition = !in.onGround && in.radioAltFt > 100.0 &&
+                              (in.alphaDeg > kAlphaFloorDeg || (in.alphaDeg > kAlphaProtDeg && in.pilotStickPitch > 0.9));
+  if (floorCondition) {
+    aFloor_ = athr_ = true;
+    togaLock_ = false;
+  } else if (aFloor_ && in.alphaDeg < kAlphaFloorDeg - 0.5) {
+    aFloor_ = false;
+    togaLock_ = true;
+  }
+  if (in.onGround) aFloor_ = togaLock_ = false;
 
   updateModes(in);
   // Leaving the approach with both autopilots engaged keeps only one.
   if (ap1_ && ap2_ && !approachMode()) ap2_ = false;
   out.throttle = autothrust(in, out.athrActive);
+  out.thrustOverride = aFloor_ || togaLock_;
   if (!apEngaged()) return out;
 
   out.apActive = true;
@@ -368,6 +400,8 @@ const char* athrModeName(int mode) {
     case A320_ATHR_THR_CLB: return "THR CLB";
     case A320_ATHR_THR_IDLE: return "THR IDLE";
     case A320_ATHR_RETARD: return "RETARD";
+    case A320_ATHR_AFLOOR: return "A.FLOOR";
+    case A320_ATHR_TOGA_LK: return "TOGA LK";
     default: return "";
   }
 }

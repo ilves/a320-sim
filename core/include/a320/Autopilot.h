@@ -17,6 +17,8 @@ struct ApInput {
   double magneticVariationDeg = 0.0;
   double pilotStickPitch = 0.0, pilotStickRoll = 0.0;  // for instinctive disconnect
   double thrustLever = 0.0;    // pilot's lever; autothrust works below it, up to CL
+  double alphaDeg = 0.0;
+  double vlsKt = 0.0, vmaxKt = 400.0;  // speed protections for the selected speed
   double currentThrottle = 0.0;  // what the engines are commanded now, for bumpless engagement
   double dtS = 1.0 / 120.0;
 };
@@ -25,6 +27,7 @@ struct ApOutput {
   bool apActive = false;
   double stickPitch = 0.0, stickRoll = 0.0, pedals = 0.0;
   bool athrActive = false;
+  bool thrustOverride = false;  // alpha floor / TOGA LK: thrust not limited by the levers
   double throttle = 0.0;
 };
 
@@ -63,6 +66,8 @@ class Autopilot {
   void updateModes(const ApInput& in);
   double autothrust(const ApInput& in, bool& active);
   void enterVertical(A320VertMode mode, const ApInput& in);
+  // The selected speed kept between VLS and VMAX, as the flight guidance does.
+  double protectedSpeed(const ApInput& in) const;
 
   bool ap1_ = false, ap2_ = false, athr_ = false;
   A320LatMode lat_ = A320_LAT_NONE;
@@ -75,6 +80,7 @@ class Autopilot {
   double modeTimeS_ = 0.0;  // time in G/S*
   double speedIntegral_ = 0.0;
   bool athrWasActive_ = false;
+  bool aFloor_ = false, togaLock_ = false;
   uint32_t disconnects_ = 0;
 };
 

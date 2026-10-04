@@ -21,7 +21,7 @@
 extern "C" {
 #endif
 
-#define A320_API_VERSION 5
+#define A320_API_VERSION 6
 
 typedef enum A320Scenario {
   A320_SCENARIO_RUNWAY = 0,     /* lined up, engines idle, CONF 1+F, park brake set */
@@ -41,7 +41,9 @@ typedef enum A320VertMode {
   A320_VERT_GS_STAR /* glideslope capture, before G/S */
 } A320VertMode;
 typedef enum A320AthrMode {
-  A320_ATHR_OFF = 0, A320_ATHR_SPEED, A320_ATHR_THR_CLB, A320_ATHR_THR_IDLE, A320_ATHR_RETARD
+  A320_ATHR_OFF = 0, A320_ATHR_SPEED, A320_ATHR_THR_CLB, A320_ATHR_THR_IDLE, A320_ATHR_RETARD,
+  A320_ATHR_AFLOOR, /* alpha floor: TOGA thrust whatever the levers */
+  A320_ATHR_TOGA_LK /* after alpha floor: TOGA kept until A/THR is disconnected */
 } A320AthrMode;
 #define A320_ARMED_ALT 1
 #define A320_ARMED_LOC 2
@@ -205,7 +207,7 @@ typedef struct A320State {
   int ap1Engaged, ap2Engaged; /* apEngaged is either */
   /* Sim tutor: why a button press did nothing, or what to watch for (empty when none). */
   uint32_t hintSeq;
-  char hint[160];
+  char hint[256];
 } A320State;
 
 typedef struct A320RunwayInfo {
@@ -267,6 +269,7 @@ typedef enum A320GuideTarget {
   A320_GT_FCU_SPD, A320_GT_FCU_HDG, A320_GT_FCU_ALT, A320_GT_FCU_AP1, A320_GT_FCU_AP2, A320_GT_FCU_ATHR,
   A320_GT_FCU_LOC, A320_GT_FCU_APPR, A320_GT_EFIS_LS, A320_GT_EFIS_ND_MODE,
   A320_GT_THRUST_LEVERS, A320_GT_FLAPS, A320_GT_GEAR, A320_GT_SPOILERS, A320_GT_AUTOBRAKE,
+  A320_GT_PARK_BRAKE,
   A320_GT_COUNT
 } A320GuideTarget;
 typedef enum A320GuideText {

@@ -198,3 +198,62 @@ TEST(ap_autoland) {
   CHECK(stopX < f.rw.landingDistanceM);
   CHECK(std::fabs(stopY) < 10.0);
 }
+
+TEST(athr_vls_protection) {
+  ApFlight f(A320_SCENARIO_APPROACH);
+  const uint32_t seq = f.s.hintSeq;
+  f.targets(100.0, f.s.fcuHdgMagDeg, f.s.fcuAltFt, 0.0);  // far below VLS
+  CHECK(f.s.hintSeq == seq + 1 && std::strstr(f.s.hint, "VLS") != nullptr);
+  double minIas = 1000.0;
+  f.fly(150.0, [&] {
+    if (f.s.simTimeS > 90.0) minIas = std::fmin(minIas, f.s.iasKt - f.s.vlsKt);
+    return true;
+  });
+  std::printf("  SPD 100 selected: IAS %.0f kt, VLS %.0f kt, lowest margin over VLS once settled %.1f kt, mode %s\n", f.s.iasKt,
+              f.s.vlsKt, minIas, a320_athr_mode_name(f.s.athrMode));
+  CHECK(minIas > -3.0);
+  CHECK(f.s.iasKt < f.s.vlsKt + 8.0);
+  CHECK(f.s.athrMode == A320_ATHR_SPEED);
+}
+
+TEST(alpha_floor_and_toga_lock) {
+  ApFlight f(A320_SCENARIO_APPROACH);
+  f.fcu(A320_FCU_AP1);   // AP off
+  f.fcu(A320_FCU_ATHR);  // A/THR off
+  f.c.thrustLever = 0.0;  // idle: the aircraft slows down
+  f.c.stickPitch = 1.0;   // full back stick: alpha protection, then alpha floor
+  bool floorSeen = false;
+  double floorN1 = 0.0, maxAlpha = 0.0;
+  f.fly(90.0, [&] {
+    if (std::getenv("A320_TRACE") && std::fmod(f.s.simTimeS, 3.0) < kDt)
+      std::printf("    t %5.1f ias %5.1f alpha %5.1f pitch %5.1f fpa %5.1f n1 %5.1f elev %5.2f ths %5.1f %s\n", f.s.simTimeS, f.s.iasKt,
+                  f.s.alphaDeg, f.s.pitchDeg, f.s.flightPathDeg, f.s.n1[0], f.s.elevatorNorm, f.s.thsDeg, a320_athr_mode_name(f.s.athrMode));
+    maxAlpha = std::fmax(maxAlpha, f.s.alphaDeg);
+    if (f.s.athrMode == A320_ATHR_AFLOOR) {
+      floorSeen = true;
+      floorN1 = std::fmax(floorN1, f.s.n1[0]);
+    }
+    return true;
+  });
+  std::printf("  full back stick at idle: max alpha %.1f deg, A.FLOOR %d, N1 %.0f %%, hint: %s\n", maxAlpha, floorSeen,
+              floorN1, f.s.hint);
+  CHECK(floorSeen && f.s.athrEngaged);
+  CHECK(floorN1 > 80.0);
+  CHECK(std::strstr(f.s.hint, "ALPHA FLOOR") != nullptr);
+  CHECK(maxAlpha < 16.2);  // alpha max 15 plus a small overshoot, below the model's stall
+
+  // Recovery: ease the stick forward out of alpha protection. TOGA stays locked until A/THR is
+  // disconnected.
+  f.c.stickPitch = -0.3;
+  f.fly(30.0, [&] { return f.s.athrMode != A320_ATHR_TOGA_LK; });
+  f.fly(6.0);
+  f.c.stickPitch = 0.0;
+  CHECK(f.s.athrMode == A320_ATHR_TOGA_LK);
+  f.fly(5.0);
+  CHECK(f.s.athrMode == A320_ATHR_TOGA_LK && f.s.n1[0] > 80.0);
+  f.fcu(A320_FCU_ATHR);
+  f.fly(15.0);
+  std::printf("  after A/THR off: mode %s, N1 %.0f %% (levers at idle)\n", a320_athr_mode_name(f.s.athrMode), f.s.n1[0]);
+  CHECK(!f.s.athrEngaged && f.s.athrMode == A320_ATHR_OFF);
+  CHECK(f.s.n1[0] < 50.0);
+}

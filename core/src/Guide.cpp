@@ -36,8 +36,8 @@ const GuideStep kIlsAutoland[] = {
      {A320_GT_AUTOBRAKE}, false,
      [](const A320State&, const A320Controls& c) { return c.autobrake == A320_AUTOBRAKE_LO || c.autobrake == A320_AUTOBRAKE_MED; }},
     {"APPROACH PREPARATION", "Show the ILS",
-     "Press LS on the EFIS panel at the left of the FCU strip (or L), and click the ND mode button until it shows "
-     "ND LS (ROSE LS).",
+     "Press LS on the EFIS panel (left end of the FCU strip), and click the ND mode button until it shows ND LS "
+     "(ROSE LS). [Key: L]",
      "PFD: magenta localizer diamond at the bottom, glideslope diamond on the right. ND: course pointer and "
      "deviation bar.",
      "LS only changes the display; the ILS is tuned automatically for the runway. A diamond shows where the beam is, "
@@ -55,7 +55,7 @@ const GuideStep kIlsAutoland[] = {
      "In MSFS this is on the ND and the MCDU RAD NAV page.",
      {A320_GT_ND}, true, nullptr},
     {"INTERCEPT", "Slow down: SPD 180",
-     "Turn the SPD knob on the FCU down to 180 kt: the - button next to SPD, or key 1 (Shift = 10 kt steps).",
+     "Turn the SPD knob on the FCU down to 180 kt: click - next to the SPD window. [Keys: 1, Shift = 10 kt]",
      "The blue speed target on the PFD speed tape moves to 180. A/THR reduces thrust, and the FMA still shows "
      "SPEED.",
      "This is selected speed: you set it with the knob. Managed speed (knob pushed) would follow the flight plan; "
@@ -64,7 +64,7 @@ const GuideStep kIlsAutoland[] = {
      {A320_GT_FCU_SPD, A320_GT_PFD_SPEED}, false,
      [](const A320State& s, const A320Controls&) { return s.fcuSpdKt <= 185.0; }},
     {"INTERCEPT", "FLAPS 1",
-     "Below 230 kt, move the flaps lever to 1 (V, or drag the lever on the pedestal).",
+     "Below 230 kt, drag the flaps lever on the pedestal to 1. [Key: V]",
      "The E/WD shows flaps 1, and the red-and-black VFE band on the speed tape moves down to 230 kt.",
      "Each flap position has a maximum speed (VFE). Extending early is not possible without overspeeding the "
      "flaps.",
@@ -72,7 +72,7 @@ const GuideStep kIlsAutoland[] = {
      {A320_GT_FLAPS}, false,
      [](const A320State&, const A320Controls& c) { return c.flapsLever >= 1; }},
     {"INTERCEPT", "Arm the approach: APPR",
-     "Press APPR on the FCU (or K).",
+     "Press APPR on the FCU. [Key: K]",
      "FMA, second row: G/S and LOC in BLUE (armed). The APPR button lights up.",
      "Armed means waiting. The aircraft keeps HDG and ALT until the beams are reached: first LOC captures, then "
      "G/S. Arm it only on an intercept heading.",
@@ -80,7 +80,7 @@ const GuideStep kIlsAutoland[] = {
      {A320_GT_FCU_APPR, A320_GT_FMA}, false,
      [](const A320State& s, const A320Controls&) { return (s.armed & A320_ARMED_GS) != 0 || onGlideslope(s); }},
     {"INTERCEPT", "Engage AP2",
-     "Press AP2 (or Shift+A). With APPR armed both autopilots can be engaged.",
+     "Press AP2 on the FCU. With APPR armed both autopilots can be engaged. [Keys: Shift+A]",
      "FMA, right column: AP1+2 and CAT 3 DUAL.",
      "Two autopilots monitor each other, which a CAT 3 autoland in fog requires. Outside LOC or APPR only one "
      "autopilot can be engaged.",
@@ -95,7 +95,7 @@ const GuideStep kIlsAutoland[] = {
      {A320_GT_FMA, A320_GT_ND}, false,
      [](const A320State& s, const A320Controls&) { return locCaptured(s); }},
     {"INTERCEPT", "FLAPS 2, SPD 160",
-     "Below 200 kt set FLAPS 2 (V), then turn the SPD knob to 160 kt (key 1).",
+     "Below 200 kt drag the flaps lever to 2, then turn the SPD knob down to 160 kt. [Keys: V, 1]",
      "E/WD flaps 2. The speed target moves to 160.",
      "Slowing down in steps keeps the speed below each flap limit while the aircraft stays stable.",
      "In MSFS with managed speed the target follows the flaps (F and S speeds) by itself.",
@@ -110,14 +110,14 @@ const GuideStep kIlsAutoland[] = {
      {A320_GT_FMA, A320_GT_PFD_ILS}, false,
      [](const A320State& s, const A320Controls&) { return onGlideslope(s); }},
     {"FINAL APPROACH", "Gear down",
-     "Put the gear lever down (G).",
+     "Click the gear lever on the centre panel to put it DOWN. [Key: G]",
      "The gear indications turn green; LDG MEMO on the E/WD shows GEAR DN in green.",
      "The gear adds a lot of drag, so it goes down once you start descending on the glideslope.",
      "Same lever in MSFS, on the centre panel.",
      {A320_GT_GEAR}, false,
      [](const A320State&, const A320Controls& c) { return c.gearDown != 0; }},
     {"FINAL APPROACH", "FLAPS 3, then FULL",
-     "Below 185 kt FLAPS 3 (V), then below 177 kt FLAPS FULL (V).",
+     "Below 185 kt drag the flaps lever to 3, then below 177 kt to FULL. [Key: V]",
      "E/WD: FLAPS FULL. The VLS (amber band at the bottom of the speed tape) moves down.",
      "FULL is the normal landing setting: lowest approach speed and good view over the nose.",
      "Same in MSFS.",
@@ -125,7 +125,7 @@ const GuideStep kIlsAutoland[] = {
      [](const A320State&, const A320Controls& c) { return c.flapsLever == 4; }},
     {"FINAL APPROACH", "Approach speed",
      "Once the flaps are fully out, turn the SPD knob to VAPP: the top of the amber VLS band plus 5 kt (about "
-     "135-150 kt; key 1 lowers it).",
+     "135-150 kt). [Key: 1]",
      "A/THR slows down and holds the speed just above the amber band.",
      "VLS is the lowest selectable speed (1.23 x stall speed). VAPP adds a margin for gusts and autothrust.",
      "In MSFS, managed speed flies VAPP from the MCDU PERF APPR page automatically.",
@@ -156,7 +156,7 @@ const GuideStep kIlsAutoland[] = {
      {A320_GT_FMA}, false,
      [](const A320State& s, const A320Controls&) { return landing(s); }},
     {"LANDING", "Flare and RETARD",
-     "At about 40 ft the aircraft flares by itself. When you hear \"RETARD\", pull the thrust levers to IDLE (End).",
+     "At about 40 ft the aircraft flares by itself. When you hear \"RETARD\", drag the thrust levers on the pedestal back to the IDLE detent. [Key: End]",
      "FMA: FLARE, and RETARD in the thrust column.",
      "Airbus autothrust does not move the levers: you retard them. After touchdown, levers at IDLE also disconnect "
      "A/THR.",
@@ -174,8 +174,8 @@ const GuideStep kIlsAutoland[] = {
      {A320_GT_FMA, A320_GT_EWD}, false,
      [](const A320State& s, const A320Controls&) { return s.onGround != 0; }},
     {"LANDING", "Full reverse",
-     "Select reverse thrust: press R (levers to reverse idle), then hold PgUp to MAX REV. On a throttle quadrant: "
-     "pull the levers back behind IDLE, fully into reverse.",
+     "Select full reverse: drag the thrust levers down past IDLE into the red REV zone on the pedestal (on a throttle "
+     "quadrant: pull the levers behind IDLE, fully into reverse). [Keys: R, then hold PgUp]",
      "E/WD: REV in green on both engines, N1 rises. The deceleration increases.",
      "Reversers turn the engine exhaust forward. They deploy only on the ground, and only with the levers in the "
      "reverse range.",
@@ -185,8 +185,8 @@ const GuideStep kIlsAutoland[] = {
        return (s.onGround && s.reverse && c.thrustLever > 0.6) || (s.onGround && s.groundSpeedKt < 70.0);
      }},
     {"LANDING", "70 kt: reverse idle, then stow",
-     "At 70 kt hold PgDn back to reverse idle, then press R to stow the reversers. The levers end at IDLE. On a "
-     "quadrant: levers forward to the IDLE detent.",
+     "At 70 kt bring the thrust levers up to reverse idle, then out of reverse to the IDLE detent (on a quadrant: "
+     "levers forward to IDLE). [Keys: hold PgDn, then R]",
      "E/WD: REV disappears. The engines spool down to idle.",
      "Reversers lose effect at low speed and can blow debris into the engines, so they are back at idle by 70 kt.",
      "In MSFS: release F2 and bring the levers to IDLE.",
@@ -195,12 +195,12 @@ const GuideStep kIlsAutoland[] = {
        return s.onGround && !c.reverse && c.thrustLever < 0.05 && s.groundSpeedKt < 80.0;
      }},
     {"LANDING", "Brake to a stop",
-     "Hold B (or your toe brakes) to brake down to a stop on the centreline. Then set the parking brake (N) and "
-     "disconnect the autopilot (AP1 / AP2).",
+     "Press the brake pedals (toe brakes) down to a stop on the centreline. Then set the PARK BRK switch on the "
+     "pedestal to ON, and press AP1 / AP2 on the FCU to disconnect the autopilot. [Keys: hold B, then N]",
      "The speed reads 0, PARK BRK appears on the E/WD memo.",
      "Pressing the brakes disconnects the autobrake: from then on you brake yourself. That is normal and expected.",
      "In MSFS: brakes are the . key (or toe brakes), parking brake Ctrl+. ; the autobrake disconnects the same way.",
-     {A320_GT_EWD, A320_GT_FCU_AP1}, false,
+     {A320_GT_PARK_BRAKE, A320_GT_FCU_AP1, A320_GT_EWD}, false,
      [](const A320State& s, const A320Controls& c) {
        return s.onGround && s.groundSpeedKt < 2.0 && c.parkBrake && !c.reverse;
      }},
@@ -212,16 +212,16 @@ constexpr int kStepTouchdown = 18;  // "Reversers": before it the aircraft must 
 const char* ilsAlert(const A320State& s, const A320Controls& c, int step) {
   const bool flying = !s.onGround;
   if (flying && !s.apEngaged && step < kStepTouchdown)
-    return "The autopilot is off (a firm sidestick input disconnects it). Press AP1 to engage it again.";
+    return "The autopilot is off (a firm sidestick input disconnects it). Press AP1 on the FCU to engage it again.";
   if (flying && s.iasKt > s.vmaxKt + 3.0)
     return "Too fast for this flap setting: turn the SPD knob down.";
-  if (flying && onGlideslope(s) && !c.gearDown && s.radioAltFt < 1500.0) return "The gear is still up: G.";
+  if (flying && onGlideslope(s) && !c.gearDown && s.radioAltFt < 1500.0) return "The gear is still up: gear lever DOWN. [Key: G]";
   if (flying && s.athrEngaged && !s.athrActive && c.thrustLever > 0.05)
-    return "A/THR is armed but not active: put the thrust levers in the CL detent (Ins).";
+    return "A/THR is armed but not active: put the thrust levers in the CL detent. [Key: Ins]";
   if (s.onGround && s.reverse && s.groundSpeedKt < 60.0)
-    return "Below 70 kt: back to reverse idle (PgDn) and stow the reversers (R).";
+    return "Below 70 kt: thrust levers to reverse idle, then out of reverse to IDLE. [Keys: PgDn, R]";
   if (s.onGround && !s.reverse && c.thrustLever > 0.1 && step >= kStepTouchdown)
-    return "Thrust levers to IDLE (End): forward thrust on the runway works against the brakes.";
+    return "Thrust levers to the IDLE detent: forward thrust on the runway works against the brakes. [Key: End]";
   return nullptr;
 }
 

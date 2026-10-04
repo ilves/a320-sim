@@ -13,9 +13,6 @@ constexpr double kBankMaxDeg = 67.0;
 constexpr double kPitchMaxDeg = 30.0;
 constexpr double kPitchMinDeg = -15.0;
 constexpr double kStickDeadband = 0.05;
-// The JSBSim model's lift peaks at about 16-17 degrees alpha (CLalpha table in A320.xml).
-constexpr double kAlphaProtDeg = 12.5;
-constexpr double kAlphaMaxDeg = 15.0;
 constexpr double kFlareEntryFt = 50.0;
 constexpr double kFlareExitFt = 100.0;
 
@@ -36,6 +33,7 @@ void FlyByWire::reset(PitchLaw law, double elevatorCmd, double thsDeg) {
   airborneS_ = 0.0;
   groundS_ = 0.0;
   flareTimeS_ = 0.0;
+  lastAlphaDeg_ = -100.0;
 }
 
 void FlyByWire::enter(PitchLaw law, const FbwInput& in) {
@@ -82,7 +80,11 @@ FbwOutput FlyByWire::update(const FbwInput& in) {
       // Auto-trim: move the THS (max 1 deg/s) to take over the elevator's steady deflection.
       const double elevatorDeg = elevator_ * 25.0;
       // Slow compared with the pitch loop so the two integrators do not fight.
-      thsDeg_ = clamp(thsDeg_ + clamp(0.05 * elevatorDeg, -1.0, 1.0) * in.dtS, kThsMinDeg, kThsMaxDeg);
+      double trimRate = clamp(0.05 * elevatorDeg, -1.0, 1.0);
+      // As on the aircraft, no nose-up auto-trim in alpha protection or at high pitch: trimming
+      // into the protection would hold the nose up after the stick is released.
+      if (trimRate < 0.0 && (in.alphaDeg > kAlphaProtDeg || in.pitchDeg > kPitchMaxDeg - 5.0)) trimRate = 0.0;
+      thsDeg_ = clamp(thsDeg_ + trimRate * in.dtS, kThsMinDeg, kThsMaxDeg);
       break;
     }
     case PitchLaw::Flare:
@@ -113,7 +115,12 @@ double FlyByWire::flightPitch(const FbwInput& in) {
   // Alpha protection: above alpha prot the stick commands alpha (neutral = alpha prot,
   // full back = alpha max), so the aircraft gives up flight path rather than stall.
   const double alphaTarget = kAlphaProtDeg + clamp(stick, 0.0, 1.0) * (kAlphaMaxDeg - kAlphaProtDeg);
-  nzCmd = std::fmin(nzCmd, nzOneG + 0.15 * (alphaTarget - in.alphaDeg));
+  // Alpha rate damps the approach to alpha max (the phugoid would otherwise overshoot it).
+  const double alphaRate = in.dtS > 0.0 && lastAlphaDeg_ > -90.0 ? (in.alphaDeg - lastAlphaDeg_) / in.dtS : 0.0;
+  lastAlphaDeg_ = in.alphaDeg;
+  nzCmd = std::fmin(nzCmd, nzOneG + 0.3 * (alphaTarget - in.alphaDeg) - 0.3 * alphaRate);
+  // Above the pitch limit the nose is brought back down even with the stick neutral.
+  if (in.pitchDeg > kPitchMaxDeg) nzCmd = std::fmin(nzCmd, nzOneG - 0.1 * (in.pitchDeg - kPitchMaxDeg));
   const double err = nzCmd - in.loadFactor;
 
   // Gains tuned against the JSBSim model (tests/test_flight.cpp); kQ is per deg/s.
