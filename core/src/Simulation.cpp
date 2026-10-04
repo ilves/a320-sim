@@ -93,14 +93,14 @@ bool Simulation::reset(A320Scenario scenario, int runwayIndex) {
   controls_.lights = coldDark ? 0
                     : A320_LT_BEACON | A320_LT_STROBE | A320_LT_NAV | A320_LT_LANDING | A320_LT_TAKEOFF;
   controls_.signs = A320_SIGN_NO_SMOKING | (coldDark ? 0 : A320_SIGN_SEATBELTS);
-  controls_.spoilersArmed = onRunway ? 1 : 0;
+  controls_.spoilersArmed = onRunway && !coldDark ? 1 : 0;
   controls_.autobrake = onRunway && !coldDark ? A320_AUTOBRAKE_MAX : A320_AUTOBRAKE_OFF;
   double speedKt = 0.0;
   RunwayPoint start;
   if (onRunway) {
     start = {-rwIls.axes().displacementM() + kLineupDistanceM, 0.0, 0.0};
     controls_.parkBrake = 1;
-    flaps_.setLever(1, 0.0);  // CONF 1+F for takeoff
+    if (!coldDark) flaps_.setLever(1, 0.0);  // CONF 1+F for takeoff; cold and dark starts clean
   } else if (intercept) {
     // 3 NM left of the extended centreline, 20 NM out, at 3000 ft: a 30 degree intercept
     // that captures the localizer near 15 NM and the glideslope from below near 9 NM.
@@ -663,6 +663,9 @@ void Simulation::refreshState() {
   const int papiOf = tunedIls_ >= 0 ? tunedIls_ : runwayIndex_;
   for (int k = 0; k < 4; ++k) s.papiWhite[k] = papiOf < 4 ? s.papiRunway[papiOf][k] : 0;
   weightLbs_ = weightLbs;
+  s.fmsFlightNumberSet = fms_.flightNumber.empty() ? 0 : 1;
+  s.fmsFlapsThsSet = fms_.flapsThs.empty() ? 0 : 1;
+  s.fmsFlexTempC = fms_.flexTempC;
   s.dhFt = fms_.dhFt;
   s.mdaFt = fms_.mdaFt;
   s.vappKt = computeVapp(fms_, computeConfigSpeeds(weightLbs), airport_);

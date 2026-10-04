@@ -21,7 +21,7 @@
 extern "C" {
 #endif
 
-#define A320_API_VERSION 9
+#define A320_API_VERSION 10
 
 typedef enum A320Scenario {
   A320_SCENARIO_RUNWAY = 0,     /* lined up, engines idle, CONF 1+F, park brake set */
@@ -244,6 +244,11 @@ typedef struct A320State {
   int atcRunwayIndex;             /* the runway ATC expects you to land on */
   int com1ActiveKhz;              /* mirrors the control, for the audio engine */
   uint32_t atcMessageSeq;         /* number of the newest radio message (a320_atc_message) */
+
+  /* MCDU preparation, for the lessons (API 10). */
+  int fmsFlightNumberSet;         /* INIT: FLT NBR entered */
+  int fmsFlapsThsSet;             /* PERF TAKE OFF: FLAPS/THS entered */
+  int fmsFlexTempC;               /* PERF TAKE OFF: FLEX TO TEMP, -100 = none */
 } A320State;
 
 typedef struct A320RunwayInfo {
@@ -309,6 +314,8 @@ typedef enum A320GuideTarget {
   A320_GT_MCDU,
   A320_GT_RADIO,     /* the RADIO window: RMP and transponder */
   A320_GT_ATC_REPLY, /* the reply list in the RADIO window */
+  A320_GT_OVERHEAD,  /* the overhead panel: APU, bleed, lights, signs */
+  A320_GT_ENGINES,   /* ENG MASTER switches and the ENG MODE selector */
   A320_GT_COUNT
 } A320GuideTarget;
 typedef enum A320GuideText {

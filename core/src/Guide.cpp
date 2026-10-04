@@ -407,6 +407,213 @@ const char* radioAlert(const A320State& s, const A320Controls& c, int) {
   return nullptr;
 }
 
+// A takeoff from cold and dark on runway 26: cockpit preparation, engine start, the MCDU, the
+// ATC clearance, the takeoff and the climb out to radar contact. Step indexes matter to
+// takeoffAlert below.
+bool lightsOn(const A320Controls& c, int bits) { return (c.lights & bits) == bits; }
+
+const GuideStep kTakeoff[] = {
+    {"COCKPIT PREPARATION", "Start the APU",
+     "Open the overhead panel (OVERHEAD at the top, or O). Press APU MASTER SW, then START, and wait for AVAIL.",
+     "APU N rises to 100 %; the START button shows AVAIL in green.",
+     "The APU (auxiliary power unit) gives electrical power and bleed air for the engine start without ground "
+     "equipment.",
+     "MSFS: the same buttons on the overhead, APU section.",
+     {A320_GT_OVERHEAD}, false,
+     [](const A320State& s, const A320Controls&) { return s.apuAvail != 0; }},
+    {"COCKPIT PREPARATION", "APU bleed, beacon and seat belts",
+     "On the overhead: APU BLEED ON, BEACON ON, SEAT BELTS ON.",
+     "APU BLEED shows ON in blue; the red beacon flashes on the outside view [C].",
+     "Bleed air spins the engine starters. The beacon tells the ground crew the engines are about to start.",
+     "Same in MSFS.",
+     {A320_GT_OVERHEAD}, false,
+     [](const A320State&, const A320Controls& c) {
+       return c.apuBleed && lightsOn(c, A320_LT_BEACON) && (c.signs & A320_SIGN_SEATBELTS);
+     }},
+    {"MCDU", "INIT: flight number",
+     "Open the MCDU (MCDU at the top, or Tab), press INIT, type a flight number (e.g. EST123) and press the key next "
+     "to FLT NBR (LSK 3L).",
+     "FLT NBR shows your number in blue. It is your radio callsign from now on.",
+     "The FMS is set up in a fixed order: INIT (who and where), F-PLN (route), RAD NAV, PERF (speeds and thrust).",
+     "MSFS: INIT A page, same LSK.",
+     {A320_GT_MCDU}, false,
+     [](const A320State& s, const A320Controls&) { return s.fmsFlightNumberSet != 0; }},
+    {"MCDU", "F-PLN: departure runway",
+     "Press F-PLN: the first line is EETN26, the departure runway. Then press NEXT.",
+     "EETN26 in green at the top of the flight plan.",
+     "The departure runway is what PERF TAKE OFF and the ILS tuning use. Another one: LSK 1L, <DEPARTURE.",
+     "MSFS: F-PLN, LSK 1L > DEPARTURE to choose the runway and SID.",
+     {A320_GT_MCDU}, true, nullptr},
+    {"MCDU", "PERF TAKE OFF: V-speeds",
+     "Press PERF. Enter V1, VR and V2: type each speed and press its LSK (1L, 2L, 3L), or press the LSK with an empty "
+     "scratchpad to take the computed value shown next to the label.",
+     "V1, VR, V2 in blue. On the PFD speed tape a blue 1 marks V1.",
+     "V1 is the decision speed: below it you can stop on the runway, above it you continue the takeoff even with an "
+     "engine failure. VR is where you rotate, V2 the safe climb speed with one engine.",
+     "MSFS: the EFB or simBrief gives the speeds; you type them on the same page.",
+     {A320_GT_MCDU, A320_GT_PFD_SPEED}, false,
+     [](const A320State& s, const A320Controls&) { return s.vSpeedsEntered != 0; }},
+    {"MCDU", "PERF TAKE OFF: flaps and FLEX",
+     "Type 1/UP0.0 and press LSK 3R (FLAPS/THS), then a FLEX temperature such as 50 and LSK 4R.",
+     "FLAPS/THS 1/UP0.0 and FLEX TO TEMP 50 in blue.",
+     "FLEX tells the engines to assume a hotter day so they give only the thrust needed, which saves wear. (In this "
+     "sim the FLX detent always gives MCT.)",
+     "Same in MSFS.",
+     {A320_GT_MCDU}, false,
+     [](const A320State& s, const A320Controls&) { return s.fmsFlapsThsSet && s.fmsFlexTempC > -100; }},
+    {"CLEARANCE", "ATIS",
+     "Open the RADIO window (RADIO at the top, or F10), press <-> so 124.880 is ACTIVE, and listen to the ATIS.",
+     "Tallinn Information: runway 26, wind, QNH 1013, information letter.",
+     "You'll quote the letter to Tower so it knows you have the current weather.",
+     "Same frequency in MSFS.",
+     {A320_GT_RADIO}, false,
+     [](const A320State&, const A320Controls& c) { return c.com1ActiveKhz == 124880; }},
+    {"CLEARANCE", "IFR clearance",
+     "Press <-> back to 135.905 (Tower), pick \"request IFR clearance\" and then the correct readback.",
+     "Tower: \"readback correct, report ready for departure\".",
+     "The clearance is your route and limit: runway heading, climb 4000 ft, and a squawk code.",
+     "MSFS: \"Request IFR clearance\" in the ATC window.",
+     {A320_GT_RADIO, A320_GT_ATC_REPLY}, false,
+     [](const A320State& s, const A320Controls&) { return s.atcIfrCleared != 0; }},
+    {"CLEARANCE", "Squawk and FCU altitude",
+     "Type the squawk on the transponder keypad (RADIO window) and select AUTO. Set 4000 in the FCU ALT window "
+     "[Keys: 5/6, Shift = 1000 ft].",
+     "XPDR shows your code; FCU ALT 4000.",
+     "The FCU altitude is the clearance limit: the aircraft will never climb through it by itself.",
+     "Same in MSFS.",
+     {A320_GT_RADIO, A320_GT_FCU_ALT}, false,
+     [](const A320State& s, const A320Controls& c) {
+       return s.atcSquawk > 0 && c.xpdrCode == s.atcSquawk && c.xpdrMode != A320_XPDR_STBY && std::fabs(s.fcuAltFt - 4000.0) < 1.0;
+     }},
+    {"ENGINE START", "ENG MODE IGN/START",
+     "On the pedestal, turn ENG MODE to IGN/START.",
+     "The engine page shows the start valves and ignition ready.",
+     "IGN/START arms the automatic start: the FADEC opens the start valve, adds fuel and ignition at the right N2.",
+     "Same selector in MSFS.",
+     {A320_GT_ENGINES}, false,
+     [](const A320State&, const A320Controls& c) { return c.engMode == A320_ENG_MODE_IGN_START; }},
+    {"ENGINE START", "Start engine 2",
+     "ENG 2 MASTER ON. Wait until N1 and N2 settle at idle.",
+     "N2 rises, fuel flow appears at about 20 % N2, then N1 about 20 % and N2 about 60 % at idle.",
+     "Engine 2 is started first: it powers the yellow hydraulic system, which the parking brake uses.",
+     "MSFS: ENG 2 master switch on the pedestal.",
+     {A320_GT_ENGINES, A320_GT_EWD}, false,
+     [](const A320State& s, const A320Controls&) { return s.engRunning[1] != 0; }},
+    {"ENGINE START", "Start engine 1",
+     "ENG 1 MASTER ON and wait for idle.",
+     "Both engines at idle on the E/WD.",
+     "One engine at a time: the APU has bleed air for one start.",
+     "Same in MSFS.",
+     {A320_GT_ENGINES, A320_GT_EWD}, false,
+     [](const A320State& s, const A320Controls&) { return s.engRunning[0] != 0; }},
+    {"ENGINE START", "After start",
+     "ENG MODE back to NORM, APU BLEED OFF (overhead).",
+     "ENG MODE NORM; the engines supply the bleed air now.",
+     "Leaving IGN/START would keep the igniters on. The APU keeps running for electrical power until after takeoff.",
+     "Same in MSFS.",
+     {A320_GT_ENGINES, A320_GT_OVERHEAD}, false,
+     [](const A320State&, const A320Controls& c) { return c.engMode == A320_ENG_MODE_NORM && !c.apuBleed; }},
+    {"BEFORE TAKEOFF", "Flaps 1+F",
+     "Flaps lever to 1 [V]. On the ground this gives CONF 1+F.",
+     "E/WD: flaps 1+F.",
+     "Takeoff flaps add lift for a shorter takeoff roll. CONF 1+F is the usual setting on long runways.",
+     "Same lever in MSFS.",
+     {A320_GT_FLAPS}, false,
+     [](const A320State&, const A320Controls& c) { return c.flapsLever == 1; }},
+    {"BEFORE TAKEOFF", "Spoilers and autobrake",
+     "Pull the speedbrake lever up to ARM and press AUTO/BRK MAX.",
+     "GND SPLRS ARM and AUTO BRK MAX in the E/WD memo.",
+     "If you reject the takeoff, the ground spoilers deploy and the autobrake brakes at full power by themselves.",
+     "Same in MSFS.",
+     {A320_GT_SPOILERS, A320_GT_AUTOBRAKE}, false,
+     [](const A320State&, const A320Controls& c) { return c.spoilersArmed && c.autobrake == A320_AUTOBRAKE_MAX; }},
+    {"BEFORE TAKEOFF", "Takeoff lights",
+     "Overhead: STROBE ON, LAND ON, NOSE T.O.",
+     "The runway ahead lights up.",
+     "Strobes and landing lights make you visible on the runway. Turn them on when entering the runway.",
+     "Same in MSFS.",
+     {A320_GT_OVERHEAD}, false,
+     [](const A320State&, const A320Controls& c) { return lightsOn(c, A320_LT_STROBE | A320_LT_LANDING | A320_LT_TAKEOFF); }},
+    {"BEFORE TAKEOFF", "Takeoff clearance",
+     "In the RADIO window pick \"ready for departure runway 26\", then read back \"cleared for takeoff runway 26\".",
+     "Tower: \"wind calm, runway 26, cleared for takeoff\".",
+     "No takeoff without hearing and reading back the clearance with the runway.",
+     "MSFS: \"Ready for departure\" in the ATC window.",
+     {A320_GT_ATC_REPLY}, false,
+     [](const A320State& s, const A320Controls&) { return s.atcTakeoffCleared != 0; }},
+    {"TAKEOFF", "Brakes off, takeoff thrust",
+     "Parking brake OFF [N], thrust levers to FLX/MCT [Del] (or TOGA [Home]).",
+     "FMA: MAN FLX (or MAN TOGA); the aircraft accelerates.",
+     "On the A320 you set takeoff thrust with the levers in a detent; A/THR takes over later in the CL detent.",
+     "Same in MSFS.",
+     {A320_GT_PARK_BRAKE, A320_GT_THRUST_LEVERS}, false,
+     [](const A320State& s, const A320Controls& c) { return !c.parkBrake && s.thrustDetent >= 2 && s.groundSpeedKt > 20.0; }},
+    {"TAKEOFF", "V1, rotate",
+     "Keep the centreline with the rudder [Q/E]. At ROTATE, pull back gently [Down arrow] to about 15 degrees nose up.",
+     "Callouts: ONE HUNDRED KNOTS, V ONE (hands off the thrust levers: no stopping now), ROTATE.",
+     "A smooth rotation of about 3 degrees per second avoids a tail strike.",
+     "Same in MSFS.",
+     {A320_GT_PFD_SPEED}, false,
+     [](const A320State& s, const A320Controls&) { return !s.onGround && s.radioAltFt > 30.0; }},
+    {"TAKEOFF", "Positive climb, gear up",
+     "At POSITIVE CLIMB: gear lever UP [G].",
+     "The gear doors close; the green gear indications go out.",
+     "The gear makes a lot of drag: retract it as soon as the aircraft climbs for sure.",
+     "Same in MSFS.",
+     {A320_GT_GEAR}, false,
+     [](const A320State& s, const A320Controls& c) { return !s.onGround && !c.gearDown; }},
+    {"CLIMB", "Autopilot",
+     "Above 100 ft press AP1 [A].",
+     "FMA: AP1 on the right; the aircraft keeps climbing on runway heading.",
+     "With the autopilot on you can work the radio and the systems.",
+     "Same in MSFS.",
+     {A320_GT_FCU_AP1, A320_GT_FMA}, false,
+     [](const A320State& s, const A320Controls&) { return s.apEngaged != 0; }},
+    {"CLIMB", "Thrust reduction",
+     "At 1500 ft (THR RED on the PERF TAKE OFF page): thrust levers back to CL [Ins], press A/THR if it isn't on [T].",
+     "FMA: THR CLB and A/THR in white (active).",
+     "From here autothrust manages the thrust; the levers stay in CL until landing.",
+     "Same in MSFS, where LVR CLB flashes on the FMA at the thrust reduction altitude.",
+     {A320_GT_THRUST_LEVERS, A320_GT_FCU_ATHR}, false,
+     [](const A320State& s, const A320Controls&) { return !s.onGround && s.athrActive && s.thrustDetent == 1; }},
+    {"CLIMB", "Flaps up",
+     "Above the F speed (F= on the MCDU PERF TAKE OFF page) and the S speed, flaps 0 [F].",
+     "E/WD flaps 0; the amber VLS band on the speed tape moves up to the clean value.",
+     "Retracting below F (or S) speed would get close to the stall; above VFE would overstress the flaps.",
+     "Same in MSFS.",
+     {A320_GT_FLAPS, A320_GT_PFD_SPEED}, false,
+     [](const A320State& s, const A320Controls& c) { return !s.onGround && c.flapsLever == 0; }},
+    {"CLIMB", "Contact Radar",
+     "When Tower hands you over, read back, tune 127.905 and check in. Radar answers \"radar contact\" if your squawk "
+     "is right.",
+     "Radar contact and a first heading. Fly it: FCU HDG and pull [3/4, U].",
+     "Departure control now keeps you separated from other traffic; you fly its headings and altitudes.",
+     "MSFS hands you over in the ATC window.",
+     {A320_GT_RADIO, A320_GT_ATC_REPLY}, false,
+     [](const A320State& s, const A320Controls&) { return s.atcRadarContact != 0; }},
+    {"CLIMB", "After takeoff",
+     "Spoilers DISARM (lever down), APU MASTER OFF, NOSE light OFF and LAND OFF above 10000 ft (here: once level).",
+     "Clean aircraft climbing to 4000 ft with Radar. The takeoff is done; the Radio lesson continues to the landing.",
+     "The after-takeoff checklist cleans up what the takeoff needed.",
+     "Same in MSFS.",
+     {A320_GT_SPOILERS, A320_GT_OVERHEAD}, false,
+     [](const A320State& s, const A320Controls& c) { return !s.onGround && !c.spoilersArmed && !c.apuMaster; }},
+};
+
+constexpr int kTakeoffStepCount = static_cast<int>(sizeof(kTakeoff) / sizeof(kTakeoff[0]));
+constexpr int kTakeoffRollStep = 17;  // "Brakes off, takeoff thrust"
+
+const char* takeoffAlert(const A320State& s, const A320Controls& c, int step) {
+  if (s.onGround && c.parkBrake && s.thrustDetent >= 2)
+    return "Takeoff thrust with the parking brake set: release it [N], or levers to IDLE [End].";
+  if (s.onGround && step >= kTakeoffRollStep && !s.vSpeedsEntered && s.thrustDetent >= 2)
+    return "No V-speeds in the MCDU: PERF TAKE OFF should be filled before takeoff.";
+  if (!s.onGround && s.iasKt > s.vmaxKt + 3.0) return "Too fast for the flaps: retract them or reduce speed.";
+  if (s.onGround && step < kTakeoffRollStep && s.thrustDetent >= 2 && !s.atcTakeoffCleared)
+    return "Not cleared for takeoff yet: levers to IDLE [End].";
+  return nullptr;
+}
+
 const GuideDef kGuides[] = {
     {"ILS approach and autoland",
      "Runway 26 at Tallinn, from 20 NM out at 3000 ft: arm the approach, capture the localizer and glideslope, "
@@ -416,6 +623,10 @@ const GuideDef kGuides[] = {
      "From runway 26 with Tallinn Tower and Radar: ATIS, IFR clearance and readback, squawk, takeoff clearance, "
      "handovers, radar vectors, the ILS clearance and the landing clearance.",
      A320_SCENARIO_RUNWAY, "26", kRadioFlight, kRadioStepCount, radioAlert},
+    {"Takeoff from cold and dark",
+     "Runway 26 at Tallinn with everything off: APU and engine start, the MCDU (INIT, F-PLN, PERF TAKE OFF), the ATC "
+     "clearance and the takeoff clearance, then takeoff, thrust reduction, flaps up and radar contact.",
+     A320_SCENARIO_COLD_DARK, "26", kTakeoff, kTakeoffStepCount, takeoffAlert},
 };
 
 }  // namespace

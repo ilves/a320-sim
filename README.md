@@ -37,8 +37,12 @@ the ILS and land, from a glass cockpit with a working PFD, ND and E/WD.
     amber box). It then stays in TOGA LK until you press A/THR, as on the aircraft. Auto-trim
     stops in alpha protection.
 - **Lessons (F3)** that guide you step by step, highlight the control or display to use, tick
-  each step off when you've done it, and say what the same thing is in MSFS 2024. The first
-  one is an ILS approach and autoland, from a 20 NM intercept to a stop on the runway.
+  each step off when you've done it, and say what the same thing is in MSFS 2024:
+  - **Takeoff from cold and dark** (runway 26): APU and engine start, MCDU setup (INIT, F-PLN,
+    PERF TAKE OFF), ATIS, IFR clearance and squawk, takeoff clearance, takeoff, thrust reduction,
+    flaps up and radar contact.
+  - **ILS approach and autoland:** from a 20 NM intercept to a stop on the runway.
+  - **Radio: a full flight with ATC:** clearance to landing clearance, with the radar vectors.
 - **Sim tutor:** when the aircraft refuses a press (AP on the ground, flaps above VFE, APPR
   below 400 ft, an engine start without bleed air…), a message says why.
 - **Sound:**
@@ -452,7 +456,12 @@ scripts/, *.bat              Windows setup, run and package scripts
 ### Scenery
 
 `tools/make_terrain.py` builds `Content/Terrain/` from open data. The output is in the
-repository, so you only run the tool to change the area or the detail.
+repository, so you only run the tool to change the area or the detail. It covers all of
+Estonia, with the islands, in three layers (about 55 MB in all):
+- **Detailed:** 80 × 80 km around EETN, 64 tiles of 10 km at about 10 m per pixel.
+- **Region:** 835 tiles of 10 km at about 20 m per pixel, wherever there is land (57.45–59.85° N,
+  21.6–28.3° E, files in `Region/`). Open sea is skipped.
+- **Base:** one 570 km square at about 140 m per pixel, from southern Finland to Riga.
 
 - **Imagery:** Sentinel-2 cloudless 2024 by EOX.
 - **Elevation:** Mapzen Terrain Tiles on AWS.
@@ -463,13 +472,26 @@ To regenerate it:
 ```
 pip install numpy pillow
 python tools/make_terrain.py              # --inner-km, --tile-px, --buildings-km to change the area
+python tools/make_terrain.py --region none                       # the airport area only
+python tools/make_terrain.py --region 57.5,60,21.5,28.5 --region-px 1024   # another box, sharper
 ```
+
+Other options: `--region-zoom`, `--region-grid`, `--region-quality`, `--outer-margin-km`,
+`--outer-px` and `--outer-step-km` (see `--help`). The first run downloads about 6,300 tiles into
+`build/terrain-cache`.
 
 How the sim uses the data:
 - **Placement:** every pixel and vertex goes through the same airport frame as the flight model,
   so the imaged runway lies under the modelled one.
 - **Airport area:** the terrain around the runway is blended to field elevation.
 - **Sea level:** the sea sits at sea level, about 40 m below the field.
+- **Streaming:** only the base layer loads at start-up, with the tiles under the aircraft. In
+  flight, detailed tiles load within 20 km (and unload beyond 28 km), region tiles within 45 km
+  (beyond 60 km) and buildings within 15 km (beyond 20 km), nearest first. Images are decoded on
+  worker threads, and at most two pieces are added per frame. A region tile stands in for a
+  detailed one that is not loaded, so there is never a hole.
+- **Layers:** the base layer sits at least 3 m below the finer tiles over it, so the two never
+  flicker against each other. Where no finer tile is loaded, the base layer shows.
 - **Buildings:** they are boxes fitted to their OpenStreetMap footprints. The height comes from the
   `height` or `building:levels` tags, or is estimated from the building type. Buildings mapped as
   multipolygons are skipped (for example the Ülemiste centre).

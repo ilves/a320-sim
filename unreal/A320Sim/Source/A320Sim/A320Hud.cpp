@@ -1997,6 +1997,23 @@ namespace
 		case EA320Command::AutobrakeLo:
 		case EA320Command::AutobrakeMed:
 		case EA320Command::AutobrakeMax: return A320_GT_AUTOBRAKE;
+		case EA320Command::EngMaster1:
+		case EA320Command::EngMaster2:
+		case EA320Command::EngModeCrank:
+		case EA320Command::EngModeNorm:
+		case EA320Command::EngModeIgnStart: return A320_GT_ENGINES;
+		case EA320Command::OverheadToggle:
+		case EA320Command::ApuMaster:
+		case EA320Command::ApuStart:
+		case EA320Command::ApuBleed:
+		case EA320Command::LightStrobe:
+		case EA320Command::LightBeacon:
+		case EA320Command::LightNav:
+		case EA320Command::LightLanding:
+		case EA320Command::LightNose:
+		case EA320Command::LightRwyTurnoff:
+		case EA320Command::SignSeatbelts:
+		case EA320Command::SignNoSmoking: return A320_GT_OVERHEAD;
 		default: return A320_GT_NONE;
 		}
 	}
@@ -2098,7 +2115,10 @@ void AA320Hud::DrawGuide(const AA320Aircraft& Aircraft)
 	for (const FButton& B : Buttons)
 	{
 		const int32 Target = GuideTargetFor(B.Command);
-		if (Target != A320_GT_NONE)
+		// With the overhead panel open, its switches are the target, not the OVERHEAD button.
+		const bool bOverheadButton = B.Command == EA320Command::OverheadToggle && Aircraft.IsOverheadVisible() &&
+			B.Box.Min.Y < 0.05 * H;  // the sim bar along the top
+		if (Target != A320_GT_NONE && !bOverheadButton)
 		{
 			MarkTarget(Target, B.Box.Min.X, B.Box.Min.Y, B.Box.Max.X - B.Box.Min.X, B.Box.Max.Y - B.Box.Min.Y);
 		}

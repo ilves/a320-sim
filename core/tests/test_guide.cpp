@@ -220,3 +220,167 @@ TEST(glideslope_from_above) {
   CHECK(s.vertMode == A320_VERT_GS && worst < 0.3);
   a320_destroy(sim);
 }
+
+// The takeoff lesson from cold and dark, done the way its steps say, to radar contact.
+TEST(guide_takeoff_from_cold_and_dark) {
+  char err[256] = {0};
+  A320Sim* sim = a320_create(A320_DATA_DIR, err, sizeof(err));
+  if (!sim) { CHECK(false); return; }
+  int guide = -1;
+  for (int g = 0; g < a320_guide_count(); ++g)
+    if (std::strstr(a320_guide_name(g), "Takeoff")) guide = g;
+  CHECK(guide >= 0);
+  if (guide < 0) { a320_destroy(sim); return; }
+  a320_reset(sim, a320_guide_scenario(guide), runway26(sim));
+  a320_guide_start(sim, guide);
+  A320Controls c;
+  a320_get_controls(sim, &c);
+  A320State s;
+  auto run = [&](double seconds) {
+    for (int i = 0; i < static_cast<int>(seconds / kDt); ++i) {
+      a320_set_controls(sim, &c);
+      a320_update(sim, kDt);
+    }
+    a320_get_state(sim, &s);
+  };
+  auto type = [&](const char* text) {
+    for (const char* p = text; *p; ++p) a320_mcdu_key(sim, *p);
+  };
+  auto reply = [&](const char* text) {
+    A320AtcStatus st;
+    a320_atc_get_status(sim, &st);
+    for (int i = 0; i < st.optionCount; ++i)
+      if (std::strstr(st.options[i], text)) {
+        a320_atc_choose(sim, i);
+        return true;
+      }
+    return false;
+  };
+  auto waitFor = [&](auto cond, double maxS) {
+    for (double t = 0.0; t < maxS; t += 0.5) {
+      if (cond()) return true;  // once: conditions may act (pick a reply)
+      run(0.5);
+    }
+    return false;
+  };
+  run(0.5);
+  CHECK(c.flapsLever == 0 && !c.spoilersArmed);  // cold and dark is clean
+
+  c.apuMaster = 1;
+  c.apuStart = 1;
+  run(1.0);
+  c.apuStart = 0;
+  CHECK(waitFor([&] { return s.apuAvail != 0; }, 120.0));
+  c.apuBleed = 1;
+  c.lights |= A320_LT_BEACON;
+  c.signs |= A320_SIGN_SEATBELTS;
+  a320_mcdu_key(sim, A320_MCDU_INIT);
+  type("EST123");
+  a320_mcdu_key(sim, A320_MCDU_LSK1L + 2);
+  run(1.0);
+  a320_guide_next(sim);  // F-PLN check
+  a320_mcdu_key(sim, A320_MCDU_PERF);
+  for (int k = 0; k < 3; ++k) a320_mcdu_key(sim, A320_MCDU_LSK1L + k);  // computed V-speeds
+  type("1/UP0.0");
+  a320_mcdu_key(sim, A320_MCDU_LSK1R + 2);
+  type("50");
+  a320_mcdu_key(sim, A320_MCDU_LSK1R + 3);
+  std::swap(c.com1ActiveKhz, c.com1StandbyKhz);  // ATIS
+  run(20.0);
+  std::swap(c.com1ActiveKhz, c.com1StandbyKhz);
+  run(1.0);
+  CHECK(reply("request IFR clearance"));
+  CHECK(waitFor([&] { return s.atcAwaitingReadback != 0 && reply("climb altitude 4000 feet, squawk"); }, 30.0));
+  // The readback offered first may be a wrong one: answer until accepted.
+  for (int i = 0; i < 6 && !s.atcIfrCleared; ++i) {
+    run(12.0);
+    if (s.atcAwaitingReadback) {
+      A320AtcStatus st;
+      a320_atc_get_status(sim, &st);
+      a320_atc_choose(sim, i % 3);
+    }
+  }
+  run(8.0);
+  CHECK(s.atcIfrCleared);
+  c.xpdrCode = s.atcSquawk;
+  c.xpdrMode = A320_XPDR_AUTO;
+  a320_fcu_set_targets(sim, s.fcuSpdKt, s.fcuHdgMagDeg, 4000.0, s.fcuVsFpm);
+
+  c.engMode = A320_ENG_MODE_IGN_START;
+  c.engMaster[1] = 1;
+  CHECK(waitFor([&] { return s.engRunning[1] != 0; }, 120.0));
+  c.engMaster[0] = 1;
+  CHECK(waitFor([&] { return s.engRunning[0] != 0; }, 120.0));
+  c.engMode = A320_ENG_MODE_NORM;
+  c.apuBleed = 0;
+  c.flapsLever = 1;
+  c.spoilersArmed = 1;
+  c.autobrake = A320_AUTOBRAKE_MAX;
+  c.lights |= A320_LT_STROBE | A320_LT_LANDING | A320_LT_TAKEOFF;
+  run(1.0);
+  CHECK(waitFor([&] { return reply("ready for departure"); }, 20.0));
+  for (int i = 0; i < 6 && !s.atcTakeoffCleared; ++i) {
+    run(8.0);
+    if (s.atcAwaitingReadback) a320_atc_choose(sim, i % 3);
+  }
+  run(4.0);
+  CHECK(s.atcTakeoffCleared);
+
+  c.parkBrake = 0;
+  c.thrustLever = 0.88;  // FLX/MCT
+  bool gearUp = false, ap = false, cl = false, flaps0 = false, checkedIn = false;
+  int tries = 0;
+  A320GuideStatus g;
+  for (double t = 0.0; t < 600.0; t += 0.25) {
+    a320_guide_get_status(sim, &g);
+    if (g.complete) break;
+    run(0.25);
+    if (!ap) c.stickPitch = s.iasKt > s.vrKt ? std::fmax(-0.3, std::fmin(0.7, 0.12 * (12.0 - s.pitchDeg))) : 0.0;
+    if (!s.onGround && s.verticalSpeedFpm > 300.0 && !gearUp) {
+      c.gearDown = 0;
+      gearUp = true;
+    }
+    if (!s.onGround && s.radioAltFt > 150.0 && !ap) {
+      c.stickPitch = 0.0;
+      a320_fcu_command(sim, A320_FCU_AP1);
+      a320_fcu_command(sim, A320_FCU_ALT_PULL);
+      ap = true;
+    }
+    if (ap && s.radioAltFt > 1500.0 && !cl) {
+      c.thrustLever = 0.75;
+      if (!s.athrEngaged) a320_fcu_command(sim, A320_FCU_ATHR);
+      cl = true;
+    }
+    if (cl && !flaps0 && s.iasKt > 190.0) {
+      c.flapsLever = 0;
+      flaps0 = true;
+    }
+    if (s.atcAwaitingReadback) {
+      // Try each readback in turn ("say again" is last) until ATC accepts one.
+      A320AtcStatus st;
+      a320_atc_get_status(sim, &st);
+      if (st.optionCount > 1) a320_atc_choose(sim, tries++ % (st.optionCount - 1));
+    } else if (s.atcPhase == A320_ATC_PHASE_RADAR && !checkedIn) {
+      c.com1ActiveKhz = 127905;
+      if (reply("Tallinn Radar, ")) checkedIn = true;
+    }
+    if (flaps0 && s.atcRadarContact) {
+      c.spoilersArmed = 0;
+      c.apuMaster = 0;
+    }
+  }
+  run(1.0);
+  a320_guide_get_status(sim, &g);
+  std::printf("  takeoff lesson: step %d of %d, complete %d, done mask %08x, radar contact %d, A/THR %d/%d detent %d\n",
+              g.step, g.stepCount, g.complete, g.doneMask, s.atcRadarContact, s.athrEngaged, s.athrActive, s.thrustDetent);
+  if (!g.complete) {
+    std::printf("  ATC phase %d awaiting %d, COM1 %d, alt %.0f, squawk %d/%d mode %d\n", s.atcPhase, s.atcAwaitingReadback,
+                c.com1ActiveKhz, s.altitudeFt, c.xpdrCode, s.atcSquawk, c.xpdrMode);
+    for (uint32_t q = 1; q <= s.atcMessageSeq; ++q) {
+      A320AtcMessage m;
+      if (a320_atc_message(sim, q, &m)) std::printf("    [%.0f %s] %s\n", m.simTimeS, m.station, m.text);
+    }
+  }
+  CHECK(g.complete);
+  a320_destroy(sim);
+}

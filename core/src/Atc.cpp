@@ -320,7 +320,8 @@ void Atc::update(const AtcContext& ctx) {
 
   switch (phase_) {
     case A320_ATC_PHASE_DEPARTURE:
-      if (!s.onGround && s.radioAltFt > 800.0 && s.verticalSpeedFpm > 0.0) {
+      // After the thrust reduction, once the crew has the gear, autopilot and thrust done.
+      if (!s.onGround && s.radioAltFt > 1600.0 && s.verticalSpeedFpm > 0.0) {
         Instruction in;
         in.kind = Kind::ContactRadar;
         in.station = kTower;
