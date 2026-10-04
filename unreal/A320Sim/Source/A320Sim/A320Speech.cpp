@@ -10,7 +10,6 @@ THIRD_PARTY_INCLUDES_START
 #include <mmreg.h>
 #include <sapi.h>
 THIRD_PARTY_INCLUDES_END
-#include "Windows/HideWindowsPlatformTypes.h"
 #endif
 
 namespace a320speech
@@ -168,7 +167,7 @@ namespace a320speech
 			return false;
 		}
 		IStream* Memory = nullptr;
-		if (FAILED(CreateStreamOnHGlobal(nullptr, TRUE, &Memory)) || !Memory)
+		if (FAILED(CreateStreamOnHGlobal(nullptr, true, &Memory)) || !Memory)
 		{
 			return false;
 		}
@@ -244,6 +243,7 @@ namespace a320speech
 		Memory->Release();
 		return SUCCEEDED(Result) && !OutPcm.empty();
 	}
+#include "Windows/HideWindowsPlatformTypes.h"  // the Windows types stay usable through the implementation above
 #else
 	struct Synthesizer::FImpl
 	{
