@@ -44,6 +44,7 @@ add_library(a320core_static STATIC
   src/Autopilot.cpp
   src/FlyByWire.cpp
   src/Geo.cpp
+  src/Guide.cpp
   src/Ils.cpp
   src/SimClock.cpp
   src/Simulation.cpp

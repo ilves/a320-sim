@@ -23,6 +23,7 @@ constexpr double kLbsToKg = 0.45359237;
 constexpr double kRadioAltOffsetFt = 8.4;
 constexpr double kReverserAngleRad = 2.0944;  // cos = -0.5: half of forward thrust reversed
 constexpr double kLineupDistanceM = 60.0;
+constexpr double kInterceptDeg = 30.0;
 // Takeoff THS setting for the model's default CG (real aircraft: from the load sheet).
 constexpr double kTakeoffThsDeg = -2.0;
 // THS / elevator pitch effectiveness ratio (CmThs -3.5 vs CmDe -1.5 in A320.xml).
@@ -71,13 +72,15 @@ bool Simulation::reset(A320Scenario scenario, int runwayIndex) {
   flaps_ = FlapsSystem{};
   callouts_.reset();
   // Sequence counters stay monotonic so front ends never mistake a reset for a new event.
-  const uint32_t calloutSeq = state_.calloutSeq, touchdownSeq = state_.touchdownSeq;
+  const uint32_t calloutSeq = state_.calloutSeq, touchdownSeq = state_.touchdownSeq, hintSeq = state_.hintSeq;
   state_ = A320State{};
   state_.calloutSeq = calloutSeq;
   state_.touchdownSeq = touchdownSeq;
+  state_.hintSeq = hintSeq;
 
   const bool coldDark = scenario == A320_SCENARIO_COLD_DARK;
   const bool onRunway = scenario == A320_SCENARIO_RUNWAY || coldDark;
+  const bool intercept = scenario == A320_SCENARIO_APPROACH;
   apu_.setRunning(false);
   decel_.reset();
   // Engines running: masters on, mode NORM; cold and dark: everything off.
@@ -94,6 +97,12 @@ bool Simulation::reset(A320Scenario scenario, int runwayIndex) {
     start = {-ils_->axes().displacementM() + kLineupDistanceM, 0.0, 0.0};
     controls_.parkBrake = 1;
     flaps_.setLever(1, 0.0);  // CONF 1+F for takeoff
+  } else if (intercept) {
+    // 3 NM left of the extended centreline, 20 NM out, at 3000 ft: a 30 degree intercept
+    // that captures the localizer near 15 NM and the glideslope from below near 9 NM.
+    start = {-20.0 * kNmToM, -3.0 * kNmToM, 3000.0 * kFtToM - rw.threshold.altM};
+    controls_.gearDown = 0;
+    speedKt = 220.0;
   } else {
     const double distM = (scenario == A320_SCENARIO_FINAL_10NM ? 10.0 : 4.0) * kNmToM;
     start = ils_->glidepathPoint(-distM);
@@ -109,7 +118,8 @@ bool Simulation::reset(A320Scenario scenario, int runwayIndex) {
     ic->SetTerrainElevationFtIC(airport_.reference.altM * kMToFt);
     ic->SetGeodLatitudeDegIC(pos.latDeg);
     ic->SetLongitudeDegIC(pos.lonDeg);
-    ic->SetPsiDegIC(rw.trueCourseDeg);
+    const double headingDeg = rw.trueCourseDeg + (intercept ? kInterceptDeg : 0.0);
+    ic->SetPsiDegIC(headingDeg);
     ic->SetPhiDegIC(0.0);
     ic->SetThetaDegIC(0.0);
     ic->SetWindNEDFpsIC(0.0, 0.0, 0.0);
@@ -119,14 +129,14 @@ bool Simulation::reset(A320Scenario scenario, int runwayIndex) {
     } else {
       ic->SetAltitudeASLFtIC(pos.altM * kMToFt);
       ic->SetVcalibratedKtsIC(speedKt);
-      ic->SetFlightPathAngleDegIC(-ils_->glideslopeDeg());
+      ic->SetFlightPathAngleDegIC(intercept ? 0.0 : -ils_->glideslopeDeg());
     }
 
     fdm_->ResetToInitialConditions(0);
     // Commands must be set after the reset (it zeroes the FCS); positions are set too so
     // gear and flaps start where they are commanded instead of travelling there.
-    setProp("gear/gear-cmd-norm", 1.0);
-    setProp("gear/gear-pos-norm", 1.0);
+    setProp("gear/gear-cmd-norm", controls_.gearDown ? 1.0 : 0.0);
+    setProp("gear/gear-pos-norm", controls_.gearDown ? 1.0 : 0.0);
     setProp("fcs/flap-cmd-norm", flaps_.flapTargetDeg() / 40.0);
     setProp("fcs/flap-pos-deg", flaps_.flapTargetDeg());
     for (int i = 0; i < 2; ++i) {
@@ -157,7 +167,13 @@ bool Simulation::reset(A320Scenario scenario, int runwayIndex) {
     const double courseMag = rw.trueCourseDeg - magVar;
     // FCU preset: climb to 5000 ft at 200 kt after takeoff; on final, approach speed and a
     // 3000 ft missed-approach altitude.
-    ap_.reset(onRunway ? 200.0 : speedKt, courseMag, onRunway ? 5000.0 : 3000.0);
+    ap_.reset(onRunway ? 200.0 : speedKt, courseMag + (intercept ? kInterceptDeg : 0.0), onRunway ? 5000.0 : 3000.0);
+    if (intercept) {
+      // Levers in CL with A/THR flying the speed, as in normal operation.
+      ap_.engageCruise();
+      controls_.thrustLever = kLeverClimb;
+      athrActive_ = true;
+    }
   }
   fbw_.reset(onRunway ? PitchLaw::Ground : PitchLaw::Flight, 0.0, thsDeg);
   clock_.resetTime();
@@ -219,7 +235,35 @@ double Simulation::trimAirborne() {
   return -4.0;
 }
 
-void Simulation::setControls(const A320Controls& c) { controls_ = c; }
+void Simulation::hint(const char* text) {
+  if (!text) return;
+  std::snprintf(state_.hint, sizeof(state_.hint), "%s", text);
+  ++state_.hintSeq;
+}
+
+void Simulation::setControls(const A320Controls& c) {
+  // Sim tutor: explain switch and lever moves the aircraft refuses or ignores.
+  const A320Controls& old = controls_;
+  const A320State& s = state_;
+  char text[160];
+  if (!c.gearDown && old.gearDown && s.onGround) hint("GEAR: the lever can't be raised with weight on the wheels.");
+  if (((c.reverse && !old.reverse) || (c.reverse2 && !old.reverse2)) && !s.onGround)
+    hint("REVERSE: the reversers only deploy on the ground. In flight the levers give idle thrust.");
+  if (c.flapsLever > old.flapsLever && s.iasKt > flapVfeKt(c.flapsLever) + 2.0) {
+    std::snprintf(text, sizeof(text), "FLAPS: too fast. The limit (VFE) for this position is %.0f kt, you are at %.0f kt.",
+                  flapVfeKt(c.flapsLever), s.iasKt);
+    hint(text);
+  }
+  if (c.apuStart && !old.apuStart && !c.apuMaster) hint("APU START: switch the APU MASTER SW on first.");
+  for (int i = 0; i < 2; ++i) {
+    if (!c.engMaster[i] || old.engMaster[i] || s.engRunning[i]) continue;
+    if (c.engMode != A320_ENG_MODE_IGN_START)
+      hint("ENG START: set ENG MODE to IGN/START first, then the ENG MASTER switch.");
+    else if (!s.bleedAvailable)
+      hint("ENG START: no bleed air for the starter. Start the APU and switch APU BLEED on.");
+  }
+  controls_ = c;
+}
 
 ApInput Simulation::apInput() const {
   ApInput in;
@@ -253,7 +297,7 @@ ApInput Simulation::apInput() const {
 }
 
 void Simulation::fcuCommand(A320FcuCommand cmd) {
-  ap_.command(cmd, apInput());
+  hint(ap_.command(cmd, apInput()));
   refreshState();
 }
 
@@ -433,6 +477,8 @@ void Simulation::refreshState() {
   s.thsDeg = prop("fcs/ths-pos-rad") * kRadToDeg;
 
   s.apEngaged = ap_.apEngaged() ? 1 : 0;
+  s.ap1Engaged = ap_.ap1Engaged() ? 1 : 0;
+  s.ap2Engaged = ap_.ap2Engaged() ? 1 : 0;
   s.athrEngaged = ap_.athrEngaged() ? 1 : 0;
   s.athrActive = athrActive_ ? 1 : 0;
   s.latMode = ap_.lateral();

@@ -3,12 +3,14 @@
 #include <new>
 #include <string>
 
+#include "a320/Guide.h"
 #include "a320/Simulation.h"
 #include "a320/Systems.h"
 #include "a320/a320_api.h"
 
 struct A320Sim {
   a320::Simulation sim{a320::makeTallinn()};
+  a320::GuideRunner guide;
 };
 
 namespace {
@@ -64,6 +66,7 @@ void a320_update(A320Sim* sim, double realDtS) {
   if (!sim) return;
   try {
     sim->sim.update(realDtS);
+    sim->guide.update(sim->sim.state(), sim->sim.controls());
   } catch (...) {
     // JSBSim throws on numerical blow-ups; freeze rather than take the host process down.
     sim->sim.clock().setPaused(true);
@@ -170,3 +173,67 @@ const char* a320_thrust_detent_name(int detent) {
 }
 
 }  // extern "C"
+
+int a320_guide_count(void) { return a320::guideCount(); }
+
+const char* a320_guide_name(int guide) {
+  const a320::GuideDef* g = a320::guideDef(guide);
+  return g ? g->name : "";
+}
+
+const char* a320_guide_summary(int guide) {
+  const a320::GuideDef* g = a320::guideDef(guide);
+  return g ? g->summary : "";
+}
+
+A320Scenario a320_guide_scenario(int guide) {
+  const a320::GuideDef* g = a320::guideDef(guide);
+  return g ? g->scenario : A320_SCENARIO_RUNWAY;
+}
+
+int a320_guide_step_count(int guide) {
+  const a320::GuideDef* g = a320::guideDef(guide);
+  return g ? g->stepCount : 0;
+}
+
+const char* a320_guide_step_text(int guide, int step, A320GuideText field) {
+  const a320::GuideDef* g = a320::guideDef(guide);
+  if (!g || step < 0 || step >= g->stepCount) return "";
+  const a320::GuideStep& st = g->steps[step];
+  switch (field) {
+    case A320_GUIDE_PHASE: return st.phase;
+    case A320_GUIDE_TITLE: return st.title;
+    case A320_GUIDE_ACTION: return st.action;
+    case A320_GUIDE_LOOK: return st.look;
+    case A320_GUIDE_WHY: return st.why;
+    case A320_GUIDE_MSFS: return st.msfs;
+  }
+  return "";
+}
+
+void a320_guide_start(A320Sim* sim, int guide) {
+  if (!sim) return;
+  sim->guide.start(guide);
+  sim->guide.update(sim->sim.state(), sim->sim.controls());
+}
+
+void a320_guide_stop(A320Sim* sim) {
+  if (sim) sim->guide.stop();
+}
+
+void a320_guide_next(A320Sim* sim) {
+  if (!sim) return;
+  sim->guide.next();
+  sim->guide.update(sim->sim.state(), sim->sim.controls());
+}
+
+void a320_guide_back(A320Sim* sim) {
+  if (sim) sim->guide.back();
+}
+
+void a320_guide_get_status(const A320Sim* sim, A320GuideStatus* status) {
+  if (!status) return;
+  *status = sim ? sim->guide.status() : A320GuideStatus{};
+}
+
+const char* a320_guide_alert(const A320Sim* sim) { return sim ? sim->guide.alert() : ""; }

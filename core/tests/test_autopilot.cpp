@@ -26,7 +26,7 @@ struct ApFlight {
   A320RunwayInfo rw{};
   double magVar = 0.0;
   int maxLat = 0, maxVert = 0;
-  bool sawLat[5] = {}, sawVert[9] = {};
+  bool sawLat[5] = {}, sawVert[12] = {};
 
   explicit ApFlight(A320Scenario scenario) {
     char err[256] = {0};

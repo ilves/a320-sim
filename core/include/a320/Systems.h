@@ -53,6 +53,9 @@ struct SpeedLimits {
 };
 
 // Stall speed from the JSBSim A320 model's CLmax for the actual flap angle and weight.
+// Maximum speed with the flaps lever in this position (0..4 = 0, 1, 2, 3, FULL).
+double flapVfeKt(int flapsLever);
+
 SpeedLimits computeSpeedLimits(int flapsLever, bool onePlusF, double flapDeg, double weightLbs,
                                bool gearDown, bool takeoffPhase);
 

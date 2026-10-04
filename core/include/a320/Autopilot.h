@@ -33,11 +33,16 @@ struct ApOutput {
 class Autopilot {
  public:
   void reset(double spdKt, double hdgMagDeg, double altFt);
-  void command(A320FcuCommand cmd, const ApInput& in);
+  // Returns a tutor hint when the press is refused or needs explaining, else nullptr.
+  const char* command(A320FcuCommand cmd, const ApInput& in);
+  // Scenario start: AP1 in HDG and ALT, A/THR in SPEED.
+  void engageCruise();
   void setTargets(double spdKt, double hdgMagDeg, double altFt, double vsFpm);
   ApOutput update(const ApInput& in);
 
-  bool apEngaged() const { return ap_; }
+  bool apEngaged() const { return ap1_ || ap2_; }
+  bool ap1Engaged() const { return ap1_; }
+  bool ap2Engaged() const { return ap2_; }
   bool athrEngaged() const { return athr_; }
   A320LatMode lateral() const { return lat_; }
   A320VertMode vertical() const { return vert_; }
@@ -51,13 +56,15 @@ class Autopilot {
 
  private:
   void disconnectAp();
+  bool approachMode() const;
+  const char* engageAp(bool& self, bool& other, const ApInput& in);
   double lateralBank(const ApInput& in);
   double verticalFpa(const ApInput& in);
   void updateModes(const ApInput& in);
   double autothrust(const ApInput& in, bool& active);
   void enterVertical(A320VertMode mode, const ApInput& in);
 
-  bool ap_ = false, athr_ = false;
+  bool ap1_ = false, ap2_ = false, athr_ = false;
   A320LatMode lat_ = A320_LAT_NONE;
   A320VertMode vert_ = A320_VERT_NONE;
   A320AthrMode athrMode_ = A320_ATHR_OFF;
@@ -65,6 +72,7 @@ class Autopilot {
   double spd_ = 160.0, hdg_ = 0.0, alt_ = 3000.0, vs_ = 0.0;
   double fpaIntegral_ = 0.0;
   double gsIntegral_ = 0.0;
+  double modeTimeS_ = 0.0;  // time in G/S*
   double speedIntegral_ = 0.0;
   bool athrWasActive_ = false;
   uint32_t disconnects_ = 0;

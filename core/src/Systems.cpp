@@ -64,12 +64,16 @@ double steeringAuthority(double groundSpeedKt) {
   return lerp(1.0, kPedalOnly, clamp((groundSpeedKt - 10.0) / 30.0, 0.0, 1.0));
 }
 
+double flapVfeKt(int flapsLever) {
+  static const double kVfe[5] = {350.0, 230.0, 200.0, 185.0, 177.0};
+  return kVfe[clamp(flapsLever, 0, 4)];
+}
+
 SpeedLimits computeSpeedLimits(int flapsLever, bool onePlusF, double flapDeg, double weightLbs,
                                bool gearDown, bool takeoffPhase) {
   // Peak of each flap column of the CLalpha table in A320.xml (0, 1, 9, 10, 40 deg).
   static const double kFlapCol[5] = {0.0, 1.0, 9.0, 10.0, 40.0};
   static const double kClMax[5] = {1.50, 1.61, 1.66, 1.90, 2.40};
-  static const double kVfe[5] = {350.0, 230.0, 200.0, 185.0, 177.0};
   constexpr double kVfeOnePlusF = 215.0;
   constexpr double kVle = 280.0;
   constexpr double kWingAreaFt2 = 1317.0;
@@ -90,10 +94,9 @@ SpeedLimits computeSpeedLimits(int flapsLever, bool onePlusF, double flapDeg, do
   s.vlsKt = s.vsKt * (takeoffPhase ? 1.13 : 1.23);
 
   const int lever = clamp(flapsLever, 0, 4);
-  s.vmaxKt = lever == 1 && onePlusF ? kVfeOnePlusF : kVfe[lever];
+  s.vmaxKt = lever == 1 && onePlusF ? kVfeOnePlusF : flapVfeKt(lever);
   if (gearDown) s.vmaxKt = std::fmin(s.vmaxKt, kVle);
-  s.vfeNextKt = lever < 4 ? kVfe[lever + 1] : 0.0;
-  if (lever == 0) s.vfeNextKt = kVfe[1];
+  s.vfeNextKt = lever < 4 ? flapVfeKt(lever + 1) : 0.0;
   return s;
 }
 

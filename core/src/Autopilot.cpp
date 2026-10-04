@@ -34,7 +34,7 @@ constexpr double kRetardFt = 20.0;
 }  // namespace
 
 void Autopilot::reset(double spdKt, double hdgMagDeg, double altFt) {
-  ap_ = athr_ = false;
+  ap1_ = ap2_ = athr_ = false;
   lat_ = A320_LAT_NONE;
   vert_ = A320_VERT_NONE;
   athrMode_ = A320_ATHR_OFF;
@@ -61,77 +61,122 @@ void Autopilot::setTargets(double spdKt, double hdgMagDeg, double altFt, double 
   vs_ = clamp(std::round(vsFpm / 100.0) * 100.0, -6000.0, 6000.0);
 }
 
+void Autopilot::engageCruise() {
+  ap1_ = true;
+  athr_ = true;
+  lat_ = A320_LAT_HDG;
+  vert_ = A320_VERT_ALT;
+}
+
 void Autopilot::disconnectAp() {
-  if (ap_) ++disconnects_;
-  ap_ = false;
+  if (ap1_ || ap2_) ++disconnects_;
+  ap1_ = ap2_ = false;
+}
+
+bool Autopilot::approachMode() const {
+  return locArmed_ || gsArmed_ || lat_ == A320_LAT_LOC_STAR || lat_ == A320_LAT_LOC || lat_ == A320_LAT_ROLLOUT ||
+         vert_ == A320_VERT_GS_STAR || vert_ == A320_VERT_GS || vert_ == A320_VERT_LAND || vert_ == A320_VERT_FLARE;
+}
+
+const char* Autopilot::engageAp(bool& self, bool& other, const ApInput& in) {
+  if (self) {
+    self = false;
+    if (!other) ++disconnects_;  // the last autopilot off: cavalry charge
+    return nullptr;
+  }
+  if (in.onGround || in.radioAltFt <= 100.0)
+    return "AP: can't engage on the ground. It is available from 100 ft radio altitude after take-off.";
+  const char* hint = nullptr;
+  if (other && !approachMode()) {
+    // Both autopilots only for the approach (CAT 3 DUAL); otherwise the new one takes over.
+    other = false;
+    hint = "AP: both autopilots engage only with LOC or APPR armed. The other AP disengaged.";
+  }
+  const bool wasEngaged = other;
+  self = true;
+  if (!wasEngaged) {
+    // With no mode selected the AP engages in heading and vertical speed hold.
+    if (lat_ == A320_LAT_NONE || lat_ == A320_LAT_ROLLOUT) {
+      lat_ = A320_LAT_HDG;
+      hdg_ = wrap360(std::round(in.headingTrueDeg - in.magneticVariationDeg));
+    }
+    if (vert_ == A320_VERT_NONE || vert_ == A320_VERT_FLARE) {
+      vs_ = std::round(in.verticalSpeedFpm / 100.0) * 100.0;
+      enterVertical(A320_VERT_VS, in);
+    }
+  }
+  return hint;
 }
 
 void Autopilot::enterVertical(A320VertMode mode, const ApInput& in) {
+  if (mode == A320_VERT_GS_STAR) gsIntegral_ = 0.0;
   vert_ = mode;
   fpaIntegral_ = in.flightPathDeg;
-  if (mode == A320_VERT_GS) gsIntegral_ = 0.0;
 }
 
-void Autopilot::command(A320FcuCommand cmd, const ApInput& in) {
+const char* Autopilot::command(A320FcuCommand cmd, const ApInput& in) {
+  const bool landing = vert_ == A320_VERT_LAND || vert_ == A320_VERT_FLARE || lat_ == A320_LAT_ROLLOUT;
+  const bool onGs = vert_ == A320_VERT_GS_STAR || vert_ == A320_VERT_GS;
+  static const char* kLandLocked =
+      "LAND mode (below 400 ft): the autoland can no longer be changed. Disconnect the AP or go around.";
   switch (cmd) {
     case A320_FCU_AP1:
-      if (ap_) {
-        disconnectAp();
-      } else if (!in.onGround && in.radioAltFt > 100.0) {
-        ap_ = true;
-        // With no mode selected the AP engages in heading and vertical speed hold.
-        if (lat_ == A320_LAT_NONE || lat_ == A320_LAT_ROLLOUT) {
-          lat_ = A320_LAT_HDG;
-          hdg_ = wrap360(std::round(in.headingTrueDeg - in.magneticVariationDeg));
-        }
-        if (vert_ == A320_VERT_NONE || vert_ == A320_VERT_FLARE) {
-          vs_ = std::round(in.verticalSpeedFpm / 100.0) * 100.0;
-          enterVertical(A320_VERT_VS, in);
-        }
-      }
-      break;
+      return engageAp(ap1_, ap2_, in);
+    case A320_FCU_AP2:
+      return engageAp(ap2_, ap1_, in);
     case A320_FCU_ATHR:
       athr_ = !athr_;
       if (athr_ && athrMode_ == A320_ATHR_OFF) spd_ = std::round(in.iasKt);
-      break;
+      if (athr_ && !in.onGround && (in.thrustLever > kLeverClimb + 0.03 || in.thrustLever <= 0.02))
+        return "A/THR armed (blue on the FMA): it becomes active when the thrust levers are in the CL detent.";
+      return nullptr;
     case A320_FCU_HDG_PULL:
+      if (landing) return kLandLocked;
       lat_ = A320_LAT_HDG;
       locArmed_ = gsArmed_ = false;
-      if (vert_ == A320_VERT_GS || vert_ == A320_VERT_LAND) {
+      if (onGs) {
         vs_ = std::round(in.verticalSpeedFpm / 100.0) * 100.0;
         enterVertical(A320_VERT_VS, in);
       }
-      break;
+      return nullptr;
     case A320_FCU_LOC:
-      if (lat_ == A320_LAT_LOC || lat_ == A320_LAT_LOC_STAR) break;
+      if (landing) return kLandLocked;
+      if (lat_ == A320_LAT_LOC || lat_ == A320_LAT_LOC_STAR) return nullptr;
       locArmed_ = !locArmed_;
       gsArmed_ = false;
-      break;
+      return nullptr;
     case A320_FCU_APPR: {
-      const bool armedNow = locArmed_ || gsArmed_ || vert_ == A320_VERT_GS;
+      if (landing) return kLandLocked;
+      const bool armedNow = locArmed_ || gsArmed_ || onGs;
       if (armedNow) {
         locArmed_ = gsArmed_ = false;
-        if (vert_ == A320_VERT_GS) enterVertical(A320_VERT_VS, in);
-      } else {
-        locArmed_ = lat_ != A320_LAT_LOC && lat_ != A320_LAT_LOC_STAR;
-        gsArmed_ = true;
+        if (onGs) enterVertical(A320_VERT_VS, in);
+        return nullptr;
       }
-      break;
+      if (in.onGround || in.radioAltFt < 400.0) return "APPR: can't be armed below 400 ft radio altitude.";
+      locArmed_ = lat_ != A320_LAT_LOC && lat_ != A320_LAT_LOC_STAR;
+      gsArmed_ = true;
+      if (!in.locValid)
+        return "APPR armed (LOC and G/S in blue on the FMA). No ILS signal yet: it captures once the "
+               "localizer is alive (press LS to see the scales).";
+      return nullptr;
     }
     case A320_FCU_ALT_PULL: {
-      if (vert_ == A320_VERT_GS || vert_ == A320_VERT_LAND || vert_ == A320_VERT_FLARE) break;
+      if (landing) return kLandLocked;
+      if (onGs) return "ALT: no open climb or descent on the glideslope. Push APPR first to leave the approach.";
       const double err = alt_ - in.altitudeFt;
       if (std::fabs(err) < 50.0) enterVertical(A320_VERT_ALT, in);
       else enterVertical(err > 0.0 ? A320_VERT_OP_CLB : A320_VERT_OP_DES, in);
-      break;
+      return nullptr;
     }
     case A320_FCU_VS_PULL:
-      if (vert_ == A320_VERT_LAND || vert_ == A320_VERT_FLARE) break;
+      if (landing) return kLandLocked;
       vs_ = std::round(in.verticalSpeedFpm / 100.0) * 100.0;
       gsArmed_ = false;
       enterVertical(A320_VERT_VS, in);
-      break;
+      return nullptr;
   }
+  return nullptr;
 }
 
 void Autopilot::updateModes(const ApInput& in) {
@@ -147,10 +192,13 @@ void Autopilot::updateModes(const ApInput& in) {
   // Glideslope capture needs the localizer first, as on the real aircraft.
   const bool onLoc = lat_ == A320_LAT_LOC || lat_ == A320_LAT_LOC_STAR;
   if (gsArmed_ && onLoc && in.gsValid && std::fabs(in.gsDots) < 0.4) {
-    enterVertical(A320_VERT_GS, in);
+    enterVertical(A320_VERT_GS_STAR, in);
     gsArmed_ = false;
   }
-  if (vert_ == A320_VERT_GS && lat_ == A320_LAT_LOC && in.radioAltFt < kLandModeFt)
+  // Capture ends once the beam is held: nearly centred, or after the transition has settled.
+  modeTimeS_ = vert_ == A320_VERT_GS_STAR ? modeTimeS_ + in.dtS : 0.0;
+  if (vert_ == A320_VERT_GS_STAR && (std::fabs(in.gsDots) < 0.1 || modeTimeS_ > 15.0)) vert_ = A320_VERT_GS;
+  if ((vert_ == A320_VERT_GS || vert_ == A320_VERT_GS_STAR) && lat_ == A320_LAT_LOC && in.radioAltFt < kLandModeFt)
     enterVertical(A320_VERT_LAND, in);
   if (vert_ == A320_VERT_LAND && in.radioAltFt < kFlareFt) enterVertical(A320_VERT_FLARE, in);
   if ((vert_ == A320_VERT_FLARE || vert_ == A320_VERT_LAND) && in.onGround) {
@@ -204,12 +252,13 @@ double Autopilot::verticalFpa(const ApInput& in) {
       fpaIntegral_ = clamp(fpaIntegral_ + 0.05 * err * in.dtS, lo, hi);
       return clamp(fpaIntegral_ + 0.3 * err, lo, hi);
     }
+    case A320_VERT_GS_STAR:
     case A320_VERT_GS:
     case A320_VERT_LAND: {
       // Close to the antenna one dot is only a few feet, so LAND fades the beam corrections
       // out below 300 ft and flies the nominal path into the flare instead of chasing it.
       const double beamWeight = vert_ == A320_VERT_LAND ? clamp((in.radioAltFt - 80.0) / 220.0, 0.0, 1.0) : 1.0;
-      if (vert_ == A320_VERT_GS)
+      if (vert_ == A320_VERT_GS || vert_ == A320_VERT_GS_STAR)
         gsIntegral_ = clamp(gsIntegral_ + 0.02 * in.gsDots * in.dtS, -0.5, 0.5);  // slow trim only
       return -in.glideslopeDeg + beamWeight * (clamp(1.3 * in.gsDots, -2.0, 2.0) + gsIntegral_);
     }
@@ -252,14 +301,16 @@ double Autopilot::autothrust(const ApInput& in, bool& active) {
 ApOutput Autopilot::update(const ApInput& in) {
   ApOutput out;
   // Instinctive disconnect: a firm sidestick input takes over from the autopilot.
-  if (ap_ && (std::fabs(in.pilotStickPitch) > kTakeoverStick || std::fabs(in.pilotStickRoll) > kTakeoverStick))
+  if (apEngaged() && (std::fabs(in.pilotStickPitch) > kTakeoverStick || std::fabs(in.pilotStickRoll) > kTakeoverStick))
     disconnectAp();
   // Touchdown with the levers at idle disconnects autothrust.
   if (athr_ && in.onGround && in.thrustLever < 0.02) athr_ = false;
 
   updateModes(in);
+  // Leaving the approach with both autopilots engaged keeps only one.
+  if (ap1_ && ap2_ && !approachMode()) ap2_ = false;
   out.throttle = autothrust(in, out.athrActive);
-  if (!ap_) return out;
+  if (!apEngaged()) return out;
 
   out.apActive = true;
   if (vert_ == A320_VERT_FLARE) {
@@ -304,6 +355,7 @@ const char* vertModeName(int mode) {
     case A320_VERT_OP_CLB: return "OP CLB";
     case A320_VERT_OP_DES: return "OP DES";
     case A320_VERT_GS: return "G/S";
+    case A320_VERT_GS_STAR: return "G/S*";
     case A320_VERT_LAND: return "LAND";
     case A320_VERT_FLARE: return "FLARE";
     default: return "";

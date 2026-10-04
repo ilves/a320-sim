@@ -48,6 +48,7 @@ class Simulation {
 
  private:
   double trimAirborne();
+  void hint(const char* text);
   ApInput apInput() const;
   void applyControls();
   void refreshState();
