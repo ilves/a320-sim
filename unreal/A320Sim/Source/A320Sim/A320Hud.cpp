@@ -902,6 +902,17 @@ void AA320Hud::DrawOverlays(const AA320Aircraft& Aircraft)
 	{
 		Text(TEXT("PAUSED  -  press P to continue"), W / 2.0, H * 0.32, Yellow, 2, 1);
 	}
+	if (St.destroyed != A320_DESTROYED_NONE)
+	{
+		const FString What = St.destroyed == A320_DESTROYED_BREAKUP
+			? FString::Printf(TEXT("AIRFRAME BREAKUP AT %d KT"), static_cast<int32>(A320_BREAKUP_IAS_KT))
+			: FString::Printf(TEXT("CRASH  -  IMPACT %d FPM"), FMath::RoundToInt(FMath::Abs(St.impactFpm)));
+		const double BoxW = 760.0 * Scale, BoxH = 96.0 * Scale, BoxX = (W - BoxW) / 2.0, BoxY = H * 0.24;
+		Fill(BoxX, BoxY, BoxW, BoxH, FLinearColor(0.0f, 0.0f, 0.0f, 0.6f));
+		Frame(BoxX, BoxY, BoxW, BoxH, Red, 2.0);
+		Text(What, W / 2.0, BoxY + 32.0 * Scale, Red, 2, 1);
+		Text(TEXT("F11 new flight    F5 line up again    C view"), W / 2.0, BoxY + 70.0 * Scale, White, 1, 1);
+	}
 	if (St.simRate > 1.0)
 	{
 		Text(FString::Printf(TEXT("SIM RATE x%d"), static_cast<int32>(FMath::RoundToInt(St.simRate))), W - 20.0 * Scale, 56.0 * Scale, Yellow, 1, 2);

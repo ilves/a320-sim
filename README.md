@@ -385,6 +385,20 @@ close it to fly the default, lined up on EETN 26.
   ARRIVAL, PERF. In the air FROM/TO is always set; without the approach inserted no ILS is tuned.
 - **LESSONS:** start a lesson (they are set at Tallinn).
 
+## Breakup and crash
+
+- **Breakup:** in the air at 300 kt (indicated) or more, the airframe breaks in two just ahead
+  of the wings. The nose section dives, the rest with the wings spins down; both trail fire and
+  smoke and explode where they hit the ground. The flight model stops; the camera watches from
+  outside.
+- **Crash:** a ground contact far too hard (1500 fpm or more), a wing tip or the nose first,
+  or the fuselage on the ground (gear up): an explosion, fire, a smoke column and debris.
+- A new flight (F11, or F5) puts everything back.
+
+300 kt is this sim's limit by choice: the real A320 is certified to 350 kt (VMO) and flies 280 to
+300 kt routinely above 10,000 ft, so keep below 300 kt here. The limit is `A320_BREAKUP_IAS_KT` in
+`core/include/a320/a320_api.h`.
+
 ## First flight
 
 **Takeoff (F5).** You start lined up on runway 26 in CONF 1+F, with the parking brake set.

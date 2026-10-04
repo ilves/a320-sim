@@ -1,5 +1,6 @@
 #include "A320Aircraft.h"
 
+#include "A320Fx.h"
 #include "A320Sim.h"
 #include "A320Voice.h"
 #include "a320/RadioTuning.h"
@@ -22,6 +23,18 @@ namespace
 	const FVector CockpitEyeCm(1504.0, -76.0, 279.0);
 	const double CockpitPitchDeg = -5.0;
 	const float CockpitFovDeg = 90.0f;
+	const FVector ChaseOffsetCm(0.0, 0.0, -1200.0);
+	constexpr float ChaseArmCm = 7000.0f;
+
+	// A piece of a destroyed aircraft, in the flat world (cm).
+	FVector SectionLocation(const A320Section& S)
+	{
+		return FVector(S.northM * 100.0, S.eastM * 100.0, S.heightAboveFieldM * 100.0);
+	}
+	FRotator SectionRotation(const A320Section& S)
+	{
+		return FRotator(S.pitchDeg, S.gridHeadingDeg, S.bankDeg);
+	}
 }
 
 AA320Aircraft::AA320Aircraft()
@@ -37,6 +50,9 @@ AA320Aircraft::AA320Aircraft()
 	Root = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
 	Root->SetMobility(EComponentMobility::Movable);
 	SetRootComponent(Root);
+	RearRoot = CreateDefaultSubobject<USceneComponent>(TEXT("RearRoot"));
+	RearRoot->SetupAttachment(Root);
+	RearRoot->SetMobility(EComponentMobility::Movable);
 
 	CockpitCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("CockpitCamera"));
 	CockpitCamera->SetupAttachment(Root);
@@ -46,9 +62,9 @@ AA320Aircraft::AA320Aircraft()
 
 	ChaseArm = CreateDefaultSubobject<USpringArmComponent>(TEXT("ChaseArm"));
 	ChaseArm->SetupAttachment(Root);
-	ChaseArm->TargetArmLength = 7000.0f;
+	ChaseArm->TargetArmLength = ChaseArmCm;
 	ChaseArm->SetRelativeRotation(FRotator(-12.0, 0.0, 0.0));
-	ChaseArm->TargetOffset = FVector(0.0, 0.0, -1200.0);
+	ChaseArm->TargetOffset = ChaseOffsetCm;
 	ChaseArm->bDoCollisionTest = false;
 	ChaseArm->bInheritRoll = false;
 	ChaseArm->bEnableCameraLag = true;
@@ -210,6 +226,7 @@ void AA320Aircraft::Tick(float DeltaSeconds)
 		Controls.autobrake = State.autobrake;
 	}
 	UpdateTransform();
+	UpdateDestruction();
 	UpdateExteriorLights();
 	PumpRadio();
 	if (World)
@@ -363,6 +380,17 @@ void AA320Aircraft::UpdateTransform()
 {
 	// Flat world: X north, Y east, Z up from field elevation, in centimetres. FRotator's
 	// pitch/yaw/roll match JSBSim's theta/psi/phi signs (nose up, clockwise, right wing down).
+	if (State.destroyed != A320_DESTROYED_NONE)
+	{
+		// The nose section carries the pawn (and the cameras); the rest flies on its own.
+		const A320Section& Front = State.sections[0];
+		SetActorLocationAndRotation(SectionLocation(Front), SectionRotation(Front));
+		if (State.destroyed == A320_DESTROYED_BREAKUP)
+		{
+			RearRoot->SetWorldLocationAndRotation(SectionLocation(State.sections[1]), SectionRotation(State.sections[1]));
+		}
+		return;
+	}
 	const FVector Location(State.northM * 100.0, State.eastM * 100.0, State.heightAboveFieldM * 100.0);
 	// The flat world's north is true north at EETN only: yaw by the grid heading.
 	const FRotator Rotation(State.pitchDeg, State.gridHeadingDeg, State.bankDeg);
@@ -663,6 +691,7 @@ void AA320Aircraft::ResetScenario(A320Scenario Scenario)
 	a320_start_flight(Sim, Scenario, DepRunway, ArrRunway, FlightDistanceNm, bLessonStart ? A320_PLAN_ROUTE : FlightPlan);
 	a320_get_state(Sim, &State);
 	a320_get_controls(Sim, &Controls);
+	ClearDestruction();
 	LastAtcSeq = State.atcMessageSeq;  // a new flight starts a new radio log
 	if (Voice)
 	{
@@ -721,7 +750,7 @@ FString AA320Aircraft::GetGuideAlert() const
 void AA320Aircraft::UpdateExteriorLights()
 {
 	const double T = GetWorld()->GetTimeSeconds();
-	const int32 L = State.lights;
+	const int32 L = State.destroyed != A320_DESTROYED_NONE ? 0 : State.lights;  // nothing left to power them
 	BeaconLight->SetVisibility((L & A320_LT_BEACON) && FMath::Fmod(T, 1.0) < 0.12);
 	// Strobes: double flash every 1.5 s.
 	const double Ph = FMath::Fmod(T, 1.5);
@@ -848,24 +877,28 @@ void AA320Aircraft::ResetLook()
 void AA320Aircraft::ApplyView()
 {
 	CockpitCamera->SetRelativeRotation(FRotator(CockpitPitchDeg + LookOffset.Pitch, LookOffset.Yaw, 0.0));
-	ChaseArm->SetRelativeRotation(FRotator(-12.0 + LookOffset.Pitch, LookOffset.Yaw, 0.0));
+	if (State.destroyed == A320_DESTROYED_NONE)
+	{
+		ChaseArm->SetRelativeRotation(FRotator(-12.0 + LookOffset.Pitch, LookOffset.Yaw, 0.0));  // else fixed on the wreck
+	}
 	CockpitCamera->SetActive(bCockpitView);
 	ChaseCamera->SetActive(!bCockpitView);
 	// From the captain's seat the primitive fuselage would only block the view.
+	// After a crash only the fire and the debris are left.
 	for (UStaticMeshComponent* Part : ModelParts)
 	{
-		Part->SetVisibility(!bCockpitView);
+		Part->SetVisibility(!bCockpitView && State.destroyed != A320_DESTROYED_CRASH);
 	}
 }
 
 UStaticMeshComponent* AA320Aircraft::AddPart(UStaticMesh* Mesh, const FVector& CentreM, const FRotator& Rotation,
-	const FVector& SizeM, const FLinearColor& Color)
+	const FVector& SizeM, const FLinearColor& Color, USceneComponent* Parent)
 {
 	UStaticMeshComponent* Part = NewObject<UStaticMeshComponent>(this);
 	Part->SetMobility(EComponentMobility::Movable);
 	Part->SetStaticMesh(Mesh);
 	Part->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	Part->SetupAttachment(Root);
+	Part->SetupAttachment(Parent);
 	Part->SetRelativeLocation(CentreM * 100.0);
 	Part->SetRelativeRotation(Rotation);
 	Part->SetRelativeScale3D(SizeM);  // basic shapes are 1 m, so scale = size in metres
@@ -885,30 +918,184 @@ void AA320Aircraft::BuildModel()
 	const FLinearColor TailBlue(0.05f, 0.15f, 0.45f);
 	const FRotator AlongX(90.0, 0.0, 0.0);  // cylinder axis Z -> X
 
-	// Fuselage, nose and tail cone.
-	AddPart(Shapes.Cylinder, FVector(0.5, 0.0, 0.9), AlongX, FVector(3.95, 3.95, 27.0), BodyWhite);
-	AddPart(Shapes.Sphere, FVector(14.0, 0.0, 0.75), FRotator::ZeroRotator, FVector(7.0, 3.95, 3.6), BodyWhite);
-	AddPart(Shapes.Cylinder, FVector(16.6, 0.0, 1.15), AlongX, FVector(0.2, 2.6, 0.2), BodyDark);  // windscreen band
-	AddPart(Shapes.Sphere, FVector(-15.5, 0.0, 1.5), FRotator(-6.0, 0.0, 0.0), FVector(10.0, 3.2, 2.6), BodyWhite);
+	// The nose section (Root) and the rest (RearRoot) meet where the fuselage breaks in a breakup.
+	USceneComponent* Nose = Root;
+	USceneComponent* Rest = RearRoot;
+	const double Split = A320_BREAKUP_SPLIT_X_M, FuselageAft = -13.0, FuselageFwd = 14.0;
+
+	// Fuselage (in two lengths, nose and rest), nose and tail cone.
+	AddPart(Shapes.Cylinder, FVector((Split + FuselageFwd) / 2.0, 0.0, 0.9), AlongX, FVector(3.95, 3.95, FuselageFwd - Split), BodyWhite, Nose);
+	AddPart(Shapes.Cylinder, FVector((FuselageAft + Split) / 2.0, 0.0, 0.9), AlongX, FVector(3.95, 3.95, Split - FuselageAft), BodyWhite, Rest);
+	AddPart(Shapes.Sphere, FVector(14.0, 0.0, 0.75), FRotator::ZeroRotator, FVector(7.0, 3.95, 3.6), BodyWhite, Nose);
+	AddPart(Shapes.Cylinder, FVector(16.6, 0.0, 1.15), AlongX, FVector(0.2, 2.6, 0.2), BodyDark, Nose);  // windscreen band
+	AddPart(Shapes.Sphere, FVector(-15.5, 0.0, 1.5), FRotator(-6.0, 0.0, 0.0), FVector(10.0, 3.2, 2.6), BodyWhite, Rest);
 
 	// Wings (25 degree sweep, slight dihedral) and engines under them.
 	for (const double Side : {-1.0, 1.0})
 	{
 		// Positive yaw sweeps the right wing aft; negative roll raises the right tip.
 		AddPart(Shapes.Cube, FVector(-1.6, Side * 8.8, -0.5), FRotator(0.0, Side * 25.0, Side * -5.0),
-			FVector(4.2, 15.5, 0.35), BodyGrey);
-		AddPart(Shapes.Cylinder, FVector(2.2, Side * 5.1, -1.2), AlongX, FVector(2.1, 2.1, 4.2), BodyGrey);
-		AddPart(Shapes.Cylinder, FVector(4.35, Side * 5.1, -1.2), AlongX, FVector(1.8, 1.8, 0.1), BodyDark);
+			FVector(4.2, 15.5, 0.35), BodyGrey, Rest);
+		AddPart(Shapes.Cylinder, FVector(2.2, Side * 5.1, -1.2), AlongX, FVector(2.1, 2.1, 4.2), BodyGrey, Rest);
+		AddPart(Shapes.Cylinder, FVector(4.35, Side * 5.1, -1.2), AlongX, FVector(1.8, 1.8, 0.1), BodyDark, Rest);
 		// Horizontal stabiliser.
 		AddPart(Shapes.Cube, FVector(-17.0, Side * 3.2, 1.6), FRotator(0.0, Side * 30.0, 0.0),
-			FVector(2.6, 6.0, 0.25), BodyGrey);
+			FVector(2.6, 6.0, 0.25), BodyGrey, Rest);
 		// Main gear.
-		AddPart(Shapes.Cylinder, FVector(-0.4, Side * 3.67, -1.6), FRotator::ZeroRotator, FVector(0.25, 0.25, 2.0), BodyGrey);
-		AddPart(Shapes.Cylinder, FVector(-0.4, Side * 3.67, -2.0), FRotator(0.0, 0.0, 90.0), FVector(1.15, 1.15, 0.9), BodyDark);
+		AddPart(Shapes.Cylinder, FVector(-0.4, Side * 3.67, -1.6), FRotator::ZeroRotator, FVector(0.25, 0.25, 2.0), BodyGrey, Rest);
+		AddPart(Shapes.Cylinder, FVector(-0.4, Side * 3.67, -2.0), FRotator(0.0, 0.0, 90.0), FVector(1.15, 1.15, 0.9), BodyDark, Rest);
 	}
 	// Fin.
-	AddPart(Shapes.Cube, FVector(-16.0, 0.0, 5.3), FRotator(35.0, 0.0, 0.0), FVector(5.5, 0.35, 6.2), TailBlue);
+	AddPart(Shapes.Cube, FVector(-16.0, 0.0, 5.3), FRotator(35.0, 0.0, 0.0), FVector(5.5, 0.35, 6.2), TailBlue, Rest);
 	// Nose gear.
-	AddPart(Shapes.Cylinder, FVector(12.1, 0.0, -1.5), FRotator::ZeroRotator, FVector(0.2, 0.2, 2.0), BodyGrey);
-	AddPart(Shapes.Cylinder, FVector(12.1, 0.0, -2.2), FRotator(0.0, 0.0, 90.0), FVector(0.75, 0.75, 0.5), BodyDark);
+	AddPart(Shapes.Cylinder, FVector(12.1, 0.0, -1.5), FRotator::ZeroRotator, FVector(0.2, 0.2, 2.0), BodyGrey, Nose);
+	AddPart(Shapes.Cylinder, FVector(12.1, 0.0, -2.2), FRotator(0.0, 0.0, 90.0), FVector(0.75, 0.75, 0.5), BodyDark, Nose);
+}
+
+AA320Fx* AA320Aircraft::SpawnFx(const FVector& LocationCm, const FA320FxSpec& Spec)
+{
+	FActorSpawnParameters Params;
+	Params.Owner = this;
+	AA320Fx* Fx = GetWorld()->SpawnActor<AA320Fx>(AA320Fx::StaticClass(), FTransform(LocationCm), Params);
+	if (Fx)
+	{
+		Fx->Start(Spec);
+		Effects.Add(Fx);
+	}
+	return Fx;
+}
+
+void AA320Aircraft::WatchFromOutside(double ArmLengthCm, double PitchDeg, double YawFromHeadingDeg)
+{
+	// A fixed look at the wreck from outside, so the camera doesn't tumble with the pieces.
+	bCockpitBeforeDestroyed = bCockpitView;
+	bCockpitView = false;
+	LookOffset = FRotator::ZeroRotator;
+	ApplyView();
+	ChaseArm->SetUsingAbsoluteRotation(true);
+	ChaseArm->SetWorldRotation(FRotator(PitchDeg, State.sections[0].gridHeadingDeg + YawFromHeadingDeg, 0.0));
+	ChaseArm->TargetArmLength = static_cast<float>(ArmLengthCm);
+	ChaseArm->TargetOffset = FVector::ZeroVector;
+}
+
+void AA320Aircraft::UpdateDestruction()
+{
+	if (State.destroyedSeq != LastDestroyedSeq)
+	{
+		LastDestroyedSeq = State.destroyedSeq;
+		if (State.destroyed == A320_DESTROYED_BREAKUP)
+		{
+			StartBreakup();
+		}
+		else if (State.destroyed == A320_DESTROYED_CRASH)
+		{
+			StartCrash();
+		}
+	}
+	if (State.destroyed != A320_DESTROYED_BREAKUP)
+	{
+		return;
+	}
+	// Each piece trails fire and smoke from where it broke, until it hits the ground: then an
+	// explosion, a fire and debris there.
+	AA320Fx* Trails[2] = {TrailFront.Get(), TrailRear.Get()};
+	for (int32 i = 0; i < 2; ++i)
+	{
+		const A320Section& Piece = State.sections[i];
+		const FTransform Pose(SectionRotation(Piece), SectionLocation(Piece));
+		const FVector BreakFace = Pose.TransformPosition(FVector(A320_BREAKUP_SPLIT_X_M * 100.0, 0.0, 90.0));
+		if (Trails[i])
+		{
+			Trails[i]->MoveSource(BreakFace);
+		}
+		if (Piece.impactSeq != LastImpactSeq[i])
+		{
+			LastImpactSeq[i] = Piece.impactSeq;
+			if (Trails[i])
+			{
+				Trails[i]->Extinguish();
+			}
+			FA320FxSpec Impact;
+			Impact.SizeM = i == 0 ? 20.0 : 28.0;  // the wing tanks hold the fuel
+			Impact.DebrisCount = 18;
+			Impact.GroundZ = State.groundHeightM * 100.0;
+			FVector Centre = Pose.TransformPosition(FVector(i == 0 ? 900.0 : -300.0, 0.0, 0.0));
+			Centre.Z = Impact.GroundZ;
+			SpawnFx(Centre, Impact);
+		}
+	}
+}
+
+void AA320Aircraft::StartBreakup()
+{
+	LastImpactSeq[0] = State.sections[0].impactSeq;
+	LastImpactSeq[1] = State.sections[1].impactSeq;
+	RearRoot->SetUsingAbsoluteLocation(true);
+	RearRoot->SetUsingAbsoluteRotation(true);
+	UpdateTransform();
+	WatchFromOutside(9000.0, -12.0, 150.0);
+
+	const FTransform Pose(SectionRotation(State.sections[0]), SectionLocation(State.sections[0]));
+	const FVector BreakPoint = Pose.TransformPosition(FVector(A320_BREAKUP_SPLIT_X_M * 100.0, 0.0, 90.0));
+	const FVector Velocity(State.velNorthMps * 100.0, State.velEastMps * 100.0, State.velUpMps * 100.0);
+	FA320FxSpec Burst;
+	Burst.SizeM = 12.0;
+	Burst.bFire = false;
+	Burst.bSmoke = false;
+	Burst.DebrisCount = 14;
+	Burst.DebrisVelocity = Velocity;
+	Burst.GroundZ = State.groundHeightM * 100.0;
+	SpawnFx(BreakPoint, Burst);
+	FA320FxSpec Trail;
+	Trail.SizeM = 6.0;
+	Trail.bExplosion = false;
+	// Bigger, shorter-lived puffs spaced along the fall: a continuous trail from a small pool.
+	Trail.PuffScale = 3.5;
+	Trail.PuffPool = 130;
+	Trail.PuffLifeS = 7.0;
+	Trail.GroundZ = Burst.GroundZ;
+	TrailFront = SpawnFx(BreakPoint, Trail);
+	TrailRear = SpawnFx(BreakPoint, Trail);
+}
+
+void AA320Aircraft::StartCrash()
+{
+	ApplyView();  // hides the aircraft: what is left is fire and debris
+	WatchFromOutside(25000.0, -18.0, 150.0);
+	FA320FxSpec Crash;
+	Crash.SizeM = 35.0;
+	Crash.DebrisCount = 36;
+	Crash.DebrisVelocity = FVector(State.velNorthMps * 100.0, State.velEastMps * 100.0, 0.0);
+	Crash.GroundZ = State.groundHeightM * 100.0;
+	SpawnFx(FVector(GetActorLocation().X, GetActorLocation().Y, Crash.GroundZ), Crash);
+}
+
+void AA320Aircraft::ClearDestruction()
+{
+	const bool bHadWreck = !Effects.IsEmpty();
+	for (AA320Fx* Fx : Effects)
+	{
+		if (IsValid(Fx))
+		{
+			Fx->Destroy();
+		}
+	}
+	Effects.Reset();
+	TrailFront = nullptr;
+	TrailRear = nullptr;
+	LastDestroyedSeq = State.destroyedSeq;
+	LastImpactSeq[0] = State.sections[0].impactSeq;
+	LastImpactSeq[1] = State.sections[1].impactSeq;
+	// The rest of the aircraft back in place, and the view as it was.
+	if (bHadWreck)
+	{
+		bCockpitView = bCockpitBeforeDestroyed;
+	}
+	RearRoot->SetUsingAbsoluteLocation(false);
+	RearRoot->SetUsingAbsoluteRotation(false);
+	RearRoot->SetRelativeLocationAndRotation(FVector::ZeroVector, FRotator::ZeroRotator);
+	ChaseArm->SetUsingAbsoluteRotation(false);
+	ChaseArm->TargetArmLength = ChaseArmCm;
+	ChaseArm->TargetOffset = ChaseOffsetCm;
+	ApplyView();
 }

@@ -9,7 +9,9 @@
 
 #include "A320Aircraft.generated.h"
 
+class AA320Fx;
 class AA320World;
+struct FA320FxSpec;
 class UAudioComponent;
 class UPointLightComponent;
 class USpotLightComponent;
@@ -99,8 +101,16 @@ protected:
 
 private:
 	void BuildModel();
+	// Parent: Root (the nose section) or RearRoot (the rest), which part flies on after a breakup.
 	UStaticMeshComponent* AddPart(UStaticMesh* Mesh, const FVector& CentreM, const FRotator& Rotation,
-		const FVector& SizeM, const FLinearColor& Color);
+		const FVector& SizeM, const FLinearColor& Color, USceneComponent* Parent);
+	// A destroyed aircraft (A320State.destroyed): the pieces, the effects and the view.
+	void UpdateDestruction();
+	void StartBreakup();
+	void StartCrash();
+	void ClearDestruction();
+	AA320Fx* SpawnFx(const FVector& LocationCm, const FA320FxSpec& Spec);
+	void WatchFromOutside(double ArmLengthCm, double PitchDeg, double YawFromHeadingDeg);
 	void ResetScenario(A320Scenario Scenario);
 	void StartGuide(int32 Guide);
 	void UpdateExteriorLights();
@@ -137,6 +147,9 @@ private:
 	void PumpRadio();
 	TSharedPtr<class FA320Voice> Voice;
 	uint32 LastAtcSeq = 0;
+	uint32 LastDestroyedSeq = 0;
+	bool bCockpitBeforeDestroyed = false;  // the view to go back to on a new flight
+	uint32 LastImpactSeq[2] = {0, 0};
 	TArray<A320AtcMessage> RadioLog;
 	FString XpdrEntry;
 	FString AtcSubtitle;
@@ -147,6 +160,11 @@ private:
 	FRotator LookOffset = FRotator::ZeroRotator;
 
 	UPROPERTY() TObjectPtr<USceneComponent> Root;
+	// The wings, engines and tail: on the aircraft until a breakup, then on their own.
+	UPROPERTY() TObjectPtr<USceneComponent> RearRoot;
+	UPROPERTY() TArray<TObjectPtr<AA320Fx>> Effects;
+	UPROPERTY() TObjectPtr<AA320Fx> TrailFront;
+	UPROPERTY() TObjectPtr<AA320Fx> TrailRear;
 	UPROPERTY() TObjectPtr<UCameraComponent> CockpitCamera;
 	UPROPERTY() TObjectPtr<USpringArmComponent> ChaseArm;
 	UPROPERTY() TObjectPtr<UCameraComponent> ChaseCamera;
