@@ -191,6 +191,11 @@ A320Scenario a320_guide_scenario(int guide) {
   return g ? g->scenario : A320_SCENARIO_RUNWAY;
 }
 
+const char* a320_guide_runway(int guide) {
+  const a320::GuideDef* g = a320::guideDef(guide);
+  return g ? g->runway : "";
+}
+
 int a320_guide_step_count(int guide) {
   const a320::GuideDef* g = a320::guideDef(guide);
   return g ? g->stepCount : 0;

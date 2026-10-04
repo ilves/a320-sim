@@ -183,6 +183,7 @@ void AA320PlayerController::ApplyJoystickButtons(AA320Aircraft* Aircraft, FA320F
 				TPair<const TCHAR*, EA320Command>(TEXT("TOGA"), EA320Command::ThrustToga),
 				TPair<const TCHAR*, EA320Command>(TEXT("IDLE"), EA320Command::ThrustIdle),
 				TPair<const TCHAR*, EA320Command>(TEXT("AP1"), EA320Command::FcuAp),
+				TPair<const TCHAR*, EA320Command>(TEXT("AP2"), EA320Command::FcuAp2),
 				TPair<const TCHAR*, EA320Command>(TEXT("ATHR"), EA320Command::FcuAthr),
 			};
 			for (const TPair<const TCHAR*, EA320Command>& Entry : Map)
@@ -255,6 +256,8 @@ void AA320PlayerController::PlayerTick(float DeltaTime)
 		{EKeys::M, EA320Command::MasterWarnAck},
 		{EKeys::O, EA320Command::OverheadToggle},
 		{EKeys::F2, EA320Command::JoystickPanel},
+		{EKeys::F3, EA320Command::GuideMenu},
+		{EKeys::F4, EA320Command::ResetApproach},
 		{EKeys::Hyphen, EA320Command::SoundToggle},
 		{EKeys::Gamepad_FaceButton_Bottom, EA320Command::GearToggle},
 		{EKeys::Gamepad_LeftShoulder, EA320Command::FlapsUp},
@@ -271,7 +274,8 @@ void AA320PlayerController::PlayerTick(float DeltaTime)
 		{
 			// Shift+F5: cold and dark instead of lined up with engines running.
 			const bool bCold = Binding.Command == EA320Command::ResetRunway && bShift;
-			Aircraft->ExecuteCommand(bCold ? EA320Command::ResetColdDark : Binding.Command, bShift);
+			const bool bAp2 = Binding.Command == EA320Command::FcuAp && bShift;  // Shift+A: AP2
+			Aircraft->ExecuteCommand(bCold ? EA320Command::ResetColdDark : (bAp2 ? EA320Command::FcuAp2 : Binding.Command), bShift);
 		}
 	}
 

@@ -12,16 +12,24 @@ the ILS and land, from a glass cockpit with a working PFD, ND and E/WD.
 - **Cockpit:**
   - PFD: attitude, speed tape with VLS/VMAX, altitude, vertical speed, heading and ILS
     deviation.
-  - ND: map in ARC mode with the runway and the ILS extended centreline.
-  - E/WD: N1, flaps, gear, THS, warnings and memos.
+  - ND: map in ARC or ROSE NAV with the runway and the ILS extended centreline, and ROSE LS
+    with the ILS course pointer, deviation bar and glideslope scale.
+  - E/WD: N1, flaps, gear, THS, warnings, memos and the LDG MEMO.
   - FCU and EFIS controls on the glareshield.
   - Pedestal: draggable thrust levers (detents, reverse), speedbrake lever with ARM, flaps
     lever, engine masters, ENG MODE selector and parking brake.
   - Centre panel: gear lever and the AUTO/BRK pushbuttons.
   - A pop-up overhead panel: APU, APU bleed, exterior lights and signs.
-- **Autopilot and autothrust** through the FCU: HDG, LOC, APPR with **autoland** (G/S, LAND,
-  FLARE, ROLL OUT), OPEN CLIMB/DESCENT, V/S, ALT capture and hold, and SPEED autothrust with
-  RETARD. The modes show on the PFD's flight mode annunciator.
+- **Autopilot and autothrust** through the FCU: HDG, LOC, APPR with **autoland** (LOC*, LOC,
+  G/S*, G/S, LAND, FLARE, ROLL OUT), OPEN CLIMB/DESCENT, V/S, ALT capture and hold, and SPEED
+  autothrust with RETARD.
+  - AP1 and AP2: both engage only with LOC or APPR armed (CAT 3 DUAL), as on the aircraft.
+  - The PFD's flight mode annunciator boxes a new mode for 10 s and shows CAT 3 SINGLE/DUAL.
+- **Lessons (F3)** that guide you step by step, highlight the control or display to use, tick
+  each step off when you've done it, and say what the same thing is in MSFS 2024. The first
+  one is an ILS approach and autoland, from a 20 NM intercept to a stop on the runway.
+- **Sim tutor:** when the aircraft refuses a press (AP on the ground, flaps above VFE, APPR
+  below 400 ft, an engine start without bleed air…), a message says why.
 - **Sound:**
   - engines that follow N1/N2, plus airflow, gear, runway and speedbrake rumble;
   - touchdown thump and gear clunks;
@@ -34,8 +42,8 @@ the ILS and land, from a glass cockpit with a working PFD, ND and E/WD.
   - ground spoilers that extend at touchdown;
   - autobrake LO/MED/MAX holding 1.7 m/s², 3 m/s² or full braking;
   - exterior lights on the model, and cabin signs with the cabin chime.
-- **Pause** (P), sim rate ×2/×4, and instant scenarios (lined up, cold and dark, 10 NM final,
-  4 NM final). These are in the bar at the top right.
+- **Pause** (P), sim rate ×2/×4, and instant scenarios (lined up, cold and dark, 20 NM
+  intercept, 10 NM final, 4 NM final). These are in the bar at the top right.
 - Engine: **Unreal Engine 5** (Windows). The world is built from code, so the repo contains
   no binary assets.
 
@@ -105,8 +113,9 @@ Other scripts:
 | ND range | , and . | |
 | Pause / sim rate | P / = | Start |
 | Cockpit ↔ outside view | C; right-drag to look around, middle-click to reset | Back |
-| Scenarios | F5 lined up, F6 10 NM final, F7 4 NM final, F9 swap runway 26/08 | |
-| Autopilot / autothrust | A (AP1) / T (A/THR; levers in CL: Ins) | |
+| Scenarios | F5 lined up, F4 20 NM intercept, F6 10 NM final, F7 4 NM final, F9 swap runway 26/08 | |
+| Lessons | F3 | |
+| Autopilot / autothrust | A (AP1), Shift+A (AP2) / T (A/THR; levers in CL: Ins) | |
 | Approach / localizer | K (APPR, autoland) / J (LOC) | |
 | FCU targets | 1/2 SPD, 3/4 HDG, 5/6 ALT, 7/8 V/S (Shift = ×10) | |
 | FCU modes | U fly the HDG, 9 climb/descend to ALT (LVL/CH), 0 hold V/S | |
@@ -137,7 +146,7 @@ before or while the sim runs; it's picked up within 5 seconds.
     axes.
 - **Settings file:** `unreal\A320Sim\Saved\A320Joystick.ini`. Edit `buttonN=` lines to remap
   buttons. Available commands: `AP_DISCONNECT`, `BRAKES`, `FLAPS_UP`, `FLAPS_DOWN`, `GEAR`,
-  `REVERSE`, `SPEEDBRAKE`, `VIEW`, `PAUSE`, `TOGA`, `IDLE`, `AP1`, `ATHR`.
+  `REVERSE`, `SPEEDBRAKE`, `VIEW`, `PAUSE`, `TOGA`, `IDLE`, `AP1`, `AP2`, `ATHR`.
 
 **USB throttle quadrant** (e.g. Thrustmaster TCA Quadrant Airbus Edition, Saitek/Logitech
 Throttle Quadrant, or any separate throttle):
@@ -194,6 +203,28 @@ runway 26, gear down.
 
 The screen reports your touchdown rate, the distance past the threshold and how far you
 were from the centreline.
+
+**Lessons (F3).** Pick a lesson and press START. The aircraft resets to the lesson's start, and
+a panel on the left takes you through it:
+- **DO** says what to do. The control is outlined in yellow, with a line from the panel.
+- **LOOK FOR** says what changes when it worked, usually on the FMA.
+- **HOW IT WORKS** explains why, and **IN MSFS 2024** gives the same action in Microsoft Flight
+  Simulator.
+- A step ticks itself off when the cockpit shows it is done. Check steps need **CHECKED:
+  NEXT**, and **SKIP** / **BACK** move between steps.
+- An amber box warns when something needs attention now, for example the autopilot
+  disconnected or the gear still up.
+
+*ILS approach and autoland* starts 20 NM from runway 26, at 3000 ft and 220 kt, with AP1 and
+A/THR flying HDG and ALT. It covers:
+- autobrake, LS and ND ROSE LS, and checking the ILS;
+- slowing down with flaps 1 and 2, arming APPR and engaging AP2 (CAT 3 DUAL);
+- LOC and G/S capture, gear down, flaps FULL, VAPP and spoilers armed, and the LDG MEMO;
+- LAND, FLARE and RETARD (thrust levers to idle);
+- touchdown, full reverse, stowing the reversers at 70 kt, braking to a stop and the parking
+  brake.
+
+The lesson ends once you have stopped on the runway.
 
 **Using the autopilot.** The FCU strip above the displays works like the real one:
 - the selected values are in the amber windows;
@@ -270,7 +301,12 @@ The flight tests fly the real JSBSim A320 with a scripted pilot:
   ground spoilers, autobrake LO/MED deceleration and stopping distance, and the autobrake
   disarming when the pilot brakes;
 - split thrust levers: each engine follows its own lever, reverse on one engine, and a lever
-  in reverse in flight giving idle.
+  in reverse in flight giving idle;
+- the ILS autoland lesson, flown by a test pilot who does exactly what each step says from 20
+  NM out to a stop: every step must tick off, the FMA must show LOC*, G/S* and G/S, and the
+  touchdown must be in the touchdown zone below 600 fpm near VAPP;
+- the 20 NM intercept scenario holding 3000 ft and 220 kt, the AP1/AP2 rules, and the sim
+  tutor messages.
 
 CI runs these tests on Linux and Windows, and runs `Setup.ps1 -CoreOnly` on Windows.
 
@@ -288,6 +324,7 @@ These are marked `a320-sim:` in `unreal/A320Sim/Content/JSBSim/aircraft/A320/A32
 
 **Not yet built:**
 - managed (FMS) modes, a flight plan, alpha floor and the flight directors;
+- go-around (TOGA during an approach: SRS and GA TRK);
 - weather radar and TCAS;
 - detailed terrain (Cesium for Unreal);
 - a 3D clickable cockpit;

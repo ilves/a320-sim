@@ -62,6 +62,13 @@ private:
 	void AddButton(double X, double Y, double W, double H, const FString& Label, EA320Command Command, bool bLit);
 	void DrawOverlays(const AA320Aircraft& Aircraft);
 	void DrawHelp();
+	// Lessons: the picker, and the step panel with the current step's controls highlighted.
+	void DrawGuideMenu();
+	void DrawGuide(const AA320Aircraft& Aircraft);
+	// Remembers where a control or display the guides can point at was drawn this frame.
+	void MarkTarget(int32 Target, double X, double Y, double W, double H);
+	// Word-wrapped text from Y (top) down; returns the height used. bDraw = false only measures.
+	double TextWrapped(const FString& Str, double X, double Y, double MaxW, const FLinearColor& Color, int32 Size, bool bDraw = true);
 
 	void Line(double X1, double Y1, double X2, double Y2, const FLinearColor& Color, double Thickness = 1.5);
 	void ClippedLine(double X1, double Y1, double X2, double Y2, double CX0, double CY0, double CX1, double CY1,
@@ -91,4 +98,12 @@ private:
 	uint32 LastTouchdownSeq = 0;
 	FString TouchdownText;
 	double TouchdownUntil = 0.0;
+	uint32 LastHintSeq = 0;
+	FString HintText;
+	double HintUntil = 0.0;
+	// FMA columns (thrust, vertical, lateral, approach capability, AP): what is shown and since
+	// when, to box a mode for 10 s after it engages.
+	FString FmaShown[5];
+	double FmaChangedAt[5] = {};
+	TMap<int32, FBox2D> TargetBoxes;
 };

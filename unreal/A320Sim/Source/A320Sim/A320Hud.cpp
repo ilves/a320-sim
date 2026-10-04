@@ -145,6 +145,7 @@ void AA320Hud::DrawHUD()
 	Super::DrawHUD();
 	Buttons.Reset();
 	Levers.Reset();
+	TargetBoxes.Reset();
 	const APlayerController* PC = GetOwningPlayerController();
 	const AA320Aircraft* Aircraft = PC ? Cast<AA320Aircraft>(PC->GetPawn()) : nullptr;
 	if (!Canvas)
@@ -179,10 +180,15 @@ void AA320Hud::DrawHUD()
 	if (Aircraft->IsSimReady())
 	{
 		DrawPfd(*Aircraft, X, Y, S);
+		MarkTarget(A320_GT_FMA, X, Y, S, 0.12 * S);
+		MarkTarget(A320_GT_PFD_SPEED, X + 0.03 * S, Y + 0.14 * S, 0.13 * S, 0.64 * S);
+		MarkTarget(A320_GT_PFD_ILS, X + 0.2 * S, Y + 0.14 * S, 0.56 * S, 0.71 * S);
 		X += S + Margin;
 		DrawNd(*Aircraft, X, Y, S);
+		MarkTarget(A320_GT_ND, X, Y, S, S);
 		X += S + Margin;
 		DrawEwd(*Aircraft, X, Y, S);
+		MarkTarget(A320_GT_EWD, X, Y, S, S);
 		X += S + Margin;
 	}
 	if (Aircraft->IsSimReady())
@@ -204,6 +210,14 @@ void AA320Hud::DrawHUD()
 		}
 	}
 	DrawOverlays(*Aircraft);
+	if (Aircraft->IsSimReady())
+	{
+		DrawGuide(*Aircraft);
+	}
+	if (Aircraft->IsGuideMenuVisible())
+	{
+		DrawGuideMenu();  // modal: on top of everything, and its clicks win
+	}
 	DrawLoadingStatus(Aircraft);
 }
 
@@ -462,6 +476,7 @@ void AA320Hud::DrawNd(const AA320Aircraft& Aircraft, double X, double Y, double 
 	const double Hdg = St.headingTrueDeg;
 	// ARC: forward 100 degrees with the aircraft low on the screen; ROSE: full compass rose.
 	const bool bRose = Aircraft.IsNdRose();
+	const bool bLs = Aircraft.GetNdMode() == A320_ND_ROSE_LS;
 	const double AcX = X + 0.5 * S, AcY = Y + (bRose ? 0.53 : 0.82) * S;
 	const double R = (bRose ? 0.38 : 0.68) * S;
 	const double ArcHalf = bRose ? 180.0 : 50.0;
@@ -477,9 +492,9 @@ void AA320Hud::DrawNd(const AA320Aircraft& Aircraft, double X, double Y, double 
 	};
 	const double CX0 = X + 2.0, CY0 = Y + 0.08 * S, CX1 = X + S - 2.0, CY1 = Y + S - 2.0;
 
-	// Runways, and the active ILS's extended centreline out to 12 NM.
+	// Runways, and the active ILS's extended centreline out to 12 NM (no map in ROSE LS).
 	const TArray<A320RunwayInfo>& Runways = Aircraft.GetRunways();
-	for (int32 i = 0; i < Runways.Num(); ++i)
+	for (int32 i = 0; i < Runways.Num() && !bLs; ++i)
 	{
 		const A320RunwayInfo& Rw = Runways[i];
 		const double C = FMath::DegreesToRadians(Rw.trueCourseDeg);
@@ -539,6 +554,63 @@ void AA320Hud::DrawNd(const AA320Aircraft& Aircraft, double X, double Y, double 
 		const FVector2D T = Polar(AcX, AcY, R - 0.01 * S, Wrap180(St.trackTrueDeg - Hdg));
 		Triangle(FVector2D(T.X, T.Y - 0.012 * S), FVector2D(T.X - 0.01 * S, T.Y + 0.01 * S), FVector2D(T.X + 0.01 * S, T.Y + 0.01 * S), Green);
 	}
+	if (bLs)
+	{
+		// ROSE LS: the ILS course pointer, the deviation bar (where the localizer is, 2 dots each
+		// side) and the glideslope scale on the right, as on the PFD.
+		const double CourseA = Wrap180(Wrap360(St.ilsCourseDeg - MagVar) - MagHdg);
+		const double ARad = FMath::DegreesToRadians(CourseA);
+		const FVector2D Dir(FMath::Sin(ARad), -FMath::Cos(ARad));
+		const FVector2D Right(FMath::Cos(ARad), FMath::Sin(ARad));
+		const FVector2D C(AcX, AcY);
+		const FVector2D Head = C + Dir * (0.95 * R), HeadBase = C + Dir * (0.55 * R);
+		const FVector2D Tail0 = C - Dir * (0.55 * R), Tail1 = C - Dir * (0.95 * R);
+		Line(HeadBase.X, HeadBase.Y, Head.X, Head.Y, Magenta, 3.0);
+		Triangle(Head + Dir * (0.06 * R), Head - Right * (0.04 * R), Head + Right * (0.04 * R), Magenta);
+		Line(Tail0.X, Tail0.Y, Tail1.X, Tail1.Y, Magenta, 3.0);
+		const double DotPx = 0.17 * R;
+		for (int32 k = -2; k <= 2; ++k)
+		{
+			if (k != 0)
+			{
+				const FVector2D P = C + Right * (k * DotPx);
+				Fill(P.X - 0.006 * S, P.Y - 0.006 * S, 0.012 * S, 0.012 * S, White);
+			}
+		}
+		if (St.locValid)
+		{
+			const FVector2D Off = Right * (FMath::Clamp(St.locDots, -2.4, 2.4) * DotPx);
+			const FVector2D B0 = C + Off - Dir * (0.45 * R), B1 = C + Off + Dir * (0.45 * R);
+			Line(B0.X, B0.Y, B1.X, B1.Y, Magenta, 3.0);
+		}
+		const double GsX = X + 0.93 * S, Dot = 0.055 * S;
+		for (int32 k = -2; k <= 2; ++k)
+		{
+			if (k == 0)
+			{
+				Line(GsX - 0.015 * S, AcY, GsX + 0.015 * S, AcY, Yellow, 2.0);
+			}
+			else
+			{
+				Fill(GsX - 0.004 * S, AcY + k * Dot - 0.004 * S, 0.008 * S, 0.008 * S, White);
+			}
+		}
+		if (St.gsValid)
+		{
+			const double DY = AcY - FMath::Clamp(St.gsDots, -2.3, 2.3) * Dot, DR = 0.016 * S;
+			Triangle(FVector2D(GsX - DR, DY), FVector2D(GsX, DY - DR), FVector2D(GsX + DR, DY), Magenta);
+			Triangle(FVector2D(GsX - DR, DY), FVector2D(GsX, DY + DR), FVector2D(GsX + DR, DY), Magenta);
+		}
+		if (Runways.IsValidIndex(St.ilsRunwayIndex))
+		{
+			Text(FString::Printf(TEXT("CRS %03d"), FMath::RoundToInt(Wrap360(St.ilsCourseDeg - MagVar))), X + S - 0.03 * S, Y + 0.09 * S, Magenta, 0, 2);
+		}
+		if (!St.locValid)
+		{
+			Text(TEXT("NO LOC SIGNAL"), AcX, AcY + 0.3 * R, Amber, 0, 1);
+		}
+	}
+
 	// Own aircraft.
 	Line(AcX, AcY - 0.04 * S, AcX, AcY + 0.04 * S, Yellow, 3.0);
 	Line(AcX - 0.04 * S, AcY - 0.01 * S, AcX + 0.04 * S, AcY - 0.01 * S, Yellow, 3.0);
@@ -549,7 +621,8 @@ void AA320Hud::DrawNd(const AA320Aircraft& Aircraft, double X, double Y, double 
 	{
 		Text(FString::Printf(TEXT("ILS %s  %.1f NM"), UTF8_TO_TCHAR(Runways[St.ilsRunwayIndex].ident), St.dmeNm), X + S - 0.03 * S, Y + 0.04 * S, Magenta, 0, 2);
 	}
-	Text(FString::Printf(TEXT("%s  %d NM"), bRose ? TEXT("ROSE") : TEXT("ARC"), Aircraft.GetNdRangeNm()), X + 0.03 * S, Y + 0.96 * S, Cyan, 0, 0);
+	Text(FString::Printf(TEXT("%s  %d NM"), bLs ? TEXT("ROSE LS") : (bRose ? TEXT("ROSE NAV") : TEXT("ARC")), Aircraft.GetNdRangeNm()),
+		X + 0.03 * S, Y + 0.96 * S, Cyan, 0, 0);
 	Frame(X, Y, S, S, Grey, 1.0);
 }
 
@@ -616,6 +689,32 @@ void AA320Hud::DrawEwd(const AA320Aircraft& Aircraft, double X, double Y, double
 		{
 			Text(UTF8_TO_TCHAR(a320_warning_text(Mask)), X + 0.04 * S, LineY, (Mask & A320_WARN_CAUTION_MASK) ? Amber : Red, 0, 0);
 			LineY += 0.05 * S;
+		}
+	}
+	// LDG MEMO on the way down with the gear down or below 2000 ft (not after take-off):
+	// blue = still to do, green = done.
+	if (!St.onGround && St.verticalSpeedFpm < 0.0 && (St.radioAltFt < 2000.0 || St.gearLeverDown))
+	{
+		struct FMemoItem
+		{
+			const TCHAR* Todo;
+			const TCHAR* Done;
+			bool bDone;
+		};
+		const int32 Signs = A320_SIGN_SEATBELTS | A320_SIGN_NO_SMOKING;
+		const FMemoItem Items[] = {
+			{TEXT("LDG  GEAR ..... DN"), TEXT("LDG  GEAR DN"), St.gearLeverDown != 0},
+			{TEXT("     SIGNS .... ON"), TEXT("     SIGNS ON"), (St.signs & Signs) == Signs},
+			{TEXT("     SPLRS ... ARM"), TEXT("     SPLRS ARM"), St.spoilersArmed != 0},
+			{TEXT("     FLAPS .. FULL"), TEXT("     FLAPS FULL"), St.flapsLever == 4},
+		};
+		for (const FMemoItem& Item : Items)
+		{
+			if (LineY < Y + S - 0.02 * S)
+			{
+				Text(Item.bDone ? Item.Done : Item.Todo, X + 0.04 * S, LineY, Item.bDone ? Green : Cyan, 0, 0);
+				LineY += 0.045 * S;
+			}
 		}
 	}
 	// Memos (green; blue = selected/armed), bottom right.
@@ -704,6 +803,24 @@ void AA320Hud::DrawOverlays(const AA320Aircraft& Aircraft)
 		Text(TouchdownText, W / 2.0, H * 0.08, Cyan, 1, 1);
 	}
 
+	// Sim tutor: why a press did nothing, or what to watch for.
+	if (St.hintSeq != LastHintSeq)
+	{
+		LastHintSeq = St.hintSeq;
+		HintText = UTF8_TO_TCHAR(St.hint);
+		HintUntil = Now + 9.0;
+	}
+	if (Now < HintUntil && !HintText.IsEmpty())
+	{
+		const double TW = FMath::Min(W * 0.4, 760.0 * Scale), Pad = 10.0 * Scale;
+		const double TX = (W - TW) / 2.0, TY = H * 0.2;
+		const double TextH = TextWrapped(HintText, TX + Pad, TY + 28.0 * Scale, TW - 2.0 * Pad, White, 0, false);
+		Fill(TX, TY, TW, TextH + 36.0 * Scale, FLinearColor(0.0f, 0.0f, 0.0f, 0.75f));
+		Frame(TX, TY, TW, TextH + 36.0 * Scale, Amber, 2.0);
+		Text(TEXT("SIM TUTOR"), TX + Pad, TY + 14.0 * Scale, Amber, 0, 0);
+		TextWrapped(HintText, TX + Pad, TY + 28.0 * Scale, TW - 2.0 * Pad, White, 0);
+	}
+
 	const uint32 WarningBits = St.warnings & ~uint32(A320_WARN_CAUTION_MASK);
 	const uint32 CautionBits = St.warnings & uint32(A320_WARN_CAUTION_MASK);
 	const bool bFlash = FMath::Fmod(Now, 0.8) < 0.5;
@@ -747,10 +864,11 @@ void AA320Hud::DrawHelp()
 		TEXT("ILS on PFD     L (LS button)             ND range  , and ."),
 		TEXT("Pause          P                         Sim rate  ="),
 		TEXT("View           C cockpit / outside,  right mouse drag to look, middle click to reset"),
-		TEXT("Scenarios      F5 lined up 26,  Shift+F5 cold and dark,  F6 10 NM final,  F7 4 NM final,  F9 swap runway"),
+		TEXT("Scenarios      F5 lined up 26,  Shift+F5 cold and dark,  F4 20 NM intercept,  F6 10 NM final,  F7 4 NM final,  F9 swap rwy"),
 		TEXT("Cockpit        drag the thrust, flaps and speedbrake levers;  click switches;  O overhead panel"),
 		TEXT("Joystick       F2 (or JOYSTICK, top right): pick axes with LEARN; trigger = AP disconnect, hat = look"),
-		TEXT("Autopilot      A AP1,  T A/THR (thrust levers in CL: Ins),  K APPR (autoland),  J LOC"),
+		TEXT("Autopilot      A AP1,  Shift+A AP2,  T A/THR (thrust levers in CL: Ins),  K APPR (autoland),  J LOC"),
+		TEXT("Lessons        F3 (or LESSONS, top right): step-by-step guides, e.g. ILS approach and autoland"),
 		TEXT("FCU            1/2 SPD,  3/4 HDG,  5/6 ALT,  7/8 V/S  (Shift = x10);  U fly HDG,  9 climb/descend to ALT,  0 hold V/S"),
 		TEXT("Sound          - (minus) on/off,  M silence master warning"),
 		TEXT("Takeoff        N (release brake), Home (TOGA), rotate ~150 kt with Down arrow, G at positive climb"),
@@ -802,14 +920,16 @@ void AA320Hud::DrawFcu(const AA320Aircraft& Aircraft, double X, double Y, double
 	};
 	Fill(X, Y, W, H, FLinearColor(0.09f, 0.095f, 0.1f));
 	const double Gap = 6.0 * Scale;
-	const double WindowW = W * 0.125, ButtonW = W * 0.055;
+	const double WindowW = W * 0.118, ButtonW = W * 0.047;
 	double CX = X + Gap;
 	// Captain's EFIS control panel: LS, ND mode and range.
 	const double EfisW = W * 0.045;
 	AddButton(CX, Y + H * 0.15, EfisW, H * 0.75, TEXT("LS"), EA320Command::LsToggle, Aircraft.IsLsOn());
 	CX += EfisW + Gap;
-	AddButton(CX, Y + H * 0.15, EfisW * 1.2, H * 0.75, Aircraft.IsNdRose() ? TEXT("ROSE") : TEXT("ARC"), EA320Command::NdModeToggle, false);
-	CX += EfisW * 1.2 + Gap;
+	const int32 NdMode = Aircraft.GetNdMode();
+	AddButton(CX, Y + H * 0.15, EfisW * 1.5, H * 0.75,
+		NdMode == A320_ND_ROSE_LS ? TEXT("ND LS") : (NdMode == A320_ND_ROSE_NAV ? TEXT("ND NAV") : TEXT("ND ARC")), EA320Command::NdModeToggle, false);
+	CX += EfisW * 1.5 + Gap;
 	AddButton(CX, Y + H * 0.15, EfisW * 0.8, H * 0.75, TEXT("RNG-"), EA320Command::NdRangeDown, false);
 	CX += EfisW * 0.8 + 2.0;
 	AddButton(CX, Y + H * 0.15, EfisW * 0.8, H * 0.75, TEXT("RNG+"), EA320Command::NdRangeUp, false);
@@ -827,6 +947,12 @@ void AA320Hud::DrawFcu(const AA320Aircraft& Aircraft, double X, double Y, double
 		{
 			AddButton(CX + BoxW + 2.0 * SmallW + 6.0, Y + H * 0.42, WindowW - BoxW - 2.0 * SmallW - 8.0, H * 0.5, Win.PullLabel, Win.Pull, Win.bPullLit);
 		}
+		const int32 Target = Win.Dec == EA320Command::SpdDec ? A320_GT_FCU_SPD
+			: (Win.Dec == EA320Command::HdgDec ? A320_GT_FCU_HDG : (Win.Dec == EA320Command::AltDec ? A320_GT_FCU_ALT : A320_GT_NONE));
+		if (Target != A320_GT_NONE)
+		{
+			MarkTarget(Target, CX, Y, WindowW, H);
+		}
 		CX += WindowW + Gap;
 	};
 	auto DrawButton = [&](const TCHAR* Label, EA320Command Command, bool bLit)
@@ -835,11 +961,13 @@ void AA320Hud::DrawFcu(const AA320Aircraft& Aircraft, double X, double Y, double
 		CX += ButtonW + Gap;
 	};
 	const bool bLocLit = St.latMode == A320_LAT_LOC || St.latMode == A320_LAT_LOC_STAR || (St.armed & A320_ARMED_LOC);
-	const bool bApprLit = (St.armed & A320_ARMED_GS) || St.vertMode == A320_VERT_GS || St.vertMode == A320_VERT_LAND || St.vertMode == A320_VERT_FLARE;
+	const bool bApprLit = (St.armed & A320_ARMED_GS) || St.vertMode == A320_VERT_GS_STAR || St.vertMode == A320_VERT_GS ||
+		St.vertMode == A320_VERT_LAND || St.vertMode == A320_VERT_FLARE;
 	DrawWindow(FcuWindows[0]);
 	DrawWindow(FcuWindows[1]);
 	DrawButton(TEXT("LOC"), EA320Command::FcuLoc, bLocLit && !bApprLit);
-	DrawButton(TEXT("AP1"), EA320Command::FcuAp, St.apEngaged != 0);
+	DrawButton(TEXT("AP1"), EA320Command::FcuAp, St.ap1Engaged != 0);
+	DrawButton(TEXT("AP2"), EA320Command::FcuAp2, St.ap2Engaged != 0);
 	DrawButton(TEXT("A/THR"), EA320Command::FcuAthr, St.athrEngaged != 0);
 	DrawWindow(FcuWindows[2]);
 	DrawButton(TEXT("APPR"), EA320Command::FcuAppr, bApprLit);
@@ -848,11 +976,33 @@ void AA320Hud::DrawFcu(const AA320Aircraft& Aircraft, double X, double Y, double
 
 void AA320Hud::DrawFma(const A320State& St, double X, double Y, double S)
 {
+	// LAND, FLARE and ROLL OUT span the vertical and lateral columns.
+	const bool bCombined = St.vertMode == A320_VERT_LAND || St.vertMode == A320_VERT_FLARE || St.latMode == A320_LAT_ROLLOUT;
 	for (int32 i = 1; i < 5; ++i)
 	{
+		if (i == 2 && bCombined)
+		{
+			continue;
+		}
 		Line(X + 0.2 * S * i, Y + 0.01 * S, X + 0.2 * S * i, Y + 0.11 * S, Grey, 1.0);
 	}
 	const double Row1 = Y + 0.03 * S, Row2 = Y + 0.075 * S;
+	const double Now = GetWorld()->GetRealTimeSeconds();
+	// A mode that just engaged is boxed in white for 10 s, as on the aircraft.
+	auto Mode = [&](int32 Column, const FString& Str, double MX, double BoxW, const FLinearColor& Color)
+	{
+		if (Str != FmaShown[Column])
+		{
+			FmaShown[Column] = Str;
+			FmaChangedAt[Column] = Now;
+		}
+		Text(Str, MX, Row1, Color, 0, 1);
+		if (!Str.IsEmpty() && Now - FmaChangedAt[Column] < 10.0)
+		{
+			Frame(MX - BoxW / 2.0, Row1 - 0.018 * S, BoxW, 0.036 * S, White, 1.0);
+		}
+	};
+
 	// Column 1: thrust.
 	FString Thrust;
 	FLinearColor ThrustColor = Green;
@@ -860,27 +1010,48 @@ void AA320Hud::DrawFma(const A320State& St, double X, double Y, double S)
 	else if (St.athrEngaged && St.athrActive) Thrust = UTF8_TO_TCHAR(a320_athr_mode_name(St.athrMode));
 	else if (St.thrustDetent == 3) { Thrust = TEXT("MAN TOGA"); ThrustColor = White; }
 	else if (St.thrustDetent == 2) { Thrust = St.onGround ? TEXT("MAN FLX") : TEXT("MAN MCT"); ThrustColor = White; }
-	else if (St.athrEngaged && !St.onGround && FMath::Fmod(GetWorld()->GetRealTimeSeconds(), 1.0) < 0.6) { Thrust = TEXT("LVR CLB"); ThrustColor = White; }
-	Text(Thrust, X + 0.1 * S, Row1, ThrustColor, 0, 1);
+	if (!Thrust.IsEmpty() || !(St.athrEngaged && !St.onGround))
+	{
+		Mode(0, Thrust, X + 0.1 * S, 0.18 * S, ThrustColor);
+	}
+	else if (FMath::Fmod(Now, 1.0) < 0.6)
+	{
+		// A/THR armed with the levers out of the CL detent: LVR CLB flashes.
+		Text(TEXT("LVR CLB"), X + 0.1 * S, Row1, White, 0, 1);
+	}
 
-	// Columns 2-3: vertical and lateral (LAND, FLARE and ROLL OUT span both), armed modes in cyan.
-	const bool bCombined = St.vertMode == A320_VERT_LAND || St.vertMode == A320_VERT_FLARE || St.latMode == A320_LAT_ROLLOUT;
+	// Columns 2-3: vertical and lateral, armed modes in cyan.
 	if (bCombined)
 	{
-		Text(St.latMode == A320_LAT_ROLLOUT ? TEXT("ROLL OUT") : UTF8_TO_TCHAR(a320_vert_mode_name(St.vertMode)), X + 0.4 * S, Row1, Green, 0, 1);
+		Mode(1, St.latMode == A320_LAT_ROLLOUT ? FString(TEXT("ROLL OUT")) : FString(UTF8_TO_TCHAR(a320_vert_mode_name(St.vertMode))),
+			X + 0.4 * S, 0.3 * S, Green);
+		FmaShown[2].Reset();
 	}
 	else
 	{
-		Text(UTF8_TO_TCHAR(a320_vert_mode_name(St.vertMode)), X + 0.3 * S, Row1, Green, 0, 1);
-		Text(UTF8_TO_TCHAR(a320_lat_mode_name(St.latMode)), X + 0.5 * S, Row1, Green, 0, 1);
+		Mode(1, UTF8_TO_TCHAR(a320_vert_mode_name(St.vertMode)), X + 0.3 * S, 0.18 * S, Green);
+		Mode(2, UTF8_TO_TCHAR(a320_lat_mode_name(St.latMode)), X + 0.5 * S, 0.18 * S, Green);
 		FString ArmedV;
 		if (St.armed & A320_ARMED_GS) ArmedV += TEXT("G/S ");
 		else if (St.armed & A320_ARMED_ALT) ArmedV += TEXT("ALT");
 		Text(ArmedV, X + 0.3 * S, Row2, Cyan, 0, 1);
 		Text((St.armed & A320_ARMED_LOC) ? TEXT("LOC") : TEXT(""), X + 0.5 * S, Row2, Cyan, 0, 1);
 	}
+
+	// Column 4: approach capability once APPR is armed or engaged.
+	const bool bAppr = (St.armed & A320_ARMED_GS) || St.vertMode == A320_VERT_GS_STAR || St.vertMode == A320_VERT_GS || bCombined;
+	FString Cat, CatDetail;
+	if (bAppr)
+	{
+		Cat = St.apEngaged && St.athrEngaged ? TEXT("CAT 3") : TEXT("CAT 1");
+		CatDetail = St.ap1Engaged && St.ap2Engaged && St.athrEngaged ? TEXT("DUAL") : (St.apEngaged && St.athrEngaged ? TEXT("SINGLE") : TEXT(""));
+	}
+	Mode(3, Cat, X + 0.7 * S, 0.18 * S, White);
+	Text(CatDetail, X + 0.7 * S, Row2, White, 0, 1);
+
 	// Column 5: engagement status.
-	Text(St.apEngaged ? TEXT("AP1") : TEXT(""), X + 0.9 * S, Row1, White, 0, 1);
+	Mode(4, St.ap1Engaged && St.ap2Engaged ? TEXT("AP1+2") : (St.ap1Engaged ? TEXT("AP1") : (St.ap2Engaged ? TEXT("AP2") : TEXT(""))),
+		X + 0.9 * S, 0.18 * S, White);
 	if (St.athrEngaged)
 	{
 		Text(TEXT("A/THR"), X + 0.9 * S, Row2, St.athrActive ? White : Cyan, 0, 1);
@@ -1102,14 +1273,16 @@ void AA320Hud::DrawSimBar(const AA320Aircraft& Aircraft)
 		{TEXT("JOYSTICK"), EA320Command::JoystickPanel, false},
 		{Aircraft.IsSoundOn() ? TEXT("SOUND ON") : TEXT("SOUND OFF"), EA320Command::SoundToggle, !Aircraft.IsSoundOn()},
 		{TEXT("HELP"), EA320Command::HelpToggle, Aircraft.IsHelpVisible()},
+		{TEXT("LESSONS"), EA320Command::GuideMenu, Aircraft.IsGuideMenuVisible() || Aircraft.GetGuideStatus().active != 0},
 		{TEXT("SWAP RWY"), EA320Command::RunwaySwap, false},
 		{TEXT("LINE UP"), EA320Command::ResetRunway, false},
 		{TEXT("COLD+DARK"), EA320Command::ResetColdDark, false},
+		{TEXT("APPROACH"), EA320Command::ResetApproach, false},
 		{TEXT("FINAL 10"), EA320Command::ResetFinal10, false},
 		{TEXT("FINAL 4"), EA320Command::ResetFinal4, false},
 	};
 	const int32 Count = UE_ARRAY_COUNT(Items);
-	const double BW = FMath::Min(W * 0.058, 120.0 * Scale), BH = 30.0 * Scale, Gap = 4.0 * Scale;
+	const double BW = FMath::Min(W * 0.055, 120.0 * Scale), BH = 30.0 * Scale, Gap = 4.0 * Scale;
 	double BX = W - Count * (BW + Gap) - 8.0 * Scale;
 	for (const FItem& Item : Items)
 	{
@@ -1410,4 +1583,280 @@ void AA320Hud::DrawLoadingStatus(const AA320Aircraft* Aircraft)
 		BX + BW / 2.0, BarY + 36.0 * Scale, White, 0, 1);
 	Text(TEXT("This happens once (results are cached); the next start takes seconds."), BX + BW / 2.0, BarY + 64.0 * Scale, Grey, 0, 1);
 	Text(TEXT("The aircraft is parked with the brakes set, so it is safe to wait."), BX + BW / 2.0, BarY + 86.0 * Scale, Grey, 0, 1);
+}
+
+namespace
+{
+	// The guide target a cockpit control stands for.
+	int32 GuideTargetFor(EA320Command Command)
+	{
+		switch (Command)
+		{
+		case EA320Command::FcuAp: return A320_GT_FCU_AP1;
+		case EA320Command::FcuAp2: return A320_GT_FCU_AP2;
+		case EA320Command::FcuAthr: return A320_GT_FCU_ATHR;
+		case EA320Command::FcuLoc: return A320_GT_FCU_LOC;
+		case EA320Command::FcuAppr: return A320_GT_FCU_APPR;
+		case EA320Command::LsToggle: return A320_GT_EFIS_LS;
+		case EA320Command::NdModeToggle: return A320_GT_EFIS_ND_MODE;
+		case EA320Command::GearToggle: return A320_GT_GEAR;
+		case EA320Command::SpoilerArm: return A320_GT_SPOILERS;
+		case EA320Command::AutobrakeLo:
+		case EA320Command::AutobrakeMed:
+		case EA320Command::AutobrakeMax: return A320_GT_AUTOBRAKE;
+		default: return A320_GT_NONE;
+		}
+	}
+}
+
+void AA320Hud::MarkTarget(int32 Target, double X, double Y, double W, double H)
+{
+	const FBox2D Box(FVector2D(X, Y), FVector2D(X + W, Y + H));
+	if (FBox2D* Existing = TargetBoxes.Find(Target))
+	{
+		*Existing += Box;
+	}
+	else
+	{
+		TargetBoxes.Add(Target, Box);
+	}
+}
+
+double AA320Hud::TextWrapped(const FString& Str, double X, double Y, double MaxW, const FLinearColor& Color, int32 Size, bool bDraw)
+{
+	UFont* Font = FontFor(Size);
+	float SampleW = 0.0f, SampleH = 0.0f;
+	GetTextSize(TEXT("Ag"), SampleW, SampleH, Font, (float)Scale);
+	const double Step = SampleH * 1.12;
+	TArray<FString> Words;
+	Str.ParseIntoArray(Words, TEXT(" "), true);
+	FString Current;
+	double LineTop = Y;
+	auto Flush = [&]()
+	{
+		if (!Current.IsEmpty())
+		{
+			if (bDraw)
+			{
+				Text(Current, X, LineTop + Step / 2.0, Color, Size, 0);
+			}
+			LineTop += Step;
+			Current.Reset();
+		}
+	};
+	for (const FString& Word : Words)
+	{
+		const FString Candidate = Current.IsEmpty() ? Word : Current + TEXT(" ") + Word;
+		float CandidateW = 0.0f, CandidateH = 0.0f;
+		GetTextSize(Candidate, CandidateW, CandidateH, Font, (float)Scale);
+		if (CandidateW > MaxW && !Current.IsEmpty())
+		{
+			Flush();
+			Current = Word;
+		}
+		else
+		{
+			Current = Candidate;
+		}
+	}
+	Flush();
+	return LineTop - Y;
+}
+
+void AA320Hud::DrawGuideMenu()
+{
+	const double W = Canvas->ClipX, H = Canvas->ClipY;
+	Scale = FMath::Max(H / 1080.0, 0.6);
+	const int32 Count = FMath::Min(a320_guide_count(), 4);
+	const double PW = FMath::Min(W * 0.5, 900.0 * Scale), PX = (W - PW) / 2.0, PY = H * 0.1;
+	const double Pad = 16.0 * Scale, RowH = 120.0 * Scale;
+	const double PH = 90.0 * Scale + Count * RowH;
+	Fill(PX, PY, PW, PH, FLinearColor(0.06f, 0.07f, 0.08f, 0.97f));
+	Buttons.Add({FBox2D(FVector2D(PX, PY), FVector2D(PX + PW, PY + PH)), EA320Command::None});  // swallows clicks
+	Frame(PX, PY, PW, PH, FLinearColor(0.5f, 0.52f, 0.55f), 2.0);
+	Text(TEXT("LESSONS"), PX + Pad, PY + 24.0 * Scale, White, 1, 0);
+	AddButton(PX + PW - 44.0 * Scale, PY + 8.0 * Scale, 36.0 * Scale, 30.0 * Scale, TEXT("X"), EA320Command::GuideMenu, false);
+	Text(TEXT("A lesson resets the aircraft, then guides you step by step and ticks each step off when you have done it."),
+		PX + Pad, PY + 56.0 * Scale, Grey, 0, 0);
+	for (int32 i = 0; i < Count; ++i)
+	{
+		const double RY = PY + 80.0 * Scale + i * RowH;
+		Line(PX + Pad, RY, PX + PW - Pad, RY, FLinearColor(0.25f, 0.27f, 0.3f), 1.0);
+		Text(UTF8_TO_TCHAR(a320_guide_name(i)), PX + Pad, RY + 22.0 * Scale, Cyan, 1, 0);
+		Text(FString::Printf(TEXT("%d steps"), a320_guide_step_count(i)), PX + PW - 150.0 * Scale, RY + 22.0 * Scale, Grey, 0, 2);
+		TextWrapped(UTF8_TO_TCHAR(a320_guide_summary(i)), PX + Pad, RY + 40.0 * Scale, PW - 190.0 * Scale, White, 0);
+		AddButton(PX + PW - 130.0 * Scale, RY + 10.0 * Scale, 110.0 * Scale, 40.0 * Scale, TEXT("START"),
+			static_cast<EA320Command>(static_cast<int32>(EA320Command::GuideStart0) + i), true);
+	}
+}
+
+void AA320Hud::DrawGuide(const AA320Aircraft& Aircraft)
+{
+	const A320GuideStatus G = Aircraft.GetGuideStatus();
+	if (!G.active)
+	{
+		return;
+	}
+	const double W = Canvas->ClipX, H = Canvas->ClipY;
+	const double Now = GetWorld()->GetRealTimeSeconds();
+	Scale = FMath::Max(H / 1080.0, 0.6);
+
+	// Where this frame drew the controls the steps point at.
+	for (const FButton& B : Buttons)
+	{
+		const int32 Target = GuideTargetFor(B.Command);
+		if (Target != A320_GT_NONE)
+		{
+			MarkTarget(Target, B.Box.Min.X, B.Box.Min.Y, B.Box.Max.X - B.Box.Min.X, B.Box.Max.Y - B.Box.Min.Y);
+		}
+	}
+	for (const FLeverSlot& Slot : Levers)
+	{
+		const int32 Target = Slot.Lever == EA320Lever::Thrust ? A320_GT_THRUST_LEVERS : (Slot.Lever == EA320Lever::Flaps ? A320_GT_FLAPS : A320_GT_NONE);
+		if (Target != A320_GT_NONE)
+		{
+			MarkTarget(Target, Slot.Box.Min.X, Slot.Box.Min.Y, Slot.Box.Max.X - Slot.Box.Min.X, Slot.Box.Max.Y - Slot.Box.Min.Y);
+		}
+	}
+
+	// The panel: left, above the cockpit panel. Laid out twice: measure, then draw.
+	const double PX = 12.0 * Scale, PY = 76.0 * Scale, PW = FMath::Min(W * 0.34, 680.0 * Scale);
+	const double Pad = 12.0 * Scale, TW = PW - 2.0 * Pad, Gap = 6.0 * Scale;
+	const FString Alert = Aircraft.GetGuideAlert();
+	const int32 Guide = G.guide, Step = G.step;
+	auto StepText = [Guide](int32 Index, A320GuideText Field) { return FString(UTF8_TO_TCHAR(a320_guide_step_text(Guide, Index, Field))); };
+	struct FSection
+	{
+		const TCHAR* Label;
+		FString Body;
+		FLinearColor Color;
+	};
+	TArray<FSection> Sections;
+	if (G.complete)
+	{
+		Sections.Add({TEXT("LANDED - LESSON COMPLETE"), TEXT("You flew an ILS approach and a CAT 3 autoland, then stopped the aircraft yourself. The same buttons and the same FMA work in the MSFS 2024 A320neo."), Green});
+		if (!TouchdownText.IsEmpty())
+		{
+			Sections.Add({TEXT("YOUR LANDING"), TouchdownText, Cyan});
+		}
+	}
+	else
+	{
+		Sections.Add({TEXT("DO"), StepText(Step, A320_GUIDE_ACTION), White});
+		Sections.Add({TEXT("LOOK FOR"), StepText(Step, A320_GUIDE_LOOK), Green});
+		Sections.Add({TEXT("HOW IT WORKS"), StepText(Step, A320_GUIDE_WHY), FLinearColor(0.75f, 0.78f, 0.82f)});
+		Sections.Add({TEXT("IN MSFS 2024"), StepText(Step, A320_GUIDE_MSFS), Cyan});
+	}
+	auto Layout = [&](bool bDraw)
+	{
+		double CY = PY + Pad;
+		if (bDraw)
+		{
+			Text(UTF8_TO_TCHAR(a320_guide_name(Guide)), PX + Pad, CY + 8.0 * Scale, Cyan, 0, 0);
+			Text(G.complete ? FString(TEXT("done")) : FString::Printf(TEXT("step %d of %d"), Step + 1, G.stepCount),
+				PX + PW - 52.0 * Scale, CY + 8.0 * Scale, Grey, 0, 2);
+			AddButton(PX + PW - 44.0 * Scale, CY - 4.0 * Scale, 34.0 * Scale, 24.0 * Scale, TEXT("X"), EA320Command::GuideStop, false);
+		}
+		CY += 26.0 * Scale;
+		// Progress: one segment per step.
+		if (bDraw && G.stepCount > 0)
+		{
+			const double SegW = TW / G.stepCount;
+			for (int32 i = 0; i < G.stepCount; ++i)
+			{
+				const bool bDone = ((G.doneMask >> i) & 1u) != 0;
+				const FLinearColor C = i == Step ? Yellow : (bDone ? Green : (i < Step ? Amber : FLinearColor(0.25f, 0.27f, 0.3f)));
+				Fill(PX + Pad + i * SegW + 1.0, CY, SegW - 2.0, 6.0 * Scale, C);
+			}
+		}
+		CY += 14.0 * Scale;
+		if (!G.complete)
+		{
+			if (bDraw)
+			{
+				Text(StepText(Step, A320_GUIDE_PHASE), PX + Pad, CY + 8.0 * Scale, Grey, 0, 0);
+			}
+			CY += 20.0 * Scale;
+			CY += TextWrapped(StepText(Step, A320_GUIDE_TITLE), PX + Pad, CY, TW, Yellow, 1, bDraw) + Gap;
+		}
+		for (const FSection& Sec : Sections)
+		{
+			if (bDraw)
+			{
+				Text(Sec.Label, PX + Pad, CY + 8.0 * Scale, Grey, 0, 0);
+			}
+			CY += 18.0 * Scale;
+			CY += TextWrapped(Sec.Body, PX + Pad, CY, TW, Sec.Color, 0, bDraw) + Gap;
+		}
+		if (!Alert.IsEmpty() && !G.complete)
+		{
+			const double AlertH = TextWrapped(Alert, PX + 2.0 * Pad, CY + Gap, TW - 2.0 * Pad, Amber, 0, false) + 2.0 * Gap;
+			if (bDraw)
+			{
+				Fill(PX + Pad, CY, TW, AlertH, FLinearColor(0.25f, 0.15f, 0.0f, 0.9f));
+				Frame(PX + Pad, CY, TW, AlertH, Amber, 2.0);
+				TextWrapped(Alert, PX + 2.0 * Pad, CY + Gap, TW - 2.0 * Pad, Amber, 0, true);
+			}
+			CY += AlertH + Gap;
+		}
+		// Buttons: a check step is confirmed with NEXT; any other step ticks itself off.
+		const double BH = 30.0 * Scale, BW = 110.0 * Scale;
+		if (bDraw)
+		{
+			if (G.complete)
+			{
+				AddButton(PX + Pad, CY, BW * 1.3, BH, TEXT("FLY IT AGAIN"), static_cast<EA320Command>(static_cast<int32>(EA320Command::GuideStart0) + Guide), true);
+				AddButton(PX + Pad + BW * 1.3 + Gap, CY, BW, BH, TEXT("CLOSE"), EA320Command::GuideStop, false);
+			}
+			else
+			{
+				AddButton(PX + Pad, CY, BW * 0.7, BH, TEXT("BACK"), EA320Command::GuideBack, false);
+				AddButton(PX + Pad + BW * 0.7 + Gap, CY, BW * 1.2, BH, G.manual ? TEXT("CHECKED: NEXT") : TEXT("SKIP"), EA320Command::GuideNext, G.manual != 0);
+				Text(G.manual ? TEXT("Check it, then press NEXT.") : TEXT("Ticks itself off when done."),
+					PX + Pad + BW * 1.9 + 2.0 * Gap, CY + BH / 2.0, Grey, 0, 0);
+			}
+		}
+		CY += BH + Gap;
+		if (!G.complete && Step + 1 < G.stepCount)
+		{
+			if (bDraw)
+			{
+				Text(FString::Printf(TEXT("Next: %s"), *StepText(Step + 1, A320_GUIDE_TITLE)), PX + Pad, CY + 8.0 * Scale, Grey, 0, 0);
+			}
+			CY += 20.0 * Scale;
+		}
+		return CY + Pad - PY;
+	};
+	// Must stay clear of the FCU (at 58 % of the height): drop the MSFS note, then the explanation.
+	double PH = Layout(false);
+	while (PH > H * 0.58 - PY - 6.0 * Scale && Sections.Num() > 2)
+	{
+		Sections.Pop();
+		PH = Layout(false);
+	}
+	Fill(PX, PY, PW, PH, FLinearColor(0.03f, 0.04f, 0.05f, 0.9f));
+	Buttons.Add({FBox2D(FVector2D(PX, PY), FVector2D(PX + PW, PY + PH)), EA320Command::None});  // swallows clicks
+	Frame(PX, PY, PW, PH, Yellow, 2.0);
+	Layout(true);
+
+	// Highlight the controls and displays of the current step, with a line from the panel.
+	if (G.complete)
+	{
+		return;
+	}
+	const double Pulse = 0.5 + 0.5 * FMath::Sin(Now * 6.0);
+	for (int32 i = 0; i < A320_GUIDE_MAX_TARGETS; ++i)
+	{
+		const FBox2D* Box = TargetBoxes.Find(G.targets[i]);
+		if (G.targets[i] == A320_GT_NONE || !Box)
+		{
+			continue;
+		}
+		const double Grow = (4.0 + 3.0 * Pulse) * Scale;
+		const FVector2D Min = Box->Min - FVector2D(Grow, Grow), Max = Box->Max + FVector2D(Grow, Grow);
+		Frame(Min.X, Min.Y, Max.X - Min.X, Max.Y - Min.Y, Yellow, 2.0 + 2.0 * Pulse);
+		const FVector2D Centre = (Min + Max) / 2.0;
+		const FVector2D Edge(FMath::Clamp(Centre.X, Min.X, Max.X), Min.Y);
+		Line(PX + PW, PY + 40.0 * Scale, Edge.X, Edge.Y, FLinearColor(1.0f, 0.85f, 0.1f, 0.8f), 2.0);
+	}
 }

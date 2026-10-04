@@ -69,6 +69,14 @@ enum class EA320Command : uint8
 	LightRwyTurnoff,
 	SignSeatbelts,
 	SignNoSmoking,
+	// Approach scenario, second autopilot and lessons (guides).
+	ResetApproach,
+	FcuAp2,
+	GuideMenu,
+	GuideNext,
+	GuideBack,
+	GuideStop,
+	GuideStart0, GuideStart1, GuideStart2, GuideStart3,
 	// Joystick setup (handled by the player controller). Per-function commands are
 	// contiguous: function index = command - first.
 	JoystickPanel,

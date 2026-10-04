@@ -64,7 +64,11 @@ public:
 	bool IsHelpVisible() const { return bHelpVisible; }
 	bool IsSoundOn() const { return bSoundOn; }
 	bool IsOverheadVisible() const { return bOverheadVisible; }
-	bool IsNdRose() const { return bNdRose; }
+	bool IsNdRose() const { return NdMode != A320_ND_ARC; }
+	int32 GetNdMode() const { return NdMode; }  // A320_ND_*
+	bool IsGuideMenuVisible() const { return bGuideMenu; }
+	A320GuideStatus GetGuideStatus() const;
+	FString GetGuideAlert() const;
 
 protected:
 	virtual void BeginPlay() override;
@@ -75,6 +79,7 @@ private:
 	UStaticMeshComponent* AddPart(UStaticMesh* Mesh, const FVector& CentreM, const FRotator& Rotation,
 		const FVector& SizeM, const FLinearColor& Color);
 	void ResetScenario(A320Scenario Scenario);
+	void StartGuide(int32 Guide);
 	void UpdateExteriorLights();
 	void ApplyView();
 	void UpdateTransform();
@@ -96,7 +101,8 @@ private:
 	bool bHelpVisible = true;
 	bool bSoundOn = true;
 	bool bOverheadVisible = false;
-	bool bNdRose = false;
+	int32 NdMode = A320_ND_ARC;
+	bool bGuideMenu = false;
 	int32 AudioRate = 44100;
 	TArray<int16> AudioScratch;
 	int32 NdRangeNm = 10;

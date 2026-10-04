@@ -184,6 +184,8 @@ void AA320Aircraft::Tick(float DeltaSeconds)
 		return;
 	}
 	const double SimTimeBefore = State.simTimeS;
+	Controls.efisLs = bLsOn ? 1 : 0;
+	Controls.ndMode = NdMode;
 	a320_set_controls(Sim, &Controls);
 	a320_update(Sim, DeltaSeconds);
 	a320_get_state(Sim, &State);
@@ -293,6 +295,7 @@ void AA320Aircraft::ExecuteCommand(EA320Command Command, bool bLarge)
 	switch (Command)
 	{
 	case EA320Command::FcuAp: Fcu(A320_FCU_AP1); break;
+	case EA320Command::FcuAp2: Fcu(A320_FCU_AP2); break;
 	case EA320Command::FcuAthr: Fcu(A320_FCU_ATHR); break;
 	case EA320Command::FcuHdgPull: Fcu(A320_FCU_HDG_PULL); break;
 	case EA320Command::FcuLoc: Fcu(A320_FCU_LOC); break;
@@ -308,7 +311,10 @@ void AA320Aircraft::ExecuteCommand(EA320Command Command, bool bLarge)
 		}
 		break;
 	case EA320Command::OverheadToggle: bOverheadVisible = !bOverheadVisible; break;
-	case EA320Command::NdModeToggle: bNdRose = !bNdRose; break;
+	case EA320Command::NdModeToggle:
+		// EFIS mode selector: ARC -> ROSE NAV -> ROSE LS.
+		NdMode = NdMode == A320_ND_ARC ? A320_ND_ROSE_NAV : (NdMode == A320_ND_ROSE_NAV ? A320_ND_ROSE_LS : A320_ND_ARC);
+		break;
 	case EA320Command::EngMaster1: Controls.engMaster[0] = Controls.engMaster[0] ? 0 : 1; break;
 	case EA320Command::EngMaster2: Controls.engMaster[1] = Controls.engMaster[1] ? 0 : 1; break;
 	case EA320Command::EngModeCrank: Controls.engMode = A320_ENG_MODE_CRANK; break;
@@ -426,6 +432,32 @@ void AA320Aircraft::ExecuteCommand(EA320Command Command, bool bLarge)
 	case EA320Command::ResetRunway: ResetScenario(A320_SCENARIO_RUNWAY); break;
 	case EA320Command::ResetFinal10: ResetScenario(A320_SCENARIO_FINAL_10NM); break;
 	case EA320Command::ResetFinal4: ResetScenario(A320_SCENARIO_FINAL_4NM); break;
+	case EA320Command::ResetApproach: ResetScenario(A320_SCENARIO_APPROACH); break;
+	case EA320Command::GuideMenu: bGuideMenu = !bGuideMenu; break;
+	case EA320Command::GuideStart0:
+	case EA320Command::GuideStart1:
+	case EA320Command::GuideStart2:
+	case EA320Command::GuideStart3:
+		StartGuide(static_cast<int32>(Command) - static_cast<int32>(EA320Command::GuideStart0));
+		break;
+	case EA320Command::GuideNext:
+		if (Sim)
+		{
+			a320_guide_next(Sim);
+		}
+		break;
+	case EA320Command::GuideBack:
+		if (Sim)
+		{
+			a320_guide_back(Sim);
+		}
+		break;
+	case EA320Command::GuideStop:
+		if (Sim)
+		{
+			a320_guide_stop(Sim);
+		}
+		break;
 	case EA320Command::None: break;
 	default: break;  // joystick setup commands are handled by the player controller
 	}
@@ -437,11 +469,50 @@ void AA320Aircraft::ResetScenario(A320Scenario Scenario)
 	{
 		return;
 	}
+	a320_guide_stop(Sim);  // a lesson restarts its own scenario
 	a320_reset(Sim, Scenario, ActiveRunway);
 	a320_get_state(Sim, &State);
 	a320_get_controls(Sim, &Controls);
 	bLsOn = Scenario == A320_SCENARIO_FINAL_10NM || Scenario == A320_SCENARIO_FINAL_4NM;
+	NdMode = A320_ND_ARC;
 	UpdateTransform();
+}
+
+void AA320Aircraft::StartGuide(int32 Guide)
+{
+	if (!Sim || Guide < 0 || Guide >= a320_guide_count())
+	{
+		return;
+	}
+	// The lesson's texts are written for one runway.
+	const FString Ident = UTF8_TO_TCHAR(a320_guide_runway(Guide));
+	for (int32 i = 0; i < Runways.Num(); ++i)
+	{
+		if (FCString::Strcmp(*Ident, UTF8_TO_TCHAR(Runways[i].ident)) == 0)
+		{
+			ActiveRunway = i;
+		}
+	}
+	ResetScenario(a320_guide_scenario(Guide));
+	a320_guide_start(Sim, Guide);
+	bGuideMenu = false;
+	bHelpVisible = false;
+	bOverheadVisible = false;
+}
+
+A320GuideStatus AA320Aircraft::GetGuideStatus() const
+{
+	A320GuideStatus Status{};
+	if (Sim)
+	{
+		a320_guide_get_status(Sim, &Status);
+	}
+	return Status;
+}
+
+FString AA320Aircraft::GetGuideAlert() const
+{
+	return Sim ? FString(UTF8_TO_TCHAR(a320_guide_alert(Sim))) : FString();
 }
 
 void AA320Aircraft::UpdateExteriorLights()

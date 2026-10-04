@@ -24,6 +24,7 @@ struct GuideDef {
   const char* name;
   const char* summary;
   A320Scenario scenario;
+  const char* runway;  // the runway the texts refer to
   const GuideStep* steps;
   int stepCount;
   // What needs attention right now at this step, or nullptr.

@@ -290,6 +290,7 @@ A320_API int a320_guide_count(void);
 A320_API const char* a320_guide_name(int guide);
 A320_API const char* a320_guide_summary(int guide);
 A320_API A320Scenario a320_guide_scenario(int guide);
+A320_API const char* a320_guide_runway(int guide); /* runway ident the lesson is written for */
 A320_API int a320_guide_step_count(int guide);
 A320_API const char* a320_guide_step_text(int guide, int step, A320GuideText field);
 A320_API void a320_guide_start(A320Sim* sim, int guide);

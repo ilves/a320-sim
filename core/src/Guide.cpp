@@ -28,7 +28,7 @@ const GuideStep kIlsAutoland[] = {
      "The MSFS 2024 A320neo has the same FMA in the same place.",
      {A320_GT_FMA}, true, nullptr},
     {"APPROACH PREPARATION", "Set the autobrake",
-     "Press AUTO BRK LO on the centre panel, next to the gear lever (MED for a short or wet runway).",
+     "Click AUTO/BRK LO on the centre panel, below the gear lever (MED for a short or wet runway).",
      "The LO button lights, and AUTO BRK LO appears in blue in the E/WD memo.",
      "After touchdown the autobrake brakes to a fixed deceleration (LO 1.7 m/s2, MED 3 m/s2) as soon as the ground "
      "spoilers deploy.",
@@ -36,7 +36,8 @@ const GuideStep kIlsAutoland[] = {
      {A320_GT_AUTOBRAKE}, false,
      [](const A320State&, const A320Controls& c) { return c.autobrake == A320_AUTOBRAKE_LO || c.autobrake == A320_AUTOBRAKE_MED; }},
     {"APPROACH PREPARATION", "Show the ILS",
-     "Press LS on the EFIS panel, and turn the ND mode to ROSE LS.",
+     "Press LS on the EFIS panel at the left of the FCU strip (or L), and click the ND mode button until it shows "
+     "ND LS (ROSE LS).",
      "PFD: magenta localizer diamond at the bottom, glideslope diamond on the right. ND: course pointer and "
      "deviation bar.",
      "LS only changes the display; the ILS is tuned automatically for the runway. A diamond shows where the beam is, "
@@ -54,7 +55,7 @@ const GuideStep kIlsAutoland[] = {
      "In MSFS this is on the ND and the MCDU RAD NAV page.",
      {A320_GT_ND}, true, nullptr},
     {"INTERCEPT", "Slow down: SPD 180",
-     "Turn the SPD knob on the FCU down to 180 kt.",
+     "Turn the SPD knob on the FCU down to 180 kt: the - button next to SPD, or key 1 (Shift = 10 kt steps).",
      "The blue speed target on the PFD speed tape moves to 180. A/THR reduces thrust, and the FMA still shows "
      "SPEED.",
      "This is selected speed: you set it with the knob. Managed speed (knob pushed) would follow the flight plan; "
@@ -63,7 +64,7 @@ const GuideStep kIlsAutoland[] = {
      {A320_GT_FCU_SPD, A320_GT_PFD_SPEED}, false,
      [](const A320State& s, const A320Controls&) { return s.fcuSpdKt <= 185.0; }},
     {"INTERCEPT", "FLAPS 1",
-     "Below 230 kt, move the flaps lever to 1 (V).",
+     "Below 230 kt, move the flaps lever to 1 (V, or drag the lever on the pedestal).",
      "The E/WD shows flaps 1, and the red-and-black VFE band on the speed tape moves down to 230 kt.",
      "Each flap position has a maximum speed (VFE). Extending early is not possible without overspeeding the "
      "flaps.",
@@ -71,7 +72,7 @@ const GuideStep kIlsAutoland[] = {
      {A320_GT_FLAPS}, false,
      [](const A320State&, const A320Controls& c) { return c.flapsLever >= 1; }},
     {"INTERCEPT", "Arm the approach: APPR",
-     "Press APPR on the FCU.",
+     "Press APPR on the FCU (or K).",
      "FMA, second row: G/S and LOC in BLUE (armed). The APPR button lights up.",
      "Armed means waiting. The aircraft keeps HDG and ALT until the beams are reached: first LOC captures, then "
      "G/S. Arm it only on an intercept heading.",
@@ -79,7 +80,7 @@ const GuideStep kIlsAutoland[] = {
      {A320_GT_FCU_APPR, A320_GT_FMA}, false,
      [](const A320State& s, const A320Controls&) { return (s.armed & A320_ARMED_GS) != 0 || onGlideslope(s); }},
     {"INTERCEPT", "Engage AP2",
-     "Press AP2. With APPR armed both autopilots can be engaged.",
+     "Press AP2 (or Shift+A). With APPR armed both autopilots can be engaged.",
      "FMA, right column: AP1+2 and CAT 3 DUAL.",
      "Two autopilots monitor each other, which a CAT 3 autoland in fog requires. Outside LOC or APPR only one "
      "autopilot can be engaged.",
@@ -94,7 +95,7 @@ const GuideStep kIlsAutoland[] = {
      {A320_GT_FMA, A320_GT_ND}, false,
      [](const A320State& s, const A320Controls&) { return locCaptured(s); }},
     {"INTERCEPT", "FLAPS 2, SPD 160",
-     "Below 200 kt set FLAPS 2, then turn the SPD knob to 160 kt.",
+     "Below 200 kt set FLAPS 2 (V), then turn the SPD knob to 160 kt (key 1).",
      "E/WD flaps 2. The speed target moves to 160.",
      "Slowing down in steps keeps the speed below each flap limit while the aircraft stays stable.",
      "In MSFS with managed speed the target follows the flaps (F and S speeds) by itself.",
@@ -116,7 +117,7 @@ const GuideStep kIlsAutoland[] = {
      {A320_GT_GEAR}, false,
      [](const A320State&, const A320Controls& c) { return c.gearDown != 0; }},
     {"FINAL APPROACH", "FLAPS 3, then FULL",
-     "Below 185 kt FLAPS 3, then below 177 kt FLAPS FULL.",
+     "Below 185 kt FLAPS 3 (V), then below 177 kt FLAPS FULL (V).",
      "E/WD: FLAPS FULL. The VLS (amber band at the bottom of the speed tape) moves down.",
      "FULL is the normal landing setting: lowest approach speed and good view over the nose.",
      "Same in MSFS.",
@@ -124,7 +125,7 @@ const GuideStep kIlsAutoland[] = {
      [](const A320State&, const A320Controls& c) { return c.flapsLever == 4; }},
     {"FINAL APPROACH", "Approach speed",
      "Once the flaps are fully out, turn the SPD knob to VAPP: the top of the amber VLS band plus 5 kt (about "
-     "135-140 kt).",
+     "135-150 kt; key 1 lowers it).",
      "A/THR slows down and holds the speed just above the amber band.",
      "VLS is the lowest selectable speed (1.23 x stall speed). VAPP adds a margin for gusts and autothrust.",
      "In MSFS, managed speed flies VAPP from the MCDU PERF APPR page automatically.",
@@ -134,7 +135,7 @@ const GuideStep kIlsAutoland[] = {
        return s.flapDeg > 34.0 && s.fcuSpdKt <= s.vlsKt + 8.0 && s.fcuSpdKt >= s.vlsKt;
      }},
     {"FINAL APPROACH", "Arm the ground spoilers",
-     "Pull the speedbrake lever up to ARM (on the pedestal).",
+     "Arm the speedbrake lever: click ARM on the speedbrake lever (pedestal).",
      "E/WD memo: GND SPLRS ARMED (blue).",
      "Armed spoilers deploy by themselves at touchdown. They dump lift so the weight goes on the wheels, which "
      "also starts the autobrake.",
@@ -228,7 +229,7 @@ const GuideDef kGuides[] = {
     {"ILS approach and autoland",
      "Runway 26 at Tallinn, from 20 NM out at 3000 ft: arm the approach, capture the localizer and glideslope, "
      "configure for landing and let both autopilots land.",
-     A320_SCENARIO_APPROACH, kIlsAutoland, kIlsStepCount, ilsAlert},
+     A320_SCENARIO_APPROACH, "26", kIlsAutoland, kIlsStepCount, ilsAlert},
 };
 
 }  // namespace
