@@ -19,7 +19,8 @@ class UStaticMeshComponent;
 
 // Sky, sun, terrain and the airport, built at runtime from the core's runway data. The terrain is
 // the real one when Content/Terrain exists (see A320Terrain.h), otherwise flat grass and water.
-// The world is flat: X north, Y east, Z up from field elevation (cm).
+// The world is flat: X north, Y east, Z up from the first airport's field elevation (cm); other
+// airports' runways sit at their own elevation.
 UCLASS()
 class AA320World : public AActor
 {
@@ -40,6 +41,7 @@ private:
 		const FLinearColor& Color);
 	UStaticMeshComponent* AddMesh(UStaticMesh* Mesh, const FTransform& Transform, const FLinearColor& Color);
 	UInstancedStaticMeshComponent* AddInstanced(UStaticMesh* Mesh, const FLinearColor& Color);
+	void BuildPavedRunway(const A320RunwayInfo& Runway);
 	void BuildRunwayDirection(const A320RunwayInfo& Runway, int32 Index);
 	void BuildSurroundings(const A320RunwayInfo& Runway);
 

@@ -74,6 +74,13 @@ private:
 	// Lessons: the picker, and the step panel with the current step's controls highlighted.
 	void DrawGuideMenu();
 	void DrawGuide(const AA320Aircraft& Aircraft);
+	// The FLIGHT menu: departure and arrival runways, how the flight starts, and the lessons.
+	void DrawFlightMenu(const AA320Aircraft& Aircraft);
+	// A free space across the screen between this frame's windows over the band Top..Bottom: the
+	// left-most gap that fits MaxW, else the widest, at most MaxW wide. When even that is narrower
+	// than MinW, the overhead (YieldingBoxes) gives way; RADIO and MCDU never do.
+	FBox2D FreeSlot(double Top, double Bottom, double MaxW, double Margin, double MinW) const;
+	FBox2D WidestGap(double Top, double Bottom, double MaxW, double Margin, bool bWithYielding) const;
 	// Remembers where a control or display the guides can point at was drawn this frame.
 	void MarkTarget(int32 Target, double X, double Y, double W, double H);
 	// Word-wrapped text from Y (top) down; returns the height used. bDraw = false only measures.
@@ -88,6 +95,8 @@ private:
 	void Arc(double CX, double CY, double R, double FromDeg, double ToDeg, const FLinearColor& Color, double Thickness = 1.5);
 	// Align: 0 = left, 1 = centre, 2 = right; Y is the text's vertical centre.
 	void Text(const FString& Str, double X, double Y, const FLinearColor& Color, int32 Size = 1, int32 Align = 0);
+	// Text of a given line height in pixels (the large font, scaled), centred on X, Y.
+	void TextSized(const FString& Str, double X, double Y, const FLinearColor& Color, double LineH);
 
 	UFont* FontFor(int32 Size) const;
 
@@ -115,4 +124,8 @@ private:
 	FString FmaShown[5];
 	double FmaChangedAt[5] = {};
 	TMap<int32, FBox2D> TargetBoxes;
+	// The pop-up windows drawn this frame (RADIO, MCDU, overhead, setup, the lesson panel), which
+	// the lesson panel and the ATC subtitle keep clear of.
+	TArray<FBox2D> PanelBoxes;
+	TArray<FBox2D> YieldingBoxes;
 };

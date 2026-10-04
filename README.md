@@ -1,14 +1,15 @@
 # A320 Sim (MVP)
 
-Fly an Airbus A320 out of and back into Tallinn (EETN): take off, fly a circuit, intercept
-the ILS and land, from a glass cockpit with a working PFD, ND and E/WD.
+Fly an Airbus A320 out of and back into Tallinn (EETN), or between Tallinn and Kuressaare (EEKE):
+take off, fly a circuit or the route, intercept the ILS and land, from a glass cockpit with a
+working PFD, ND and E/WD. A FLIGHT menu at start picks the airports and how the flight starts.
 
 - **Flight model:** [JSBSim](https://github.com/JSBSim-Team/jsbsim) (open source, used by
   FlightGear) with its A320 model, plus a simplified Airbus **Normal Law** fly-by-wire.
   That includes load-factor and roll-rate control, flight-path and bank hold, auto-trim
   through the THS, protections (bank, pitch and alpha) and the flare law.
-- **Airport:** EETN runway 08/26 at its real coordinates. It has ILS on both runways, PAPI,
-  approach and edge lights and runway markings.
+- **Airports:** EETN runway 08/26 (ILS both ways) and EEKE runway 17/35 (ILS 17), at their real
+  coordinates and elevations, with PAPI, approach and edge lights and runway markings.
 - **Scenery:** real terrain from open data, satellite imagery on real elevation:
   - **All of Estonia:** about 20 m per pixel, islands included.
   - **Around Tallinn:** 80 × 80 km at about 10 m per pixel.
@@ -135,7 +136,8 @@ Other scripts:
 | ND range | , and . | |
 | Pause / sim rate | P / = | Start |
 | Cockpit ↔ outside view | C; right-drag to look around, middle-click to reset | Back |
-| Scenarios | F5 lined up, F4 20 NM intercept, F6 10 NM final, F7 4 NM final, F9 swap runway 26/08 | |
+| Flight menu | F11: departure and arrival, cold and dark / lined up / in the air, distance, lessons | |
+| Scenarios | F5 lined up, Shift+F5 cold and dark, F4 in the air, F6 10 NM final, F7 4 NM final, F9 other runway direction | |
 | Lessons | F3 | |
 | Autopilot / autothrust | A (AP1), Shift+A (AP2) / T (A/THR; levers in CL: Ins) | |
 | Approach / localizer | K (APPR, autoland) / J (LOC) | |
@@ -278,7 +280,7 @@ The FMGC tunes the ILS by itself:
 | F-PLN | Origin and destination with their runways, distance to go. LSK 1L opens DEPARTURE, LSK 3L ARRIVAL |
 | RAD NAV | The tuned ILS (small font = auto-tuned). Type `ILK`, `109.30` or `ILK/109.30` at LSK 3L to tune it yourself, CLR to go back to auto. LSK 4L sets the course |
 | PERF | On the ground: TAKE OFF, with V1/VR/V2, FLAPS/THS, FLEX TO TEMP and THR RED/ACC. In the air: APPR, with QNH, temperature, wind, minimums (BARO or RADIO) and LDG CONF |
-| INIT | Flight number, cost index and cruise level |
+| INIT | FROM/TO (e.g. `EETN/EEKE`, on the ground), flight number, cost index and cruise level |
 | PROG | Flight phase, bearing and distance to the runway, tuned ILS and DME |
 
 **What the entries do:**
@@ -299,6 +301,9 @@ The ILS data is the published one (Estonian eAIP, EETN AD 2.19, AIRAC 2026-10-01
 |---|---|---|---|---|
 | 08 | IIB | 108.30 | 080° | 3°, RDH 54 ft |
 | 26 | ILK | 109.30 | 260° | 3°, RDH 54 ft |
+| EEKE 17 | IWA | 109.90 | 171° | 3°, RDH 52 ft (EEKE AD 2.19) |
+
+EEKE runway 35 has no ILS: the ARRIVAL page lists it as NO ILS, for a visual approach.
 
 The DME is co-located with the glide path antenna, as at EETN, so it reads the distance to
 the touchdown zone.
@@ -314,6 +319,12 @@ phraseology:
 | Tallinn Tower | 135.905 | IFR clearance, takeoff clearance, landing clearance |
 | Tallinn Radar | 127.905 | Radar contact, vectors to the ILS, approach clearance |
 | Tallinn Handling | 131.905 | After landing |
+| Kuressaare Information (AFIS) | 118.055 | EEKE: relays the IFR clearance, reports the runway free |
+
+Tallinn Radar works the whole route. Kuressaare has no tower: its AFIS officer gives
+information, not clearances. You hear "runway 17 free, take off at your discretion" and read back
+"taking off runway 17"; on arrival, "runway 17 free, wind calm, QNH 1013" and "landing runway
+17". "Cleared for takeoff" or "cleared to land" there is a wrong readback, and the tutor says why.
 
 **The radio window (F10, or RADIO at the top right):**
 - **VHF 1:** set the next frequency in STBY with the MHz and kHz knobs (8.33 kHz channels), then
@@ -351,9 +362,28 @@ phraseology:
    sends you to Handling.
 7. You can request the other runway's ILS from Radar. Select it in the MCDU too.
 
+To the other airport, Radar climbs you to FL090 after radar contact (set STD passing 5000 ft),
+vectors you there and descends you to 3000 ft in time for the approach.
+
 Your callsign is the MCDU's flight number (INIT page), or SIM320.
 
 **Lesson:** F3, *Radio: a full flight with ATC*, walks you through all of this step by step.
+
+## Choosing a flight
+
+The FLIGHT menu opens at start (F11, or FLIGHT at the top right). Everything in it is optional:
+close it to fly the default, lined up on EETN 26.
+- **FROM and TO:** a runway at Tallinn or Kuressaare. The same airport is a local flight; the
+  other one is a route of 95 NM. The MCDU flight plan, the ILS and ATC are set up for it.
+- **START:** cold and dark at the runway, lined up with engines running, in the air, or on final
+  at 10 or 4 NM.
+- **DISTANCE:** for a start in the air: 10, 20, 40 or 80 NM from the arrival runway. Beyond 20 NM
+  you start higher (on a 3° profile, at most FL200) and Radar vectors and descends you.
+- **MCDU:** FLIGHT PLAN ENTERED fills it all in: FROM/TO, flight number, cost index, cruise
+  level, departure and arrival, PERF TAKE OFF (V-speeds, 1/UP0.0, FLEX 50) and PERF APPR (QNH,
+  wind, a CAT I minimum). NOT ENTERED leaves it to you: INIT FROM/TO, F-PLN DEPARTURE and
+  ARRIVAL, PERF. In the air FROM/TO is always set; without the approach inserted no ILS is tuned.
+- **LESSONS:** start a lesson (they are set at Tallinn).
 
 ## First flight
 
@@ -442,7 +472,7 @@ core/                        engine-independent C++17, compiled into A320Core.dl
   src/Simulation.cpp         JSBSim wrapper: scenarios, trim, controls, state
   src/FlyByWire.cpp          Normal Law (C*-like pitch, roll rate, protections, flare law)
   src/Ils.cpp                localizer and glideslope from the runway geometry (ICAO Annex 10 sectors), PAPI
-  src/Airport.cpp            EETN runway data, runway-aligned frames
+  src/Airport.cpp            EETN and EEKE runway data, the world they share, runway-aligned frames
   src/Systems.cpp            flaps/1+F logic, thrust detents, VLS/VFE/VMAX, warnings, callouts
   src/Mcdu.cpp               MCDU pages and entries; the crew's data in Fms.h tunes the ILS
   src/Autopilot.cpp          FCU modes, autopilot guidance, autothrust, autoland
@@ -520,7 +550,9 @@ The flight tests fly the real JSBSim A320 with a scripted pilot:
 - Normal Law flight-path and bank hold;
 - ILS approaches from 4 NM and 10 NM, which must stay within 0.5 dot of the localizer and
   0.6 dot of the glideslope, touch down in the touchdown zone below 600 fpm and stop on the
-  runway;
+  runway, at Tallinn and at Kuressaare (its own ground elevation and ILS);
+- ATC flights: a Tallinn circuit, Kuressaare to Tallinn (AFIS, FL090, descent, ILS 26) and a
+  40 NM straight-in to Kuressaare, flown by a crew that reads back, tunes and squawks;
 - the autopilot: OP CLB with ALT capture, a HDG turn, a V/S descent with capture, LOC
   intercept from a heading, instinctive disconnect, and a full autoland to a stop;
 - the audio engine: WAV loading, engine level following thrust, pause, callouts, and the
@@ -575,9 +607,12 @@ These are marked `a320-sim:` in `unreal/A320Sim/Content/JSBSim/aircraft/A320/A32
 **Approximations:**
 - ILS data is from the eAIP (see [MCDU](#mcdu-flight-computer)); the antenna positions are
   placed on the extended centreline.
-- Magnetic variation is fixed at 10° E (AIP, 2025).
-- The flight model's ground is at field elevation everywhere. Terrain and buildings are visual
-  only, so over the sea the radio altimeter reads about 130 ft too high.
+- Magnetic variation is the nearest airport's (AIP, 2025: 10° E at EETN, 9° E at EEKE).
+- The flight model's ground is at the nearest airport's elevation everywhere. Terrain and
+  buildings are visual only, so over the sea near Tallinn the radio altimeter reads about 130 ft
+  too high.
+- The world is flat (Tallinn's tangent plane, heights above sea level); at Kuressaare north is
+  turned about 2° in it, which the aircraft, runways and map all follow.
 
 **Licences:**
 - JSBSim is LGPL-2.1. Its A320 model is marked "for educational and entertainment purposes

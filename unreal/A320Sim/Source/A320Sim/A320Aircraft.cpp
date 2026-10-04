@@ -136,7 +136,14 @@ void AA320Aircraft::BeginPlay()
 	}
 
 	FieldElevationFt = a320_field_elevation_ft(Sim);
-	MagneticVariationDeg = a320_magnetic_variation_deg(Sim);
+	for (int32 i = 0; i < a320_airport_count(Sim); ++i)
+	{
+		A320AirportInfo Info;
+		if (a320_get_airport(Sim, i, &Info))
+		{
+			Airports.Add(Info);
+		}
+	}
 	for (int32 i = 0; i < a320_runway_count(Sim); ++i)
 	{
 		A320RunwayInfo Info;
@@ -145,7 +152,7 @@ void AA320Aircraft::BeginPlay()
 			Runways.Add(Info);
 			if (FCString::Strcmp(UTF8_TO_TCHAR(Info.ident), TEXT("26")) == 0)
 			{
-				ActiveRunway = i;
+				DepRunway = ArrRunway = i;
 			}
 		}
 	}
@@ -162,8 +169,8 @@ void AA320Aircraft::BeginPlay()
 	ApplyView();
 	StartAudio();
 	Voice = MakeShared<FA320Voice>();
-	UE_LOG(LogA320, Log, TEXT("Flight model ready: %d runways, lined up on %s"), Runways.Num(),
-		Runways.IsValidIndex(ActiveRunway) ? UTF8_TO_TCHAR(Runways[ActiveRunway].ident) : TEXT("?"));
+	UE_LOG(LogA320, Log, TEXT("Flight model ready: %d airports, %d runways, lined up on %s"), Airports.Num(), Runways.Num(),
+		Runways.IsValidIndex(DepRunway) ? UTF8_TO_TCHAR(Runways[DepRunway].ident) : TEXT("?"));
 }
 
 void AA320Aircraft::EndPlay(const EEndPlayReason::Type Reason)
@@ -263,6 +270,13 @@ A320AtcStatus AA320Aircraft::GetAtcStatus() const
 	return Status;
 }
 
+double AA320Aircraft::GetFieldElevationFt() const
+{
+	// The nearest airport's: the flight model's ground there.
+	const double AboveFirstM = Airports.IsValidIndex(State.nearestAirport) ? Airports[State.nearestAirport].elevationM : 0.0;
+	return FieldElevationFt + AboveFirstM / 0.3048;
+}
+
 const FString& AA320Aircraft::GetAtcSubtitle(double& OutAgeSeconds) const
 {
 	OutAgeSeconds = FPlatformTime::Seconds() - AtcSubtitleAt;
@@ -350,7 +364,8 @@ void AA320Aircraft::UpdateTransform()
 	// Flat world: X north, Y east, Z up from field elevation, in centimetres. FRotator's
 	// pitch/yaw/roll match JSBSim's theta/psi/phi signs (nose up, clockwise, right wing down).
 	const FVector Location(State.northM * 100.0, State.eastM * 100.0, State.heightAboveFieldM * 100.0);
-	const FRotator Rotation(State.pitchDeg, State.headingTrueDeg, State.bankDeg);
+	// The flat world's north is true north at EETN only: yaw by the grid heading.
+	const FRotator Rotation(State.pitchDeg, State.gridHeadingDeg, State.bankDeg);
 	SetActorLocationAndRotation(Location, Rotation);
 }
 
@@ -563,17 +578,51 @@ void AA320Aircraft::ExecuteCommand(EA320Command Command, bool bLarge, int32 Para
 	case EA320Command::ViewToggle: bCockpitView = !bCockpitView; ApplyView(); break;
 	case EA320Command::HelpToggle: bHelpVisible = !bHelpVisible; break;
 	case EA320Command::RunwaySwap:
-		if (Runways.Num() > 1)
+		// The other direction at the same airport; a local flight keeps landing where it departs.
+		for (int32 i = 1; i < Runways.Num(); ++i)
 		{
-			ActiveRunway = (ActiveRunway + 1) % Runways.Num();
-			ResetScenario(A320_SCENARIO_RUNWAY);
+			const int32 Next = (DepRunway + i) % Runways.Num();
+			if (Runways[Next].airport == Runways[DepRunway].airport)
+			{
+				ArrRunway = ArrRunway == DepRunway ? Next : ArrRunway;
+				DepRunway = Next;
+				break;
+			}
 		}
+		ResetScenario(A320_SCENARIO_RUNWAY);
+		break;
+	case EA320Command::FlightMenu:
+		bFlightMenu = !bFlightMenu;
+		bGuideMenu = bGuideMenu && !bFlightMenu;
+		break;
+	case EA320Command::FlightDep:
+		if (Runways.IsValidIndex(Param))
+		{
+			ArrRunway = ArrRunway == DepRunway ? Param : ArrRunway;
+			DepRunway = Param;
+		}
+		break;
+	case EA320Command::FlightArr:
+		if (Runways.IsValidIndex(Param))
+		{
+			ArrRunway = Param;
+		}
+		break;
+	case EA320Command::FlightStart: FlightScenario = static_cast<A320Scenario>(Param); break;
+	case EA320Command::FlightDistance: FlightDistanceNm = FMath::Clamp(Param, 8, 150); break;
+	case EA320Command::FlightPlan: FlightPlan = Param == A320_PLAN_EMPTY ? A320_PLAN_EMPTY : A320_PLAN_FULL; break;
+	case EA320Command::FlightGo:
+		bFlightMenu = false;
+		ResetScenario(FlightScenario);
 		break;
 	case EA320Command::ResetRunway: ResetScenario(A320_SCENARIO_RUNWAY); break;
 	case EA320Command::ResetFinal10: ResetScenario(A320_SCENARIO_FINAL_10NM); break;
 	case EA320Command::ResetFinal4: ResetScenario(A320_SCENARIO_FINAL_4NM); break;
 	case EA320Command::ResetApproach: ResetScenario(A320_SCENARIO_APPROACH); break;
-	case EA320Command::GuideMenu: bGuideMenu = !bGuideMenu; break;
+	case EA320Command::GuideMenu:
+		bGuideMenu = !bGuideMenu;
+		bFlightMenu = bFlightMenu && !bGuideMenu;
+		break;
 	case EA320Command::GuideStart0:
 	case EA320Command::GuideStart1:
 	case EA320Command::GuideStart2:
@@ -610,7 +659,8 @@ void AA320Aircraft::ResetScenario(A320Scenario Scenario)
 		return;
 	}
 	a320_guide_stop(Sim);  // a lesson restarts its own scenario
-	a320_reset(Sim, Scenario, ActiveRunway);
+	FlightScenario = Scenario;
+	a320_start_flight(Sim, Scenario, DepRunway, ArrRunway, FlightDistanceNm, bLessonStart ? A320_PLAN_ROUTE : FlightPlan);
 	a320_get_state(Sim, &State);
 	a320_get_controls(Sim, &Controls);
 	LastAtcSeq = State.atcMessageSeq;  // a new flight starts a new radio log
@@ -632,18 +682,23 @@ void AA320Aircraft::StartGuide(int32 Guide)
 	{
 		return;
 	}
-	// The lesson's texts are written for one runway.
+	// The lesson's texts are written for one runway, a local flight from 20 NM out.
 	const FString Ident = UTF8_TO_TCHAR(a320_guide_runway(Guide));
 	for (int32 i = 0; i < Runways.Num(); ++i)
 	{
 		if (FCString::Strcmp(*Ident, UTF8_TO_TCHAR(Runways[i].ident)) == 0)
 		{
-			ActiveRunway = i;
+			DepRunway = ArrRunway = i;
 		}
 	}
+	FlightDistanceNm = 20;
+	// The lessons' steps are written for the route only: the crew enters the rest.
+	bLessonStart = true;
 	ResetScenario(a320_guide_scenario(Guide));
+	bLessonStart = false;
 	a320_guide_start(Sim, Guide);
 	bGuideMenu = false;
+	bFlightMenu = false;
 	bHelpVisible = false;
 	bOverheadVisible = false;
 }

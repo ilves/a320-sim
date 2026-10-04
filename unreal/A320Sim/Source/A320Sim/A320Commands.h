@@ -114,6 +114,15 @@ enum class EA320Command : uint8
 	XpdrMode,
 	AtcToggle,
 	AtcReply,
+	// FLIGHT menu: departure and arrival runway (Param: runway index), how the flight starts
+	// (Param: A320Scenario), the distance out for an airborne start (Param: NM), and go.
+	FlightMenu,
+	FlightDep,
+	FlightArr,
+	FlightStart,
+	FlightDistance,
+	FlightGo,
+	FlightPlan,  // Param: A320FlightPlan (entered or not)
 };
 
 // Levers dragged with the mouse; the value is the handle position, 0 at the top of its slot.

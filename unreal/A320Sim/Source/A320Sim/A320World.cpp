@@ -28,21 +28,22 @@ namespace
 	const FLinearColor LightRed(1.0f, 0.02f, 0.02f);
 	const FLinearColor LightGreen(0.05f, 1.0f, 0.1f);
 
-	// Runway-aligned helper: x along the landing course from a point, y to the right.
+	// Runway-aligned helper: x along the landing course from a point, y to the right, up from the
+	// runway's elevation in the flat world.
 	struct FRunwayFrame
 	{
-		double OriginN, OriginE, DirN, DirE;
+		double OriginN, OriginE, DirN, DirE, BaseUp;
 
-		FRunwayFrame(double N, double E, double CourseDeg)
+		FRunwayFrame(double N, double E, double CourseDeg, double BaseUpM = 0.0)
 			: OriginN(N), OriginE(E), DirN(FMath::Cos(FMath::DegreesToRadians(CourseDeg))),
-			  DirE(FMath::Sin(FMath::DegreesToRadians(CourseDeg)))
+			  DirE(FMath::Sin(FMath::DegreesToRadians(CourseDeg))), BaseUp(BaseUpM)
 		{
 		}
 
 		// Metres (north, east, up) for a runway-relative point.
 		FVector At(double X, double Y, double Up = 0.0) const
 		{
-			return FVector(OriginN + X * DirN - Y * DirE, OriginE + X * DirE + Y * DirN, Up);
+			return FVector(OriginN + X * DirN - Y * DirE, OriginE + X * DirE + Y * DirN, BaseUp + Up);
 		}
 	};
 
@@ -171,28 +172,25 @@ void AA320World::Build(const TArray<A320RunwayInfo>& Runways)
 		AddMesh(Shapes.Cube, FVector(24000.0, 0.0, -0.45), 0.0, FVector(34000.0, 80000.0, 1.0), Water);
 	}
 
-	// The paved surface, once, from the first direction's start to its end.
-	const A320RunwayInfo& R0 = Runways[0];
-	const double LengthM = FVector2D(R0.endNorthM - R0.startNorthM, R0.endEastM - R0.startEastM).Size();
-	const FRunwayFrame Paved(R0.startNorthM, R0.startEastM, R0.trueCourseDeg);
-	AddMesh(Shapes.Cube, Paved.At(LengthM / 2.0, 0.0, RunwayTopM - 0.1), R0.trueCourseDeg,
-		FVector(LengthM, R0.widthM, 0.2), Asphalt);
-
-	// Centreline (30 m dashes, 20 m gaps) and edge lines along the whole runway.
-	const double PaintZ = (RunwayTopM + PaintTopM) / 2.0;
-	const double PaintH = PaintTopM - RunwayTopM;
-	for (double X = 80.0; X + 30.0 < LengthM - 80.0; X += 50.0)
+	// The paved surface of each airport's runway, once, from its first direction's start to its end.
+	// Courses are grid courses: true north turns by the meridian convergence away from EETN.
+	for (int32 i = 0; i < Runways.Num(); ++i)
 	{
-		AddMesh(Shapes.Cube, BoxTransform(Paved.At(X + 15.0, 0.0, PaintZ), R0.trueCourseDeg, FVector(30.0, 0.9, PaintH)), Paint);
-	}
-	for (const double Side : {-1.0, 1.0})
-	{
-		AddMesh(Shapes.Cube, BoxTransform(Paved.At(LengthM / 2.0, Side * (R0.widthM / 2.0 - 1.0), PaintZ),
-			R0.trueCourseDeg, FVector(LengthM, 0.9, PaintH)), Paint);
-		for (double X = 0.0; X <= LengthM; X += 60.0)
+		bool bFirstOfAirport = true;
+		for (int32 j = 0; j < i; ++j)
 		{
-			AddMesh(Shapes.Sphere, BoxTransform(Paved.At(X, Side * (R0.widthM / 2.0 + 1.5), 0.3),
-				R0.trueCourseDeg, FVector(0.45)), LightWhite);
+			bFirstOfAirport = bFirstOfAirport && Runways[j].airport != Runways[i].airport;
+		}
+		if (bFirstOfAirport)
+		{
+			BuildPavedRunway(Runways[i]);
+			if (!Terrain.bLoaded && Runways[i].airport != Runways[0].airport)
+			{
+				// Without scenery, a grass field under the other airports at their elevation.
+				const FVector Mid((Runways[i].startNorthM + Runways[i].endNorthM) / 2.0,
+					(Runways[i].startEastM + Runways[i].endEastM) / 2.0, Runways[i].elevationM - 0.5);
+				AddMesh(Shapes.Cube, Mid, 0.0, FVector(30000.0, 30000.0, 1.0), Grass);
+			}
 		}
 	}
 
@@ -204,15 +202,41 @@ void AA320World::Build(const TArray<A320RunwayInfo>& Runways)
 	}
 	if (!Terrain.bLoaded)
 	{
-		BuildSurroundings(R0);  // the real terrain has the real lake, city, forests and buildings
+		BuildSurroundings(Runways[0]);  // the real terrain has the real lake, city, forests and buildings
+	}
+}
+
+void AA320World::BuildPavedRunway(const A320RunwayInfo& R0)
+{
+	const double Course = R0.gridCourseDeg;
+	const double LengthM = FVector2D(R0.endNorthM - R0.startNorthM, R0.endEastM - R0.startEastM).Size();
+	const FRunwayFrame Paved(R0.startNorthM, R0.startEastM, Course, R0.elevationM);
+	AddMesh(Shapes.Cube, Paved.At(LengthM / 2.0, 0.0, RunwayTopM - 0.1), Course, FVector(LengthM, R0.widthM, 0.2), Asphalt);
+
+	// Centreline (30 m dashes, 20 m gaps) and edge lines along the whole runway.
+	const double PaintZ = (RunwayTopM + PaintTopM) / 2.0;
+	const double PaintH = PaintTopM - RunwayTopM;
+	for (double X = 80.0; X + 30.0 < LengthM - 80.0; X += 50.0)
+	{
+		AddMesh(Shapes.Cube, BoxTransform(Paved.At(X + 15.0, 0.0, PaintZ), Course, FVector(30.0, 0.9, PaintH)), Paint);
+	}
+	for (const double Side : {-1.0, 1.0})
+	{
+		AddMesh(Shapes.Cube, BoxTransform(Paved.At(LengthM / 2.0, Side * (R0.widthM / 2.0 - 1.0), PaintZ),
+			Course, FVector(LengthM, 0.9, PaintH)), Paint);
+		for (double X = 0.0; X <= LengthM; X += 60.0)
+		{
+			AddMesh(Shapes.Sphere, BoxTransform(Paved.At(X, Side * (R0.widthM / 2.0 + 1.5), 0.3),
+				Course, FVector(0.45)), LightWhite);
+		}
 	}
 }
 
 void AA320World::BuildRunwayDirection(const A320RunwayInfo& Runway, int32 Index)
 {
-	const double Course = Runway.trueCourseDeg;
+	const double Course = Runway.gridCourseDeg;
 	const double HalfWidth = Runway.widthM / 2.0;
-	const FRunwayFrame Thr(Runway.thresholdNorthM, Runway.thresholdEastM, Course);
+	const FRunwayFrame Thr(Runway.thresholdNorthM, Runway.thresholdEastM, Course, Runway.elevationM);
 	const double PaintZ = (RunwayTopM + PaintTopM) / 2.0;
 	const double PaintH = PaintTopM - RunwayTopM;
 	auto AddPaint = [&](double X, double Y, double Length, double Width)
@@ -265,7 +289,7 @@ void AA320World::BuildRunwayDirection(const A320RunwayInfo& Runway, int32 Index)
 
 	// PAPI left of the runway at the glideslope origin; the inner unit is 15 m from the
 	// edge, units 9 m apart. Boxes are oversized so they read from a few miles out.
-	const FRunwayFrame Gs(Runway.gsOriginNorthM, Runway.gsOriginEastM, Course);
+	const FRunwayFrame Gs(Runway.gsOriginNorthM, Runway.gsOriginEastM, Course, Runway.elevationM);
 	for (int32 i = 0; i < 4; ++i)
 	{
 		const double Y = -(HalfWidth + 15.0 + (3 - i) * 9.0);

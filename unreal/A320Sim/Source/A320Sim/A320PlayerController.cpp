@@ -427,6 +427,7 @@ void AA320PlayerController::PlayerTick(float DeltaTime)
 		{EKeys::F4, EA320Command::ResetApproach},
 		{EKeys::Tab, EA320Command::McduToggle},
 		{EKeys::F10, EA320Command::RadioToggle},
+		{EKeys::F11, EA320Command::FlightMenu},
 		{EKeys::Hyphen, EA320Command::SoundToggle},
 		{EKeys::Gamepad_FaceButton_Bottom, EA320Command::GearToggle},
 		{EKeys::Gamepad_LeftShoulder, EA320Command::FlapsUp},
@@ -482,7 +483,15 @@ void AA320PlayerController::PlayerTick(float DeltaTime)
 		}
 	}
 
-	if (WasInputKeyJustPressed(EKeys::Escape) && bMcduTyping)
+	if (Aircraft->IsFlightMenuVisible() && WasInputKeyJustPressed(EKeys::Enter))
+	{
+		Aircraft->ExecuteCommand(EA320Command::FlightGo, false);
+	}
+	if (WasInputKeyJustPressed(EKeys::Escape) && Aircraft->IsFlightMenuVisible())
+	{
+		Aircraft->ExecuteCommand(EA320Command::FlightMenu, false);  // Esc closes the FLIGHT menu first
+	}
+	else if (WasInputKeyJustPressed(EKeys::Escape) && bMcduTyping)
 	{
 		Aircraft->ExecuteCommand(EA320Command::McduToggle, false);  // Esc closes the MCDU first
 	}

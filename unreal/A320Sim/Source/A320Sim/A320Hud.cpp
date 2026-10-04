@@ -127,6 +127,17 @@ void AA320Hud::Text(const FString& Str, double X, double Y, const FLinearColor& 
 	DrawText(Str, Color, (float)Left, (float)(Y - H / 2.0), Font, TextScale);
 }
 
+void AA320Hud::TextSized(const FString& Str, double X, double Y, const FLinearColor& Color, double LineH)
+{
+	UFont* Font = GEngine->GetLargeFont();
+	float UnitW = 0.0f, UnitH = 0.0f;
+	GetTextSize(TEXT("0"), UnitW, UnitH, Font, 1.0f);
+	const float TextScale = UnitH > 0.0f ? static_cast<float>(LineH / UnitH) : 1.0f;
+	float StrW = 0.0f, StrH = 0.0f;
+	GetTextSize(Str, StrW, StrH, Font, TextScale);
+	DrawText(Str, Color, static_cast<float>(X - StrW / 2.0), static_cast<float>(Y - StrH / 2.0), Font, TextScale);
+}
+
 int32 AA320Hud::ParamAt(const FVector2D& ScreenPos) const
 {
 	for (int32 i = Buttons.Num() - 1; i >= 0; --i)
@@ -158,6 +169,8 @@ void AA320Hud::DrawHUD()
 	Buttons.Reset();
 	Levers.Reset();
 	TargetBoxes.Reset();
+	PanelBoxes.Reset();
+	YieldingBoxes.Reset();
 	const APlayerController* PC = GetOwningPlayerController();
 	const AA320Aircraft* Aircraft = PC ? Cast<AA320Aircraft>(PC->GetPawn()) : nullptr;
 	if (!Canvas)
@@ -230,17 +243,22 @@ void AA320Hud::DrawHUD()
 		}
 	}
 	DrawOverlays(*Aircraft);
-	if (Aircraft->IsSimReady() && !Aircraft->IsRadioVisible())
-	{
-		DrawAtcSubtitle(*Aircraft);
-	}
+	// The lesson panel after the windows it keeps clear of, the subtitle after the lesson panel.
 	if (Aircraft->IsSimReady())
 	{
 		DrawGuide(*Aircraft);
 	}
+	if (Aircraft->IsSimReady() && !Aircraft->IsRadioVisible())
+	{
+		DrawAtcSubtitle(*Aircraft);
+	}
 	if (Aircraft->IsGuideMenuVisible())
 	{
 		DrawGuideMenu();  // modal: on top of everything, and its clicks win
+	}
+	if (Aircraft->IsSimReady() && Aircraft->IsFlightMenuVisible())
+	{
+		DrawFlightMenu(*Aircraft);  // modal too
 	}
 	DrawLoadingStatus(Aircraft);
 }
@@ -520,7 +538,8 @@ void AA320Hud::DrawNd(const AA320Aircraft& Aircraft, double X, double Y, double 
 	const double ArcHalf = bRose ? 180.0 : 50.0;
 	const double RangeM = Aircraft.GetNdRangeNm() * 1852.0;
 	const double Ppm = R / RangeM;
-	const double HdgRad = FMath::DegreesToRadians(Hdg);
+	// The map is the flat world: rotate it by the grid heading (true heading plus the convergence).
+	const double HdgRad = FMath::DegreesToRadians(St.gridHeadingDeg);
 	auto ToScreen = [&](double North, double East)
 	{
 		const double Dn = North - St.northM, De = East - St.eastM;
@@ -535,7 +554,7 @@ void AA320Hud::DrawNd(const AA320Aircraft& Aircraft, double X, double Y, double 
 	for (int32 i = 0; i < Runways.Num() && !bLs; ++i)
 	{
 		const A320RunwayInfo& Rw = Runways[i];
-		const double C = FMath::DegreesToRadians(Rw.trueCourseDeg);
+		const double C = FMath::DegreesToRadians(Rw.gridCourseDeg);
 		const double HalfW = FMath::Max(Rw.widthM / 2.0, 1.5 / Ppm);  // at least ~3 px wide
 		const double RN = -FMath::Sin(C) * HalfW, RE = FMath::Cos(C) * HalfW;  // right offset
 		const FVector2D A1 = ToScreen(Rw.startNorthM + RN, Rw.startEastM + RE);
@@ -896,7 +915,7 @@ void AA320Hud::DrawOverlays(const AA320Aircraft& Aircraft)
 void AA320Hud::DrawHelp()
 {
 	static const TCHAR* Lines[] = {
-		TEXT("A320 SIM  -  EETN Tallinn            H / F1: hide this help"),
+		TEXT("A320 SIM  -  EETN Tallinn, EEKE Kuressaare      H / F1: hide this help"),
 		TEXT("Sidestick      Arrow keys or numpad (Shift = full deflection), gamepad left stick"),
 		TEXT("Rudder/tiller  Q / E (or Z / X), gamepad right stick"),
 		TEXT("Thrust         PgUp / PgDn,  Home TOGA,  Del FLX/MCT,  Ins CL,  End IDLE"),
@@ -906,7 +925,8 @@ void AA320Hud::DrawHelp()
 		TEXT("ILS on PFD     L (LS button)             ND range  , and ."),
 		TEXT("Pause          P                         Sim rate  ="),
 		TEXT("View           C cockpit / outside,  right mouse drag to look, middle click to reset"),
-		TEXT("Scenarios      F5 lined up 26,  Shift+F5 cold and dark,  F4 20 NM intercept,  F6 10 NM final,  F7 4 NM final,  F9 swap rwy"),
+		TEXT("Flight         F11 (or FLIGHT, top right): departure and arrival airport and runway, cold and dark, in the air, distance"),
+		TEXT("Scenarios      F5 lined up,  Shift+F5 cold and dark,  F4 in the air,  F6 10 NM final,  F7 4 NM final,  F9 other runway direction"),
 		TEXT("Cockpit        drag the thrust, flaps and speedbrake levers;  click switches;  O overhead panel"),
 		TEXT("Joystick       F2 (or JOYSTICK, top right): pick axes with LEARN; trigger = AP disconnect, hat = look"),
 		TEXT("Autopilot      A AP1,  Shift+A AP2,  T A/THR (thrust levers in CL: Ins),  K APPR (autoland),  J LOC"),
@@ -917,7 +937,7 @@ void AA320Hud::DrawHelp()
 		TEXT("Sound          - (minus) on/off,  M silence master warning"),
 		TEXT("Takeoff        N (release brake), Home (TOGA), rotate ~150 kt with Down arrow, G at positive climb"),
 		TEXT("Landing        Vapp = VLS + 5 (amber strip), keep diamonds centred, flare ~30 ft, End at RETARD"),
-		TEXT("Quit           Esc (standalone game)"),
+		TEXT("Quit           Esc (standalone game; first closes the FLIGHT menu or the MCDU)"),
 	};
 	const double LineH = 24.0 * Scale;
 	const int32 NumLines = UE_ARRAY_COUNT(Lines);
@@ -1347,7 +1367,7 @@ void AA320Hud::DrawSimBar(const AA320Aircraft& Aircraft)
 		{Aircraft.IsSoundOn() ? TEXT("SOUND ON") : TEXT("SOUND OFF"), EA320Command::SoundToggle, !Aircraft.IsSoundOn()},
 		{TEXT("HELP"), EA320Command::HelpToggle, Aircraft.IsHelpVisible()},
 		{TEXT("LESSONS"), EA320Command::GuideMenu, Aircraft.IsGuideMenuVisible() || Aircraft.GetGuideStatus().active != 0},
-		{TEXT("SWAP RWY"), EA320Command::RunwaySwap, false},
+		{TEXT("FLIGHT"), EA320Command::FlightMenu, Aircraft.IsFlightMenuVisible()},
 		{TEXT("LINE UP"), EA320Command::ResetRunway, false},
 		{TEXT("COLD+DARK"), EA320Command::ResetColdDark, false},
 		{TEXT("APPROACH"), EA320Command::ResetApproach, false},
@@ -1378,8 +1398,11 @@ void AA320Hud::DrawOverhead(const AA320Aircraft& Aircraft)
 	const A320State& St = Aircraft.GetSimState();
 	const A320Controls& Ctl = Aircraft.GetSimControls();
 	const double W = Canvas->ClipX, H = Canvas->ClipY;
-	const double OX = W * 0.17, OY = H * 0.075, OW = W * 0.66, OH = H * 0.47;
+	// During a lesson, to the right so the lesson panel fits beside it.
+	const double OW = W * 0.66, OX = Aircraft.GetGuideStatus().active ? W - OW - W * 0.01 : W * 0.17;
+	const double OY = H * 0.075, OH = H * 0.47;
 	Fill(OX, OY, OW, OH, FLinearColor(0.2f, 0.23f, 0.26f, 0.97f));
+	YieldingBoxes.Add(FBox2D(FVector2D(OX, OY), FVector2D(OX + OW, OY + OH)));
 	Buttons.Add({FBox2D(FVector2D(OX, OY), FVector2D(OX + OW, OY + OH)), EA320Command::None});  // swallows clicks
 	Frame(OX, OY, OW, OH, FLinearColor(0.5f, 0.52f, 0.55f), 2.0);
 	Text(TEXT("OVERHEAD PANEL"), OX + OW / 2.0, OY + 0.025 * H, White, 1, 1);
@@ -1445,22 +1468,27 @@ void AA320Hud::DrawMcdu(const AA320Aircraft& Aircraft)
 	Aircraft.GetMcduDisplay(D);
 	const double W = Canvas->ClipX, H = Canvas->ClipY;
 	// On the right, over the E/WD side, in the unit's tall proportions.
-	const double MH = H * 0.9, MW = FMath::Min(MH * 0.62, W * 0.42);
+	const double MH = H * 0.9, MW = FMath::Min(MH * 0.64, W * 0.42);
 	const double MX = W - MW - 0.01 * W, MY = 0.05 * H;
 	Fill(MX, MY, MW, MH, FLinearColor(0.16f, 0.17f, 0.19f, 0.98f));
+	PanelBoxes.Add(FBox2D(FVector2D(MX, MY), FVector2D(MX + MW, MY + MH)));
 	MarkTarget(A320_GT_MCDU, MX, MY, MW, MH);
 	Buttons.Add({FBox2D(FVector2D(MX, MY), FVector2D(MX + MW, MY + MH)), EA320Command::None});  // swallows clicks
 	Frame(MX, MY, MW, MH, FLinearColor(0.5f, 0.52f, 0.55f), 2.0);
 	AddButton(MX + MW - 0.07 * MW, MY + 0.005 * MH, 0.06 * MW, 0.03 * MH, TEXT("X"), EA320Command::McduToggle, false);
 
-	// Screen: 24 columns x 14 rows, one cell per character.
-	const double Pad = 0.02 * MW, LskW = 0.07 * MW, Gap = 0.015 * MW;
+	// Screen: 24 columns x 14 rows, one cell per character, as large as the unit allows.
+	const double Pad = 0.015 * MW, LskW = 0.06 * MW, Gap = 0.01 * MW;
 	const double SX = MX + Pad + LskW + Gap, SW = MW - 2.0 * (Pad + LskW + Gap);
-	const double SY = MY + 0.04 * MH, SH = SW * 0.8;
+	const double SY = MY + 0.04 * MH, SH = SW * 0.86;
 	Fill(SX, SY, SW, SH, Screen);
 	Frame(SX, SY, SW, SH, Grey, 1.0);
 	const double CellW = SW / A320_MCDU_COLS, CellH = SH / A320_MCDU_ROWS;
-	const FLinearColor Colors[] = {White, Cyan, Green, Amber, Magenta, Yellow};
+	// Glyphs sized to the cells: the large font fills most of a row, the small (labels) about 75 %.
+	const double LargeH = FMath::Min(1.05 * CellH, 1.45 * CellW), SmallH = 0.75 * LargeH;
+	// Brighter than the cockpit palette: the MCDU is read close up, on black.
+	const FLinearColor Colors[] = {FLinearColor(1.0f, 1.0f, 1.0f), FLinearColor(0.3f, 0.9f, 1.0f), FLinearColor(0.2f, 1.0f, 0.3f),
+		FLinearColor(1.0f, 0.65f, 0.1f), FLinearColor(1.0f, 0.35f, 1.0f), FLinearColor(1.0f, 0.95f, 0.2f)};
 	const int32 ColorCount = static_cast<int32>(UE_ARRAY_COUNT(Colors));
 	for (int32 Row = 0; Row < A320_MCDU_ROWS; ++Row)
 	{
@@ -1475,11 +1503,11 @@ void AA320Hud::DrawMcdu(const AA320Aircraft& Aircraft)
 			const double CX = SX + (Col + 0.5) * CellW, CY = SY + (Row + 0.5) * CellH;
 			if (Ch == '#')
 			{
-				Frame(CX - 0.38 * CellW, CY - 0.36 * CellH, 0.76 * CellW, 0.72 * CellH, Amber, 1.0);  // entry box
+				Frame(CX - 0.4 * CellW, CY - 0.36 * CellH, 0.8 * CellW, 0.72 * CellH, Colors[A320_MCDU_AMBER], 1.5);  // entry box
 				continue;
 			}
 			const TCHAR Glyph = Ch == '`' ? TEXT('\u00B0') : static_cast<TCHAR>(Ch);
-			Text(FString(1, &Glyph), CX, CY, Color, D.small[Row][Col] ? 0 : 1, 1);
+			TextSized(FString(1, &Glyph), CX, CY, Color, D.small[Row][Col] ? SmallH : LargeH);
 		}
 	}
 
@@ -1574,6 +1602,7 @@ void AA320Hud::DrawRadio(const AA320Aircraft& Aircraft)
 	const double RX = 0.01 * W, RY = 0.06 * H, RW = FMath::Min(0.42 * W, 860.0 * Scale), RH = 0.62 * H;
 	const double Pad = 10.0 * Scale;
 	Fill(RX, RY, RW, RH, FLinearColor(0.08f, 0.09f, 0.1f, 0.97f));
+	PanelBoxes.Add(FBox2D(FVector2D(RX, RY), FVector2D(RX + RW, RY + RH)));
 	Buttons.Add({FBox2D(FVector2D(RX, RY), FVector2D(RX + RW, RY + RH)), EA320Command::None});  // swallows clicks
 	Frame(RX, RY, RW, RH, FLinearColor(0.5f, 0.52f, 0.55f), 2.0);
 	Text(FString::Printf(TEXT("RADIO   callsign %s"), UTF8_TO_TCHAR(Atc.callsign)), RX + Pad, RY + 16.0 * Scale, White, 1, 0);
@@ -1708,8 +1737,24 @@ void AA320Hud::DrawAtcSubtitle(const AA320Aircraft& Aircraft)
 		return;
 	}
 	const double W = Canvas->ClipX, H = Canvas->ClipY;
-	const double TW = FMath::Min(W * 0.5, 900.0 * Scale), Pad = 8.0 * Scale;
-	const double TX = (W - TW) / 2.0, TY = H * 0.105;
+	double TW = FMath::Min(W * 0.5, 900.0 * Scale);
+	const double Pad = 8.0 * Scale;
+	double TX = (W - TW) / 2.0;
+	const double TY = H * 0.105;
+	// Centred, unless a window or the lesson panel is there: then in the free space beside them.
+	const double Estimate = 3.0 * 24.0 * Scale;
+	const FBox2D Centred(FVector2D(TX, TY), FVector2D(TX + TW, TY + Estimate));
+	auto Covers = [&Centred](const FBox2D& B) { return B.Intersect(Centred); };
+	if (PanelBoxes.ContainsByPredicate(Covers) || YieldingBoxes.ContainsByPredicate(Covers))
+	{
+		const FBox2D Slot = FreeSlot(TY, TY + Estimate, TW, 8.0 * Scale, 240.0 * Scale);
+		if (Slot.Max.X - Slot.Min.X < 160.0 * Scale)
+		{
+			return;  // no room beside the windows: the RADIO log has the call
+		}
+		TW = Slot.Max.X - Slot.Min.X;
+		TX = Slot.Min.X;
+	}
 	const double TextH = TextWrapped(Subtitle, TX + Pad, TY + Pad, TW - 2.0 * Pad, White, 0, false);
 	const double BoxH = TextH + 2.0 * Pad + (bAwaiting ? 18.0 * Scale : 0.0);
 	Fill(TX, TY, TW, BoxH, FLinearColor(0.0f, 0.0f, 0.0f, 0.6f));
@@ -1729,6 +1774,7 @@ void AA320Hud::DrawJoystickPanel(const AA320PlayerController& Controller)
 	// Over the top of the cockpit panel; the pedestal's levers stay visible below it.
 	const double PX = W * 0.2, PY = H * 0.025, PW = W * 0.6, PH = H * 0.645;
 	Fill(PX, PY, PW, PH, FLinearColor(0.08f, 0.09f, 0.1f, 0.97f));
+	PanelBoxes.Add(FBox2D(FVector2D(PX, PY), FVector2D(PX + PW, PY + PH)));
 	Buttons.Add({FBox2D(FVector2D(PX, PY), FVector2D(PX + PW, PY + PH)), EA320Command::None});  // swallows clicks
 	Frame(PX, PY, PW, PH, FLinearColor(0.5f, 0.52f, 0.55f), 2.0);
 	const double LeftX = PX + 0.02 * W, LineH = 0.022 * H;
@@ -2132,8 +2178,12 @@ void AA320Hud::DrawGuide(const AA320Aircraft& Aircraft)
 		}
 	}
 
-	// The panel: left, above the cockpit panel. Laid out twice: measure, then draw.
-	const double PX = 12.0 * Scale, PY = 76.0 * Scale, PW = FMath::Min(W * 0.34, 680.0 * Scale);
+	// The panel: above the cockpit panel, on the left unless a window (RADIO, MCDU, overhead) is
+	// there; then in the widest free space, narrower if need be. It never covers a window.
+	// Laid out twice: measure, then draw.
+	const double PY = 76.0 * Scale, Bottom = H * 0.58 - 6.0 * Scale;
+	const FBox2D Slot = FreeSlot(PY, Bottom, FMath::Min(W * 0.34, 680.0 * Scale), 12.0 * Scale, 260.0 * Scale);
+	const double PX = Slot.Min.X, PW = FMath::Max(Slot.Max.X - Slot.Min.X, 160.0 * Scale);
 	const double Pad = 12.0 * Scale, TW = PW - 2.0 * Pad, Gap = 6.0 * Scale;
 	const FString Alert = Aircraft.GetGuideAlert();
 	const int32 Guide = G.guide, Step = G.step;
@@ -2240,14 +2290,16 @@ void AA320Hud::DrawGuide(const AA320Aircraft& Aircraft)
 		}
 		return CY + Pad - PY;
 	};
-	// Must stay clear of the FCU (at 58 % of the height): drop the MSFS note, then the explanation.
+	// Must stay clear of the FCU (at 58 % of the height): drop the MSFS note, then the explanation,
+	// then what to look for.
 	double PH = Layout(false);
-	while (PH > H * 0.58 - PY - 6.0 * Scale && Sections.Num() > 2)
+	while (PH > Bottom - PY && Sections.Num() > 1)
 	{
 		Sections.Pop();
 		PH = Layout(false);
 	}
 	Fill(PX, PY, PW, PH, FLinearColor(0.03f, 0.04f, 0.05f, 0.9f));
+	PanelBoxes.Add(FBox2D(FVector2D(PX, PY), FVector2D(PX + PW, PY + PH)));
 	Buttons.Add({FBox2D(FVector2D(PX, PY), FVector2D(PX + PW, PY + PH)), EA320Command::None});  // swallows clicks
 	Frame(PX, PY, PW, PH, Yellow, 2.0);
 	Layout(true);
@@ -2270,6 +2322,235 @@ void AA320Hud::DrawGuide(const AA320Aircraft& Aircraft)
 		Frame(Min.X, Min.Y, Max.X - Min.X, Max.Y - Min.Y, Yellow, 2.0 + 2.0 * Pulse);
 		const FVector2D Centre = (Min + Max) / 2.0;
 		const FVector2D Edge(FMath::Clamp(Centre.X, Min.X, Max.X), Min.Y);
-		Line(PX + PW, PY + 40.0 * Scale, Edge.X, Edge.Y, FLinearColor(1.0f, 0.85f, 0.1f, 0.8f), 2.0);
+		const double FromX = Centre.X < PX ? PX : PX + PW;  // from the panel's side facing the target
+		Line(FromX, PY + 40.0 * Scale, Edge.X, Edge.Y, FLinearColor(1.0f, 0.85f, 0.1f, 0.8f), 2.0);
 	}
+}
+
+FBox2D AA320Hud::FreeSlot(double Top, double Bottom, double MaxW, double Margin, double MinW) const
+{
+	const FBox2D Slot = WidestGap(Top, Bottom, MaxW, Margin, true);
+	return Slot.Max.X - Slot.Min.X >= MinW ? Slot : WidestGap(Top, Bottom, MaxW, Margin, false);
+}
+
+FBox2D AA320Hud::WidestGap(double Top, double Bottom, double MaxW, double Margin, bool bWithYielding) const
+{
+	const double W = Canvas->ClipX;
+	TArray<FVector2D> Blocked;  // X = left, Y = right
+	auto Block = [&](const FBox2D& B)
+	{
+		if (B.Max.Y > Top && B.Min.Y < Bottom)
+		{
+			Blocked.Add(FVector2D(B.Min.X - Margin, B.Max.X + Margin));
+		}
+	};
+	for (const FBox2D& B : PanelBoxes)
+	{
+		Block(B);
+	}
+	if (bWithYielding)
+	{
+		for (const FBox2D& B : YieldingBoxes)
+		{
+			Block(B);
+		}
+	}
+	Blocked.Sort([](const FVector2D& A, const FVector2D& B) { return A.X < B.X; });
+	Blocked.Add(FVector2D(W, W));  // the right edge closes the last gap
+	double Cursor = Margin, WidestX = Margin, WidestW = -1.0;
+	for (const FVector2D& Span : Blocked)
+	{
+		const double GapW = FMath::Min(Span.X, W - Margin) - Cursor;
+		if (GapW >= MaxW)
+		{
+			return FBox2D(FVector2D(Cursor, Top), FVector2D(Cursor + MaxW, Bottom));
+		}
+		if (GapW > WidestW)
+		{
+			WidestW = GapW;
+			WidestX = Cursor;
+		}
+		Cursor = FMath::Max(Cursor, Span.Y);
+	}
+	return FBox2D(FVector2D(WidestX, Top), FVector2D(WidestX + FMath::Max(WidestW, 0.0), Bottom));
+}
+
+namespace
+{
+	FString AirportLabel(const TArray<A320AirportInfo>& Airports, int32 Index)
+	{
+		return Airports.IsValidIndex(Index)
+			? FString::Printf(TEXT("%s %s"), UTF8_TO_TCHAR(Airports[Index].icao), UTF8_TO_TCHAR(Airports[Index].name))
+			: FString(TEXT("?"));
+	}
+
+	// Who the crew talks to at an airport (EETN AD 2.18, EEKE AD 2.18).
+	FString AirportRadio(const char* Icao)
+	{
+		return FCString::Strcmp(UTF8_TO_TCHAR(Icao), TEXT("EEKE")) == 0
+			? FString(TEXT("Kuressaare Information 118.055 (AFIS: it reports the runway, the decisions are yours)"))
+			: FString(TEXT("Tallinn Tower 135.905"));
+	}
+}
+
+void AA320Hud::DrawFlightMenu(const AA320Aircraft& Aircraft)
+{
+	const double W = Canvas->ClipX, H = Canvas->ClipY;
+	Scale = FMath::Max(H / 1080.0, 0.6);
+	const TArray<A320RunwayInfo>& Runways = Aircraft.GetRunways();
+	const TArray<A320AirportInfo>& Airports = Aircraft.GetAirports();
+	const int32 Dep = Aircraft.GetDepRunway(), Arr = Aircraft.GetArrRunway();
+	if (!Runways.IsValidIndex(Dep) || !Runways.IsValidIndex(Arr))
+	{
+		return;
+	}
+	const A320Scenario Scenario = Aircraft.GetFlightScenario();
+	const bool bAirborne = Scenario != A320_SCENARIO_RUNWAY && Scenario != A320_SCENARIO_COLD_DARK;
+	const int32 Distance = Aircraft.GetFlightDistanceNm();
+	const int32 Lessons = FMath::Min(a320_guide_count(), 4);
+
+	const double PW = FMath::Min(W * 0.66, 1150.0 * Scale), PX = (W - PW) / 2.0, PY = H * 0.06;
+	const double Pad = 18.0 * Scale, BH = 34.0 * Scale, Gap = 8.0 * Scale, LabelW = 120.0 * Scale;
+	const double PH = FMath::Min(H * 0.88, 760.0 * Scale);
+	Fill(PX, PY, PW, PH, FLinearColor(0.06f, 0.07f, 0.08f, 0.97f));
+	Buttons.Add({FBox2D(FVector2D(PX, PY), FVector2D(PX + PW, PY + PH)), EA320Command::None});  // swallows clicks
+	Frame(PX, PY, PW, PH, FLinearColor(0.5f, 0.52f, 0.55f), 2.0);
+	Text(TEXT("FLIGHT"), PX + Pad, PY + 26.0 * Scale, White, 1, 0);
+	AddButton(PX + PW - 46.0 * Scale, PY + 10.0 * Scale, 36.0 * Scale, 30.0 * Scale, TEXT("X"), EA320Command::FlightMenu, false);
+	double CY = PY + 50.0 * Scale;
+	CY += TextWrapped(TEXT("Where you depart and land, and how the flight starts. All optional: FLY starts what is selected, "
+		"X keeps the current flight. F11 opens this menu again."), PX + Pad, CY, PW - 2.0 * Pad, Grey, 0) + Gap;
+
+	// One row of runway buttons per airport: "EETN Tallinn Lennart Meri   RWY 08  RWY 26".
+	auto RunwayRows = [&](const TCHAR* Label, int32 Selected, EA320Command Command, bool bUsed)
+	{
+		Text(Label, PX + Pad, CY + BH / 2.0, bUsed ? White : Grey, 1, 0);
+		for (int32 a = 0; a < Airports.Num(); ++a)
+		{
+			Text(AirportLabel(Airports, a), PX + Pad + LabelW, CY + BH / 2.0, bUsed ? Cyan : Grey, 0, 0);
+			double BX = PX + Pad + LabelW + 300.0 * Scale;
+			for (int32 i = 0; i < Runways.Num(); ++i)
+			{
+				if (Runways[i].airport != a)
+				{
+					continue;
+				}
+				const FString Rwy = FString::Printf(TEXT("RWY %s%s"), UTF8_TO_TCHAR(Runways[i].ident), Runways[i].hasIls ? TEXT("") : TEXT(" no ILS"));
+				const double BW = (Runways[i].hasIls ? 100.0 : 150.0) * Scale;
+				AddButton(BX, CY, BW, BH, Rwy, Command, bUsed && i == Selected, i);
+				BX += BW + Gap;
+			}
+			CY += BH + Gap;
+		}
+		CY += Gap;
+	};
+	RunwayRows(bAirborne ? TEXT("FROM (-)") : TEXT("FROM"), Dep, EA320Command::FlightDep, !bAirborne);
+	RunwayRows(TEXT("TO"), Arr, EA320Command::FlightArr, true);
+
+	// How the flight starts.
+	struct FStart
+	{
+		const TCHAR* Label;
+		A320Scenario Value;
+	};
+	const FStart Starts[] = {
+		{TEXT("COLD & DARK"), A320_SCENARIO_COLD_DARK},
+		{TEXT("LINED UP"), A320_SCENARIO_RUNWAY},
+		{TEXT("IN THE AIR"), A320_SCENARIO_APPROACH},
+		{TEXT("FINAL 10 NM"), A320_SCENARIO_FINAL_10NM},
+		{TEXT("FINAL 4 NM"), A320_SCENARIO_FINAL_4NM},
+	};
+	Text(TEXT("START"), PX + Pad, CY + BH / 2.0, White, 1, 0);
+	double BX = PX + Pad + LabelW;
+	const double StartW = FMath::Min(150.0 * Scale, (PW - 2.0 * Pad - LabelW) / 5.0 - Gap);
+	for (const FStart& Start : Starts)
+	{
+		AddButton(BX, CY, StartW, BH, Start.Label, EA320Command::FlightStart, Start.Value == Scenario, Start.Value);
+		BX += StartW + Gap;
+	}
+	CY += BH + Gap;
+	const bool bDistance = Scenario == A320_SCENARIO_APPROACH;
+	Text(TEXT("DISTANCE"), PX + Pad, CY + BH / 2.0, bDistance ? White : Grey, 1, 0);
+	BX = PX + Pad + LabelW;
+	for (const int32 Nm : {10, 20, 40, 80})
+	{
+		AddButton(BX, CY, 90.0 * Scale, BH, FString::Printf(TEXT("%d NM"), Nm), EA320Command::FlightDistance, bDistance && Nm == Distance, Nm);
+		BX += 90.0 * Scale + Gap;
+	}
+	Text(TEXT("from the arrival runway, for IN THE AIR"), BX + Gap, CY + BH / 2.0, Grey, 0, 0);
+	CY += BH + Gap;
+	const bool bPlan = Aircraft.GetFlightPlan() != A320_PLAN_EMPTY;
+	Text(TEXT("MCDU"), PX + Pad, CY + BH / 2.0, White, 1, 0);
+	AddButton(PX + Pad + LabelW, CY, 200.0 * Scale, BH, TEXT("FLIGHT PLAN ENTERED"), EA320Command::FlightPlan, bPlan, A320_PLAN_FULL);
+	AddButton(PX + Pad + LabelW + 200.0 * Scale + Gap, CY, 200.0 * Scale, BH, TEXT("NOT ENTERED"), EA320Command::FlightPlan, !bPlan,
+		A320_PLAN_EMPTY);
+	CY += BH + 2.0 * Gap;
+
+	// What that gives: where, how high, and who is on the radio.
+	const A320RunwayInfo& D = Runways[Dep];
+	const A320RunwayInfo& A = Runways[Arr];
+	const FString DepName = FString::Printf(TEXT("runway %s at %s"), UTF8_TO_TCHAR(D.ident), *AirportLabel(Airports, D.airport));
+	const FString ArrName = FString::Printf(TEXT("runway %s at %s"), UTF8_TO_TCHAR(A.ident), *AirportLabel(Airports, A.airport));
+	FString Summary;
+	if (!bAirborne)
+	{
+		double RouteNm = 0.0;
+		if (Airports.IsValidIndex(D.airport) && Airports.IsValidIndex(A.airport))
+		{
+			RouteNm = FVector2D(Airports[A.airport].northM - Airports[D.airport].northM, Airports[A.airport].eastM - Airports[D.airport].eastM).Size() / 1852.0;
+		}
+		Summary = FString::Printf(TEXT("%s %s, IFR to %s%s. Radio: %s, then Tallinn Radar 127.905%s."),
+			Scenario == A320_SCENARIO_COLD_DARK ? TEXT("At") : TEXT("Lined up, engines running, on"), *DepName,
+			D.airport == A.airport ? TEXT("the same airport: a circuit and the ILS (") : TEXT(""),
+			D.airport == A.airport ? *FString::Printf(TEXT("%s)"), *ArrName) : *FString::Printf(TEXT("%s, %.0f NM; Radar climbs you to FL090"), *ArrName, RouteNm),
+			*AirportRadio(D.icao),
+			D.airport == A.airport ? TEXT("") : *FString::Printf(TEXT(", then %s"), *AirportRadio(A.icao)));
+	}
+	else if (Scenario == A320_SCENARIO_APPROACH)
+	{
+		const double AltFt = FMath::Min(20000.0, 3000.0 + FMath::Max(0, Distance - 20) * 318.0);
+		const int32 Alt = AltFt > 3000.0 ? FMath::RoundToInt(AltFt / 1000.0) * 1000 : 3000;
+		Summary = FString::Printf(TEXT("%d NM from %s at %d ft, autopilot on. Tallinn Radar 127.905 %s, then %s."), Distance, *ArrName, Alt,
+			Distance > 22 ? TEXT("vectors you, descends you and clears the approach") : TEXT("clears the approach"), *AirportRadio(A.icao));
+	}
+	else
+	{
+		Summary = FString::Printf(TEXT("On final %s NM from %s, configured for landing. Check in with %s."),
+			Scenario == A320_SCENARIO_FINAL_10NM ? TEXT("10") : TEXT("4"), *ArrName, *AirportRadio(A.icao));
+	}
+	if (!A.hasIls)
+	{
+		Summary += FString::Printf(TEXT(" Runway %s has no ILS: fly the approach visually (PAPI)."), UTF8_TO_TCHAR(A.ident));
+	}
+	if (bPlan)
+	{
+		Summary += bAirborne
+			? TEXT(" MCDU: the approach is inserted (ILS tuned) and PERF APPR filled (QNH, wind, minimum).")
+			: TEXT(" MCDU: FROM/TO, departure and arrival, cruise level and PERF (V-speeds, flaps, FLEX; QNH, minimum) are entered.");
+	}
+	else
+	{
+		Summary += bAirborne
+			? TEXT(" MCDU: only FROM/TO; insert the approach yourself (F-PLN, destination, ARRIVAL) or the ILS is not tuned.")
+			: TEXT(" MCDU: empty; enter INIT FROM/TO, F-PLN departure and arrival, and PERF TAKE OFF yourself.");
+	}
+	CY += TextWrapped(Summary, PX + Pad, CY, PW - 2.0 * Pad, White, 0) + Gap;
+	AddButton(PX + Pad, CY, 200.0 * Scale, BH * 1.3, TEXT("FLY  (Enter)"), EA320Command::FlightGo, true);
+	CY += BH * 1.3 + 2.0 * Gap;
+
+	// The lessons, each with its own airport and start.
+	Line(PX + Pad, CY, PX + PW - Pad, CY, FLinearColor(0.25f, 0.27f, 0.3f), 1.0);
+	CY += Gap;
+	Text(TEXT("LESSONS"), PX + Pad, CY + BH / 2.0, White, 1, 0);
+	BX = PX + Pad + LabelW;
+	const double LessonW = Lessons > 0 ? (PW - 2.0 * Pad - LabelW) / Lessons - Gap : 0.0;
+	for (int32 i = 0; i < Lessons; ++i)
+	{
+		AddButton(BX, CY, LessonW, BH, UTF8_TO_TCHAR(a320_guide_name(i)),
+			static_cast<EA320Command>(static_cast<int32>(EA320Command::GuideStart0) + i), false);
+		BX += LessonW + Gap;
+	}
+	CY += BH + Gap;
+	TextWrapped(TEXT("A lesson sets up its own flight at Tallinn and guides you step by step (LESSONS at the top, or F3)."),
+		PX + Pad + LabelW, CY, PW - 2.0 * Pad - LabelW, Grey, 0);
 }

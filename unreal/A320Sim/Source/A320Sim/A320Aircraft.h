@@ -58,9 +58,18 @@ public:
 	const A320State& GetSimState() const { return State; }
 	const A320Controls& GetSimControls() const { return Controls; }
 	const TArray<A320RunwayInfo>& GetRunways() const { return Runways; }
-	int32 GetActiveRunway() const { return ActiveRunway; }
-	double GetMagneticVariation() const { return MagneticVariationDeg; }
-	double GetFieldElevationFt() const { return FieldElevationFt; }
+	const TArray<A320AirportInfo>& GetAirports() const { return Airports; }
+	// At the nearest airport.
+	double GetMagneticVariation() const { return State.magneticVariationDeg; }
+	double GetFieldElevationFt() const;
+	// The FLIGHT menu and the flight it sets up: departure and arrival (indices into GetRunways()),
+	// how the flight starts and, for a start in the air, how far out.
+	bool IsFlightMenuVisible() const { return bFlightMenu; }
+	int32 GetDepRunway() const { return DepRunway; }
+	int32 GetArrRunway() const { return ArrRunway; }
+	A320Scenario GetFlightScenario() const { return FlightScenario; }
+	int32 GetFlightDistanceNm() const { return FlightDistanceNm; }
+	int32 GetFlightPlan() const { return FlightPlan; }  // A320FlightPlan: how much the MCDU starts with
 	bool IsCockpitView() const { return bCockpitView; }
 	bool IsLsOn() const { return bLsOn; }
 	int32 GetNdRangeNm() const { return NdRangeNm; }
@@ -106,9 +115,15 @@ private:
 	A320Controls Controls{};
 	FString SimError;
 	TArray<A320RunwayInfo> Runways;
-	int32 ActiveRunway = 0;
-	double MagneticVariationDeg = 0.0;
-	double FieldElevationFt = 0.0;
+	TArray<A320AirportInfo> Airports;
+	int32 DepRunway = 0;
+	int32 ArrRunway = 0;
+	A320Scenario FlightScenario = A320_SCENARIO_RUNWAY;
+	int32 FlightDistanceNm = 20;
+	int32 FlightPlan = A320_PLAN_FULL;
+	bool bFlightMenu = true;  // shown at start; closing it keeps the default flight
+	bool bLessonStart = false;  // ResetScenario for a lesson: its own flight plan
+	double FieldElevationFt = 0.0;  // the first airport's, the flat world's zero
 
 	bool bCockpitView = true;
 	bool bLsOn = false;
