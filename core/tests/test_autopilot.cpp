@@ -36,7 +36,7 @@ struct ApFlight {
     for (int i = 0; i < a320_runway_count(sim); ++i) {
       A320RunwayInfo info;
       a320_get_runway(sim, i, &info);
-      if (std::strcmp(info.ident, "26") == 0) idx = i;
+      if (std::strcmp(info.ident, "26") == 0 && std::strcmp(info.icao, "EETN") == 0) idx = i;
     }
     a320_reset(sim, scenario, idx);
     a320_get_runway(sim, idx, &rw);

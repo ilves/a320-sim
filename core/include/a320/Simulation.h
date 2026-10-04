@@ -11,6 +11,7 @@
 #include "a320/FlyByWire.h"
 #include "a320/Fms.h"
 #include "a320/Geo.h"
+#include "a320/GroundMap.h"
 #include "a320/Ils.h"
 #include "a320/Mcdu.h"
 #include "a320/SimClock.h"
@@ -38,6 +39,13 @@ class Simulation {
   // from the arrival (A320_SCENARIO_APPROACH; the finals use their fixed distances).
   bool startFlight(A320Scenario scenario, int depRunway, int arrRunway, double distanceNm,
                    int flightPlan = A320_PLAN_ROUTE);
+  // The terrain under the flight model (Content/Terrain); without it the ground is the nearest
+  // airport's elevation everywhere.
+  bool loadGround(const std::string& terrainDir, std::string* error = nullptr) { return ground_.load(terrainDir, error); }
+  // The ground's height above the first airport's field at a point of the flat world.
+  double groundAt(double northM, double eastM) const;
+  // On an airport's flattened runway area (the runway, 1000 m beyond its ends, 600 m aside).
+  bool onAirportGround(double northM, double eastM) const;
   void setControls(const A320Controls& c);
   void fcuCommand(A320FcuCommand cmd);
   void setFcuTargets(double spdKt, double hdgMagDeg, double altFt, double vsFpm);
@@ -139,6 +147,15 @@ class Simulation {
   bool impact_ = false;  // this step's ground contact is a crash
   double impactFpm_ = 0.0;
   double groundHeightM_ = 0.0;
+  double groundSetM_ = 1e9;  // what the flight model's ground was last set to
+
+  // Where the scenery is flattened to an airport's level: each runway's length plus 1000 m at
+  // both ends, 600 m to the sides (as tools/make_terrain.py).
+  struct FlatBox {
+    double midN, midE, dirN, dirE, halfLengthM, levelM;
+  };
+  std::vector<FlatBox> flatBoxes_;
+  GroundMap ground_;
 };
 
 }  // namespace a320

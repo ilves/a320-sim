@@ -336,6 +336,10 @@ A320_API int a320_reset(A320Sim* sim, A320Scenario scenario, int runwayIndex);
  * is set up for the trip, the MCDU flight plan as flightPlan (A320FlightPlan) says. */
 A320_API int a320_start_flight(A320Sim* sim, A320Scenario scenario, int depRunway, int arrRunway, double distanceNm,
                                int flightPlan);
+/* The terrain for the flight model: terrainDir holds ground.txt and ground.i16 (Content/Terrain).
+ * a320_create already loads it from jsbsimRoot/../Terrain when it is there. Without it the
+ * ground is the nearest airport's elevation everywhere. 1 if loaded. */
+A320_API int a320_load_ground(A320Sim* sim, const char* terrainDir);
 A320_API int a320_airport_count(const A320Sim* sim);
 A320_API int a320_get_airport(const A320Sim* sim, int index, A320AirportInfo* info);
 A320_API void a320_set_controls(A320Sim* sim, const A320Controls* controls);

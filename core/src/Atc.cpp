@@ -16,18 +16,37 @@ struct Station {
   const char* name;    // written, as in the log
   const char* spoken;  // as ATC says it
   bool afis;           // an AFIS officer informs and relays, but gives no clearances
+  bool traffic;        // no ATS at all: pilots announce themselves, nobody answers
 };
-// EETN AD 2.18 (Tower also gives the IFR clearance, AD 2.20) and EEKE AD 2.18. Tallinn Radar
-// serves the whole route; EEKE IFR clearances come from it through the AFIS.
-const Station kStations[] = {{124880, "TALLINN INFORMATION", "Tallinn Information", false},
-                             {135905, "TALLINN TOWER", "Tallinn Tower", false},
-                             {127905, "TALLINN RADAR", "Tallinn Radar", false},
-                             {131905, "TALLINN HANDLING", "Tallinn Handling", false},
-                             {118055, "KURESSAARE INFORMATION", "Kuressaare Information", true}};
-constexpr int kAtis = 0, kTower = 1, kRadar = 2, kHandling = 3, kKuressaare = 4;
+// AD 2.18 of each airport (eAIP, AIRAC 2026-10-01). Tallinn Tower also gives the IFR clearance
+// (EETN AD 2.20); Tallinn Radar serves the whole country and relays clearances through the AFIS
+// units, or gives them itself where there is no ATS (Kihnu). Names: written in ASCII for the log,
+// spoken in UTF-8 for the voice.
+const Station kStations[] = {
+    {124880, "TALLINN INFORMATION", "Tallinn Information", false, false},
+    {135905, "TALLINN TOWER", "Tallinn Tower", false, false},
+    {127905, "TALLINN RADAR", "Tallinn Radar", false, false},
+    {131905, "TALLINN HANDLING", "Tallinn Handling", false, false},
+    {118055, "KURESSAARE INFORMATION", "Kuressaare Information", true, false},
+    {133905, "TARTU INFORMATION", "Tartu Information", true, false},
+    {123130, "TARTU INFORMATION", "Tartu Information", false, false},  // ATIS
+    {135305, "PARNU INFORMATION", "P\xC3\xA4rnu Information", true, false},
+    {133405, "KARDLA INFORMATION", "K\xC3\xA4rdla Information", true, false},
+    {118055, "RUHNU RADIO", "Ruhnu Radio", true, false},
+    {135305, "KIHNU TRAFFIC", "Kihnu Traffic", false, true}};
+constexpr int kAtis = 0, kTower = 1, kRadar = 2, kHandling = 3, kKuressaare = 4, kTartu = 5, kTartuAtis = 6,
+              kParnu = 7, kKardla = 8, kRuhnu = 9, kKihnu = 10;
 
-int towerOf(const Airport& a) { return a.icao == "EEKE" ? kKuressaare : kTower; }
-int atisOf(const Airport& a) { return a.icao == "EETN" ? kAtis : -1; }
+int towerOf(const Airport& a) {
+  if (a.icao == "EEKE") return kKuressaare;
+  if (a.icao == "EETU") return kTartu;
+  if (a.icao == "EEPU") return kParnu;
+  if (a.icao == "EEKA") return kKardla;
+  if (a.icao == "EERU") return kRuhnu;
+  if (a.icao == "EEKU") return kKihnu;
+  return kTower;
+}
+int atisOf(const Airport& a) { return a.icao == "EETN" ? kAtis : a.icao == "EETU" ? kTartuAtis : -1; }
 int groundOf(const Airport& a) { return a.icao == "EETN" ? kHandling : -1; }
 
 constexpr int kInitialAltFt = 4000;
@@ -146,6 +165,9 @@ Atc::Words Atc::cs(const AtcContext& ctx) const {
 }
 
 std::string Atc::stationName(int khz) const {
+  // Some frequencies are shared (Kuressaare and Ruhnu, P\xC3\xA4rnu and Kihnu): this flight's first.
+  for (const int i : {clearanceStation_, depStation_, arrStation_, kRadar})
+    if (kStations[i].khz == khz) return kStations[i].name;
   for (const Station& s : kStations)
     if (s.khz == khz) return s.name;
   return "";
@@ -165,6 +187,7 @@ void Atc::reset(const World& world, A320Scenario scenario, int depRunway, int ar
   const Airport& dep = world.airports[static_cast<size_t>(depAirport)];
   const Airport& arr = world.airports[static_cast<size_t>(arrAirport)];
   depStation_ = towerOf(dep);
+  clearanceStation_ = kStations[depStation_].traffic ? kRadar : depStation_;
   arrStation_ = towerOf(arr);
   groundStation_ = groundOf(arr);
   const bool onGround = scenario == A320_SCENARIO_RUNWAY || scenario == A320_SCENARIO_COLD_DARK;
@@ -188,8 +211,8 @@ void Atc::reset(const World& world, A320Scenario scenario, int depRunway, int ar
     phase_ = A320_ATC_PHASE_CLEARANCE;
     // No ATIS: the AFIS gives runway, wind and QNH with the clearance.
     atisHeard_ = atisStation_ < 0;
-    controls.com1ActiveKhz = kStations[depStation_].khz;
-    controls.com1StandbyKhz = kStations[atisStation_ >= 0 ? atisStation_ : kRadar].khz;
+    controls.com1ActiveKhz = kStations[clearanceStation_].khz;
+    controls.com1StandbyKhz = kStations[atisStation_ >= 0 ? atisStation_ : (clearanceStation_ == kRadar ? depStation_ : kRadar)].khz;
     controls.xpdrCode = 2000;
     controls.xpdrMode = A320_XPDR_STBY;
   } else if (scenario == A320_SCENARIO_APPROACH) {
@@ -301,8 +324,9 @@ void Atc::update(const AtcContext& ctx) {
       const std::string letter(1, atisLetter_);
       char time[8];
       std::snprintf(time, sizeof(time), "%04d", atisTime_);
-      w.add("This is Tallinn Information, information " + letter + ", time " + time + ".",
-            "This is Tallinn Information, information " + spell(letter) + ", time " + spell(time) + ".");
+      const std::string atisName = kStations[atisStation_].spoken;
+      w.add("This is " + atisName + ", information " + letter + ", time " + time + ".",
+            "This is " + atisName + ", information " + spell(letter) + ", time " + spell(time) + ".");
       w.add("Runway in use " + rwy + ". Expect ILS approach.", "Runway in use " + spell(rwy) + ". Expect I L S approach.");
       w.add("Transition level 60.", "Transition level " + spell("60") + ".");
       w.add("Wind calm. Visibility 10 kilometres or more, no significant cloud.",
@@ -351,7 +375,10 @@ void Atc::update(const AtcContext& ctx) {
   // Takeoff without a takeoff clearance, landing without a landing clearance.
   if (s.onGround && !takeoffCleared_ && s.iasKt > 40.0 && !noTakeoffHinted_ && phase_ <= A320_ATC_PHASE_DEPARTURE) {
     noTakeoffHinted_ = true;
-    if (kStations[depStation_].afis)
+    if (kStations[depStation_].traffic)
+      hint_ = std::string("No ATS here: announce your departure on ") + kStations[depStation_].spoken + " " +
+              freqText(kStations[depStation_].khz) + " before taking off.";
+    else if (kStations[depStation_].afis)
       hint_ = std::string("ATC: report \"ready for departure\" to ") + kStations[depStation_].spoken +
               " and wait for \"runway free\" before taking off.";
     else
@@ -361,7 +388,10 @@ void Atc::update(const AtcContext& ctx) {
   if (!s.onGround && takeoffCleared_ && !landingCleared_ && s.radioAltFt < 500.0 && s.verticalSpeedFpm < -200.0 &&
       (phase_ == A320_ATC_PHASE_APPROACH || phase_ == A320_ATC_PHASE_TOWER) && !noLandingHinted_) {
     noLandingHinted_ = true;
-    if (kStations[arrStation_].afis)
+    if (kStations[arrStation_].traffic)
+      hint_ = std::string("No ATS here: announce your final on ") + kStations[arrStation_].spoken + " " +
+              freqText(kStations[arrStation_].khz) + ", and look for other traffic.";
+    else if (kStations[arrStation_].afis)
       hint_ = std::string("ATC: no runway report from ") + kStations[arrStation_].spoken +
               " yet. Below 500 ft without knowing the runway is free, go around (TOGA). Call in time.";
     else
@@ -371,7 +401,11 @@ void Atc::update(const AtcContext& ctx) {
   switch (phase_) {
     case A320_ATC_PHASE_DEPARTURE:
       // After the thrust reduction, once the crew has the gear, autopilot and thrust done.
-      if (!s.onGround && s.radioAltFt > 1600.0 && s.verticalSpeedFpm > 0.0) {
+      if (!s.onGround && s.radioAltFt > 1600.0 && s.verticalSpeedFpm > 0.0 && kStations[depStation_].traffic) {
+        // Nobody to hand over: the crew calls Radar itself.
+        phase_ = A320_ATC_PHASE_RADAR;
+        hint_ = "Airborne: contact Tallinn Radar " + freqText(kStations[kRadar].khz) + " and check in.";
+      } else if (!s.onGround && s.radioAltFt > 1600.0 && s.verticalSpeedFpm > 0.0) {
         Instruction in;
         in.kind = Kind::ContactRadar;
         in.station = depStation_;
@@ -435,8 +469,21 @@ void Atc::update(const AtcContext& ctx) {
         in.kind = Kind::ContactTower;
         in.station = kRadar;
         in.freqKhz = arr.khz;
-        in.body.add("contact " + spoken + " " + freqText(in.freqKhz), "contact " + spoken + " " + freqSpeech(in.freqKhz));
         const Words me = cs(ctx);
+        if (arr.traffic) {
+          // No ATS to hand over to: Radar lets the crew go.
+          in.body.add("radar service terminated, frequency change approved");
+          Reply ok;
+          ok.words.add("Frequency change approved").add(", " + me.text, ", " + me.speech);
+          in.replies = {ok};
+          phase_ = A320_ATC_PHASE_TOWER;
+          issue(in, ctx, 1.0);
+          hint_ = std::string("No ATS at the destination: tune ") + spoken + " " + freqText(arr.khz) +
+                  " and announce your final yourself.";
+          monitor(ctx);
+          break;
+        }
+        in.body.add("contact " + spoken + " " + freqText(in.freqKhz), "contact " + spoken + " " + freqSpeech(in.freqKhz));
         Reply ok, wrongFreq;
         ok.words.add(shortName + " " + freqText(in.freqKhz), shortName + " " + freqSpeech(in.freqKhz));
         wrongFreq.words.add(shortName + " " + freqText(confusable(in.freqKhz)), shortName + " " + freqSpeech(confusable(in.freqKhz)));
@@ -453,6 +500,10 @@ void Atc::update(const AtcContext& ctx) {
       if (s.onGround && s.groundSpeedKt < 40.0) phase_ = A320_ATC_PHASE_LANDED;
       break;
     case A320_ATC_PHASE_LANDED: {
+      if (kStations[arrStation_].traffic) {
+        phase_ = A320_ATC_PHASE_DONE;  // nobody to talk to
+        break;
+      }
       Instruction in;
       in.kind = Kind::Vacate;
       in.station = arrStation_;
@@ -725,10 +776,13 @@ std::vector<Atc::Option> Atc::buildOptions(const AtcContext& ctx) const {
   if (awaiting_ || !pending_.empty()) return out;
 
   const std::string letter(1, atisLetter_);
-  if (phase_ == A320_ATC_PHASE_CLEARANCE && s.onGround && on(depStation_)) {
+  if (phase_ == A320_ATC_PHASE_CLEARANCE && s.onGround && on(clearanceStation_)) {
     Option o;
-    o.words.add(depName + ",", depName + ",").add(me.text + ", A320 at runway " + depRwy,
-                                                  me.speech + ", A three twenty at runway " + spell(depRwy));
+    const std::string callName = kStations[clearanceStation_].spoken;
+    // Calling Radar from another airport: say which one.
+    const std::string at = clearanceStation_ == kRadar ? " at " + ctx.world.airportOf(depRunway_).city : "";
+    o.words.add(callName + ",", callName + ",").add(me.text + ", A320" + at + " runway " + depRwy,
+                                                    me.speech + ", A three twenty" + at + " runway " + spell(depRwy));
     if (atisHeard_ && atisStation_ >= 0) o.words.add("with information " + letter, "with information " + spell(letter));
     o.words.add(", request IFR clearance to " + destCity, ", request I F R clearance to " + destCity);
     o.request = Request::Clearance;
@@ -736,7 +790,10 @@ std::vector<Atc::Option> Atc::buildOptions(const AtcContext& ctx) const {
   }
   if (phase_ == A320_ATC_PHASE_DEPARTURE && s.onGround && on(depStation_) && !takeoffCleared_) {
     Option o;
-    o.words.add(me.text + ", ready for departure runway " + depRwy, me.speech + ", ready for departure runway " + spell(depRwy));
+    if (kStations[depStation_].traffic)
+      o.words.add(depName + ", " + me.text + ", departing runway " + depRwy, depName + ", " + me.speech + ", departing runway " + spell(depRwy));
+    else
+      o.words.add(me.text + ", ready for departure runway " + depRwy, me.speech + ", ready for departure runway " + spell(depRwy));
     o.request = Request::Ready;
     out.push_back(o);
   }
@@ -756,7 +813,7 @@ std::vector<Atc::Option> Atc::buildOptions(const AtcContext& ctx) const {
   }
   if (phase_ == A320_ATC_PHASE_TOWER && !checkedInTower_ && on(arrStation_)) {
     Option o;
-    if (arr.ils.ident.empty())
+    if (arr.ils.ident.empty() || kStations[arrStation_].traffic)
       o.words.add(arrName + ", " + me.text + ", on final runway " + rwy, arrName + ", " + me.speech + ", on final runway " + spell(rwy));
     else
       o.words.add(arrName + ", " + me.text + ", established ILS runway " + rwy,
@@ -830,7 +887,12 @@ void Atc::readbackDone(const Instruction& in, const AtcContext& ctx) {
       altSetAt_ = t;
       phase_ = A320_ATC_PHASE_DEPARTURE;
       Words w = cs(ctx);
-      w.add(", readback correct, report ready for departure");
+      if (kStations[depStation_].traffic) {
+        const std::string trafficName = kStations[depStation_].spoken;
+        w.add(", readback correct, departure at your discretion, announce it on " + trafficName + ", call me airborne");
+      } else {
+        w.add(", readback correct, report ready for departure");
+      }
       say(in.station, w, 1.2, ctx);
       break;
     }
@@ -881,7 +943,7 @@ void Atc::request(const Option& o, const AtcContext& ctx) {
       const std::string by = dep.afis ? "Tallinn Radar clears you to " + city + " via radar vectors" : route;
       Instruction in;
       in.kind = Kind::Clearance;
-      in.station = depStation_;
+      in.station = clearanceStation_;
       in.altFt = kInitialAltFt;
       const std::string code = fmt("%04d", squawk_);
       in.body.add(by + ", after departure runway heading, climb " + altText(kInitialAltFt) + ", squawk " + code,
@@ -900,7 +962,9 @@ void Atc::request(const Option& o, const AtcContext& ctx) {
       wrongCode.why = "Wrong squawk: the code is " + code + ".";
       for (Reply* r : {&ok, &wrongAlt, &wrongCode}) r->words.add(", " + me.text, ", " + me.speech);
       in.replies = {ok, wrongAlt, wrongCode};
-      if (atisStation_ < 0) {
+      if (clearanceStation_ == kRadar) {
+        issue(in, ctx, delay, "QNH 1013", "Q N H one zero one three");  // no ATS there to give the runway
+      } else if (atisStation_ < 0) {
         issue(in, ctx, delay, "runway in use " + depRwy + ", wind calm, QNH 1013",
               "runway in use " + spell(depRwy) + ", wind calm, Q N H one zero one three");
       } else if (!atisHeard_) {
@@ -916,6 +980,14 @@ void Atc::request(const Option& o, const AtcContext& ctx) {
       break;
     }
     case Request::Ready: {
+      if (dep.traffic) {
+        // A broadcast to whoever is around: nobody answers.
+        takeoffCleared_ = ifrCleared_;
+        if (!ifrCleared_)
+          hint_ = "IFR flights need a clearance before departure: get it from Tallinn Radar " +
+                  freqText(kStations[kRadar].khz) + " first.";
+        break;
+      }
       if (!ifrCleared_) {
         Words w = me;
         w.add(", negative, you have no IFR clearance yet. Request your clearance first.");
@@ -955,6 +1027,10 @@ void Atc::request(const Option& o, const AtcContext& ctx) {
       break;
     case Request::CheckInTower: {
       checkedInTower_ = true;
+      if (arrSt.traffic) {
+        landingCleared_ = true;  // announced; the decision to land is the crew's
+        break;
+      }
       Instruction in;
       in.kind = Kind::Landing;
       in.station = arrStation_;

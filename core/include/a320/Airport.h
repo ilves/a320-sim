@@ -46,6 +46,13 @@ struct Airport {
 Airport makeTallinn();
 // Kuressaare (EEKE), runway 17/35, ILS 17, from the Estonian eAIP, EEKE AD 2.12 and 2.19.
 Airport makeKuressaare();
+// The other public airports (eAIP AD 2): Tartu (EETU, ILS 26), Parnu (EEPU), Kardla (EEKA),
+// and the grass strips of Ruhnu (EERU) and Kihnu (EEKU).
+Airport makeTartu();
+Airport makeParnu();
+Airport makeKardla();
+Airport makeRuhnu();
+Airport makeKihnu();
 
 // Every airport of the sim. The flat world (what the front end renders, the aircraft's north and
 // east metres) is the first airport's tangent plane; runways are listed together, each knowing
@@ -56,14 +63,16 @@ struct World {
   GeoPos reference;
 
   const Airport& airportOf(int runway) const { return airports[static_cast<size_t>(runways[static_cast<size_t>(runway)].airport)]; }
-  int findRunway(const std::string& ident) const;  // -1 if none
+  int findRunway(const std::string& ident) const;  // the first with that ident, -1 if none
+  int findRunway(int airport, const std::string& ident) const;
+  int findAirport(const std::string& icao) const;
   // The airport closest to a point of the flat world (metres north/east).
   int nearestAirport(double northM, double eastM) const;
   std::vector<double> airportNorthM, airportEastM;  // reference points in the flat world
 };
 
 World makeWorld(std::vector<Airport> airports);
-World makeEstonia();  // EETN, EEKE
+World makeEstonia();  // EETN, EEKE, EETU, EEPU, EEKA, EERU, EEKU (the order is the API's airport index)
 
 struct RunwayPoint {
   double x = 0.0;  // metres along the landing course from the threshold (negative = on approach)

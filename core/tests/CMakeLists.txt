@@ -2,7 +2,7 @@ set(A320_DATA_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../unreal/A320Sim/Content/JSBS
 
 set(A320_SOUNDS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../unreal/A320Sim/Content/Sounds")
 
-add_executable(a320_unit_tests test_main.cpp test_geometry.cpp test_systems.cpp test_audio.cpp test_joystick.cpp test_wingflex.cpp)
+add_executable(a320_unit_tests test_main.cpp test_geometry.cpp test_worldmap.cpp test_systems.cpp test_audio.cpp test_joystick.cpp test_wingflex.cpp)
 target_link_libraries(a320_unit_tests PRIVATE a320core_static libJSBSim)
 target_compile_options(a320_unit_tests PRIVATE ${A320_WARNINGS})
 target_compile_definitions(a320_unit_tests PRIVATE A320_SOUNDS_DIR="${A320_SOUNDS_DIR}")

@@ -14,11 +14,15 @@ namespace {
 
 constexpr double kDt = 1.0 / 120.0;
 
-int runwayIndex(A320Sim* sim, const char* ident) {
+// "26" (the first: Tallinn's) or "EETU:26".
+int runwayIndex(A320Sim* sim, const char* name) {
+  const char* colon = std::strchr(name, ':');
+  const std::string icao = colon ? std::string(name, colon) : "";
+  const char* ident = colon ? colon + 1 : name;
   for (int i = 0; i < a320_runway_count(sim); ++i) {
     A320RunwayInfo info;
     a320_get_runway(sim, i, &info);
-    if (std::strcmp(info.ident, ident) == 0) return i;
+    if (std::strcmp(info.ident, ident) == 0 && (icao.empty() || icao == info.icao)) return i;
   }
   return -1;
 }
@@ -377,5 +381,45 @@ TEST(atc_approach_scenario_clears_the_ils) {
   c.com1ActiveKhz = 124880;
   run(sim, c, 30.0, radio);
   CHECK(std::strstr(state(sim).hint, "127.905") != nullptr);
+  a320_destroy(sim);
+}
+
+// Kihnu has no ATS: the IFR clearance comes from Tallinn Radar, the departure is announced on
+// Kihnu Traffic and nobody answers.
+TEST(atc_departure_from_kihnu_without_ats) {
+  char err[256] = {0};
+  A320Sim* sim = a320_create(A320_DATA_DIR, err, sizeof(err));
+  if (!sim) { CHECK(false); return; }
+  a320_start_flight(sim, A320_SCENARIO_RUNWAY, runwayIndex(sim, "EEKU:22"), runwayIndex(sim, "EETU:26"), 0.0, A320_PLAN_FULL);
+  A320Controls c;
+  a320_get_controls(sim, &c);
+  CHECK(c.com1ActiveKhz == 127905 && c.com1StandbyKhz == 135305);
+  Radio radio;
+  run(sim, c, 1.0, radio);
+  CHECK(std::strcmp(status(sim).station, "TALLINN RADAR") == 0);
+  A320AtcStatus st = status(sim);
+  const int ask = findOption(st, "request IFR clearance to Tartu");
+  CHECK(ask >= 0 && std::strstr(st.options[ask], "at Kihnu") != nullptr);
+  a320_atc_choose(sim, ask);
+  run(sim, c, 12.0, radio);
+  CHECK(radio.said("cleared to Tartu via radar vectors"));
+  st = status(sim);
+  const char* sq = std::strstr(radio.lastAtc.c_str(), "squawk ");
+  const std::string code = sq ? std::string(sq + 7, 4) : "";
+  int ok = -1;
+  for (int k = 0; k < st.optionCount; ++k)
+    if (std::strstr(st.options[k], "4000 feet") && std::strstr(st.options[k], ("squawk " + code).c_str())) ok = k;
+  a320_atc_choose(sim, ok);
+  run(sim, c, 10.0, radio);
+  CHECK(radio.said("announce it on Kihnu Traffic"));
+  // Over to Kihnu Traffic: the departure call is a broadcast.
+  std::swap(c.com1ActiveKhz, c.com1StandbyKhz);
+  run(sim, c, 1.0, radio);
+  CHECK(std::strcmp(status(sim).station, "KIHNU TRAFFIC") == 0);
+  const uint32_t before = state(sim).atcMessageSeq;
+  a320_atc_choose(sim, findOption(status(sim), "departing runway 22"));
+  run(sim, c, 10.0, radio);
+  CHECK(radio.said("Kihnu Traffic, SIM320, departing runway 22"));
+  CHECK(state(sim).atcTakeoffCleared && state(sim).atcMessageSeq == before + 1);  // no answer
   a320_destroy(sim);
 }

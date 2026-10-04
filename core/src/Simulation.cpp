@@ -36,7 +36,34 @@ constexpr double kElevatorToThs = 1.5 / 3.5;
 
 Simulation::Simulation(World world) : world_(std::move(world)), frame_(world_.reference) {
   for (const Airport& a : world_.airports) airportFrames_.emplace_back(a.reference);
-  for (const Runway& r : world_.runways) ilsAll_.emplace_back(airportFrames_[static_cast<size_t>(r.airport)], r);
+  for (const Runway& r : world_.runways) {
+    ilsAll_.emplace_back(airportFrames_[static_cast<size_t>(r.airport)], r);
+    const Enu a = frame_.toEnu(r.start), b = frame_.toEnu(r.end);
+    const double len = std::hypot(b.n - a.n, b.e - a.e);
+    const Airport& ap = world_.airports[static_cast<size_t>(r.airport)];
+    flatBoxes_.push_back({(a.n + b.n) / 2.0, (a.e + b.e) / 2.0, (b.n - a.n) / len, (b.e - a.e) / len, len / 2.0 + 1000.0,
+                          ap.reference.altM - world_.reference.altM});
+  }
+}
+
+bool Simulation::onAirportGround(double northM, double eastM) const {
+  for (const FlatBox& b : flatBoxes_) {
+    const double dn = northM - b.midN, de = eastM - b.midE;
+    if (std::fabs(dn * b.dirN + de * b.dirE) <= b.halfLengthM && std::fabs(-dn * b.dirE + de * b.dirN) <= 600.0) return true;
+  }
+  return false;
+}
+
+double Simulation::groundAt(double northM, double eastM) const {
+  for (const FlatBox& b : flatBoxes_) {
+    const double dn = northM - b.midN, de = eastM - b.midE;
+    if (std::fabs(dn * b.dirN + de * b.dirE) <= b.halfLengthM && std::fabs(-dn * b.dirE + de * b.dirN) <= 600.0)
+      return b.levelM;  // exactly the runway's level, as the scenery is flattened
+  }
+  double h = 0.0;
+  if (ground_.height(northM, eastM, h)) return h;
+  const int a = world_.nearestAirport(northM, eastM);
+  return world_.airports[static_cast<size_t>(a)].reference.altM - world_.reference.altM;
 }
 
 Simulation::~Simulation() = default;
@@ -84,6 +111,7 @@ bool Simulation::startFlight(A320Scenario scenario, int depRunway, int arrRunway
   nearestAirport_ = rw.airport;
 
   destroyed_ = A320_DESTROYED_NONE;
+  groundSetM_ = 1e9;
   impact_ = false;
   impactFpm_ = 0.0;
   pieces_[0] = pieces_[1] = Piece{};
@@ -527,8 +555,7 @@ void Simulation::breakUp() {
 void Simulation::crash() {
   const A320State& s = state_;
   destroyed_ = A320_DESTROYED_CRASH;
-  ++destroyedSeq_;
-  impactFpm_ = s.verticalSpeedFpm;
+  ++destroyedSeq_;  // impactFpm_: the closure rate, set where the impact was found
   for (Piece& p : pieces_) {
     p = Piece{};
     p.n = s.northM;
@@ -539,7 +566,7 @@ void Simulation::crash() {
     p.bank = s.bankDeg;
     p.onGround = true;
   }
-  hint("Crash: the ground impact was too hard. Start a new flight (F11, or F5).");
+  hint("Crash: the aircraft hit the ground. Start a new flight (F11, or F5).");
   fillDestroyed(state_);
 }
 
@@ -559,8 +586,9 @@ void Simulation::updatePieces(double dt) {
     p.bank = std::remainder(p.bank + p.bankRate * dt, 360.0);
     p.hdg = std::fmod(p.hdg + p.hdgRate * dt + 360.0, 360.0);
     // The CG rests a fuselage radius above the ground.
-    if (p.u <= groundHeightM_ + 2.0) {
-      p.u = groundHeightM_ + 2.0;
+    const double ground = groundAt(p.n, p.e);
+    if (p.u <= ground + 2.0) {
+      p.u = ground + 2.0;
       p.vn = p.ve = p.vu = 0.0;
       p.pitch = std::clamp(p.pitch, -25.0, 10.0);
       p.bank = std::clamp(p.bank, -20.0, 20.0);
@@ -719,13 +747,14 @@ void Simulation::refreshState() {
   s.northM = enu.n;
   s.eastM = enu.e;
   s.heightAboveFieldM = s.altitudeFt * kFtToM - world_.reference.altM;
-  // The flight model's ground is the nearest airport's field elevation (the terrain beyond is
-  // visual only), so the radio altimeter and touchdowns are right at every airport.
+  // The flight model's ground is the terrain under the aircraft (the ground map; runways at their
+  // exact level), so the radio altimeter, touchdowns and crashes follow the real ground.
   {
-    const int nearest = world_.nearestAirport(enu.n, enu.e);
-    if (nearest != nearestAirport_) {
-      nearestAirport_ = nearest;
-      fdm_->GetInertial()->SetTerrainElevation(world_.airports[static_cast<size_t>(nearest)].reference.altM * kMToFt);
+    nearestAirport_ = world_.nearestAirport(enu.n, enu.e);
+    groundHeightM_ = groundAt(enu.n, enu.e);
+    if (std::fabs(groundHeightM_ - groundSetM_) > 0.01) {
+      groundSetM_ = groundHeightM_;
+      fdm_->GetInertial()->SetTerrainElevation((groundHeightM_ + world_.reference.altM) * kMToFt);
     }
   }
   s.magneticVariationDeg = magVar();
@@ -760,7 +789,6 @@ void Simulation::refreshState() {
     s.velEastMps = vnMps * sinC + veMps * cosC;
     s.velUpMps = prop("velocities/h-dot-fps") * kFtToM;
   }
-  groundHeightM_ = world_.airports[static_cast<size_t>(nearestAirport_)].reference.altM - world_.reference.altM;
   s.groundHeightM = groundHeightM_;
   s.flightPathDeg = prop("flight-path/gamma-deg");
   s.iasKt = std::fmax(prop("velocities/vc-kts"), 0.0);
@@ -936,15 +964,26 @@ void Simulation::refreshState() {
     ++s.calloutSeq;
   }
 
-  // A crash: the first ground contact far too hard, a wing tip or the nose first, or the
-  // fuselage on the ground (the gear up, or collapsed by the impact).
+  // A crash: the first ground contact far too hard (closing on the ground, which may be rising
+  // under the aircraft), a wing tip or the nose first, at speed anywhere but an airport's runway
+  // area (fields, forest, water, a hillside), or the fuselage on the ground (the gear up, or the
+  // aircraft flown into rising terrain).
   {
     const bool contact = s.onGround && !wasOnGround_;
-    const bool bodyContact = prop("position/h-agl-ft") < 0.4 * kRadioAltOffsetFt;
+    // The flight model touches the ground only with its wheels: the engines hang 7.2 ft below the
+    // reference point, the belly 6.5 ft; with the gear down a hard landing compresses the struts
+    // to about 6.5 ft, so lower than 5.5 ft is the fuselage.
+    const bool bodyContact = prop("position/h-agl-ft") < (s.gearPos < 0.5 ? 7.2 : 5.5);
+    // The ground's own climb rate along the track, half a second ahead.
+    const double aheadN = enu.n + s.velNorthMps * 0.5, aheadE = enu.e + s.velEastMps * 0.5;
+    const double groundRateFpm = (groundAt(aheadN, aheadE) - groundHeightM_) / 0.5 * 60.0 / kFtToM;
+    const double closureFpm = s.verticalSpeedFpm - std::max(groundRateFpm, 0.0);
+    const bool offAirportFast = !onAirportGround(enu.n, enu.e) && s.groundSpeedKt > 60.0;
     impact_ = destroyed_ == A320_DESTROYED_NONE && airborneS_ > 0.0 &&
-              ((contact && (s.verticalSpeedFpm <= -A320_CRASH_SINK_FPM || std::fabs(s.bankDeg) >= 25.0 ||
-                            s.pitchDeg <= -10.0)) ||
+              ((contact && (closureFpm <= -A320_CRASH_SINK_FPM || std::fabs(s.bankDeg) >= 25.0 || s.pitchDeg <= -10.0 ||
+                            offAirportFast)) ||
                bodyContact);
+    if (impact_) impactFpm_ = closureFpm;
   }
   airborneS_ = s.onGround ? 0.0 : airborneS_ + clock_.stepS();
   // A skip of a few feet after touchdown is the same landing, not a new one.

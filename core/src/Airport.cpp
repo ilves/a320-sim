@@ -27,6 +27,29 @@ GeoPos alongRunway(const LocalFrame& f, const GeoPos& from, const GeoPos& to, do
   return p;
 }
 
+constexpr double dms(double d, double m, double s) { return d + m / 60.0 + s / 3600.0; }
+
+Runway makeDirection(const LocalFrame& f, const RunwayEndData& near, const RunwayEndData& far, double widthM);
+
+// An airport with one runway (two directions), from the eAIP (AD 2.2, AD 2.12, AIRAC 2026-10-01).
+// The reference point is at runway level: the flight model's ground there, and what the scenery
+// flattens the runway to.
+Airport oneRunway(const char* icao, const char* name, const char* city, double refLat, double refLon, double levelFt,
+                  double magVar, const RunwayEndData& a, const RunwayEndData& b, double widthM) {
+  Airport ap;
+  ap.icao = icao;
+  ap.name = name;
+  ap.city = city;
+  ap.reference = {refLat, refLon, levelFt * kFtToM};
+  ap.magneticVariationDeg = magVar;
+  const LocalFrame f(ap.reference);
+  ap.runways.push_back(makeDirection(f, a, b, widthM));
+  ap.runways.push_back(makeDirection(f, b, a, widthM));
+  // No ILS unless set: the course is still the runway's, for the MCDU and ATC.
+  for (Runway& r : ap.runways) r.ils = {"", 0.0, std::round(r.trueCourseDeg - magVar), 3.0, 50.0, 300.0};
+  return ap;
+}
+
 Runway makeDirection(const LocalFrame& f, const RunwayEndData& near, const RunwayEndData& far,
                      double widthM) {
   Runway r;
@@ -95,6 +118,43 @@ Airport makeKuressaare() {
   return a;
 }
 
+Airport makeTartu() {
+  const RunwayEndData e08{"08", dms(58, 18, 25.87), dms(26, 40, 17.26), 210.0, 0.0};
+  const RunwayEndData e26{"26", dms(58, 18, 27.47), dms(26, 42, 7.76), 193.0, 0.0};
+  Airport a = oneRunway("EETU", "Tartu", "Tartu", dms(58, 18, 27), dms(26, 41, 13), 202.0, 12.0, e08, e26, 31.0);
+  // ILS 26 (AD 2.19): IUM 108.50, course 257; the glide path 271 m past the threshold (47 ft
+  // crossing height), the localizer 461 m past the far end.
+  a.runways[1].ils = {"IUM", 108.50, 257.0, 3.0, 47.0, 461.0};
+  return a;
+}
+
+// Names are UTF-8 (explicit bytes, whatever the compiler's execution character set).
+Airport makeParnu() {
+  const RunwayEndData e03{"03", dms(58, 24, 48.66), dms(24, 27, 56.45), 29.0, 0.0};
+  const RunwayEndData e21{"21", dms(58, 25, 40.63), dms(24, 29, 6.58), 47.0, 0.0};
+  return oneRunway("EEPU", "P\xC3\xA4rnu", "P\xC3\xA4rnu", dms(58, 25, 8), dms(24, 28, 22), 38.0, 9.0, e03, e21, 30.0);
+}
+
+Airport makeKardla() {
+  // Runway 32's threshold is displaced 240 m (786 ft) from the runway end.
+  const RunwayEndData e14{"14", dms(58, 59, 47.53), dms(22, 49, 25.47), 12.0, 0.0};
+  const RunwayEndData e32{"32", dms(58, 59, 6.16), dms(22, 50, 16.78), 15.0, 786.0};
+  return oneRunway("EEKA", "K\xC3\xA4rdla", "K\xC3\xA4rdla", dms(58, 59, 27), dms(22, 49, 51), 14.0, 9.0, e14, e32, 30.0);
+}
+
+Airport makeRuhnu() {
+  // 600 m of reinforced grass: far too short for an A320, but it is there.
+  const RunwayEndData e13{"13", dms(57, 47, 16.1), dms(23, 15, 32.9), 9.0, 0.0};
+  const RunwayEndData e31{"31", dms(57, 47, 0.8), dms(23, 15, 55.6), 10.0, 0.0};
+  return oneRunway("EERU", "Ruhnu", "Ruhnu", dms(57, 47, 8), dms(23, 15, 44), 10.0, 10.0, e13, e31, 20.0);
+}
+
+Airport makeKihnu() {
+  const RunwayEndData e04{"04", dms(58, 8, 46.87), dms(23, 59, 41.22), 10.0, 0.0};
+  const RunwayEndData e22{"22", dms(58, 8, 59.44), dms(24, 0, 9.15), 9.0, 0.0};
+  return oneRunway("EEKU", "Kihnu", "Kihnu", dms(58, 8, 54), dms(24, 0, 9), 10.0, 7.0, e04, e22, 20.0);
+}
+
 int World::findRunway(const std::string& ident) const {
   for (size_t i = 0; i < runways.size(); ++i)
     if (runways[i].ident == ident) return static_cast<int>(i);
@@ -131,7 +191,21 @@ World makeWorld(std::vector<Airport> airports) {
   return w;
 }
 
-World makeEstonia() { return makeWorld({makeTallinn(), makeKuressaare()}); }
+World makeEstonia() {
+  return makeWorld({makeTallinn(), makeKuressaare(), makeTartu(), makeParnu(), makeKardla(), makeRuhnu(), makeKihnu()});
+}
+
+int World::findRunway(int airport, const std::string& ident) const {
+  for (size_t i = 0; i < runways.size(); ++i)
+    if (runways[i].airport == airport && runways[i].ident == ident) return static_cast<int>(i);
+  return -1;
+}
+
+int World::findAirport(const std::string& icao) const {
+  for (size_t i = 0; i < airports.size(); ++i)
+    if (airports[i].icao == icao) return static_cast<int>(i);
+  return -1;
+}
 
 RunwayAxes::RunwayAxes(const LocalFrame& frame, const Runway& runway)
     : threshold_(frame.toEnu(runway.threshold)) {

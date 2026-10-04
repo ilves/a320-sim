@@ -102,6 +102,7 @@ class Atc {
   int depRunway_ = 0;       // runway in use for departure
   int runway_ = 0;          // arrival runway, the one vectored to
   int depStation_ = 1, arrStation_ = 1, atisStation_ = -1, groundStation_ = -1;
+  int clearanceStation_ = 1;  // the departure's Tower or AFIS; Tallinn Radar where there is no ATS
   bool longRoute_ = false;  // to another airport: a climb to the cruise level, a descent later
   int squawk_ = 2000;
   char atisLetter_ = 'A';

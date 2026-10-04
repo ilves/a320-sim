@@ -34,6 +34,8 @@ A320Sim* a320_create(const char* jsbsimRoot, char* error, int errorSize) {
       delete handle;
       return nullptr;
     }
+    // The terrain next to the flight data (Content/Terrain beside Content/JSBSim), if it is there.
+    if (jsbsimRoot) handle->sim.loadGround(std::string(jsbsimRoot) + "/../Terrain");
     return handle;
   } catch (const std::exception& e) {
     copyError(e.what(), error, errorSize);
@@ -64,6 +66,11 @@ int a320_start_flight(A320Sim* sim, A320Scenario scenario, int depRunway, int ar
   } catch (...) {
     return 0;
   }
+}
+
+int a320_load_ground(A320Sim* sim, const char* terrainDir) {
+  if (!sim || !terrainDir) return 0;
+  return sim->sim.loadGround(terrainDir) ? 1 : 0;
 }
 
 int a320_airport_count(const A320Sim* sim) { return sim ? static_cast<int>(sim->sim.world().airports.size()) : 0; }

@@ -36,11 +36,15 @@ struct Flight {
       std::printf("  a320_create failed: %s\n", err);
       return;
     }
+    // "26" (the first: Tallinn's) or "EETU:26".
+    const char* colon = std::strchr(runway, ':');
+    const std::string icao = colon ? std::string(runway, colon) : "";
+    const char* ident = colon ? colon + 1 : runway;
     int idx = 0;
     for (int i = 0; i < a320_runway_count(sim); ++i) {
       A320RunwayInfo info;
       a320_get_runway(sim, i, &info);
-      if (std::strcmp(info.ident, runway) == 0) idx = i;
+      if (std::strcmp(info.ident, ident) == 0 && (icao.empty() || icao == info.icao)) { idx = i; break; }
     }
     a320_reset(sim, scenario, idx);
     a320_get_state(sim, &s);
@@ -332,13 +336,16 @@ TEST(ils_landing_at_kuressaare_17) {
   if (!f.sim) { CHECK(false); return; }
   f.fly(3.0, [] { return true; });
   A320AirportInfo eeke;
-  CHECK(a320_airport_count(f.sim) == 2 && a320_get_airport(f.sim, 1, &eeke) && std::strcmp(eeke.icao, "EEKE") == 0);
+  CHECK(a320_airport_count(f.sim) == 7 && a320_get_airport(f.sim, 1, &eeke) && std::strcmp(eeke.icao, "EEKE") == 0);
   std::printf("  on runway 17: nearest %d, RA %.1f ft, height above Tallinn's field %.1f m (EEKE %.1f m)\n",
               f.s.nearestAirport, f.s.radioAltFt, f.s.heightAboveFieldM, eeke.elevationM);
   CHECK(f.s.nearestAirport == 1 && f.s.onGround && f.s.radioAltFt < 3.0);
   CHECK(std::fabs(f.s.heightAboveFieldM - eeke.elevationM) < 6.0);
   CHECK(std::fabs(std::remainder(f.s.gridHeadingDeg - f.s.headingTrueDeg, 360.0)) > 1.0);
 }
+
+// Tartu: 202 ft up, its ILS 26 (IUM) with a 461 m localizer offset and 12 E variation.
+TEST(ils_landing_at_tartu_26) { flyIlsLanding(A320_SCENARIO_FINAL_10NM, nullptr, "EETU:26"); }
 
 TEST(ils_approach_and_landing_from_10nm) {
   flyIlsLanding(A320_SCENARIO_FINAL_10NM);
@@ -352,7 +359,7 @@ TEST(overspeed_breaks_the_aircraft_in_two) {
   for (int i = 0; i < a320_runway_count(f.sim); ++i) {
     A320RunwayInfo info;
     a320_get_runway(f.sim, i, &info);
-    if (std::strcmp(info.ident, "26") == 0) r26 = i;
+    if (std::strcmp(info.ident, "26") == 0 && std::strcmp(info.icao, "EETN") == 0) r26 = i;
   }
   a320_start_flight(f.sim, A320_SCENARIO_APPROACH, r26, r26, 80.0, A320_PLAN_FULL);  // FL200
   a320_get_state(f.sim, &f.s);
@@ -411,4 +418,64 @@ TEST(hard_impact_is_a_crash) {
   const double n = f.s.northM, e = f.s.eastM;
   f.fly(5.0, [] { return true; });
   CHECK(f.s.destroyed == A320_DESTROYED_CRASH && f.s.northM == n && f.s.eastM == e && f.s.warnings == 0);
+}
+
+// Landing in a field short of the runway, gently: not a runway, so at that speed it is a crash.
+TEST(touchdown_off_the_airport_is_a_crash) {
+  Flight f(A320_SCENARIO_FINAL_10NM);
+  if (!f.sim) { CHECK(false); return; }
+  f.fly(400.0, [&] {
+    if (f.s.destroyed || f.s.onGround) return false;
+    // A shallow 4.5 degree path: down to the ground about 3 NM short of the threshold.
+    const double fpaCmd = f.s.radioAltFt > 40.0 ? -4.5 : -1.0;
+    f.c.stickPitch = clampd(0.25 * (fpaCmd - f.s.flightPathDeg), -0.4, 0.4);
+    f.c.thrustLever = clampd(0.3 + 0.03 * (150.0 - f.s.iasKt), 0.0, 0.9);
+    return true;
+  });
+  std::printf("  down %.1f NM out, %.0f fpm closing, %.0f kt: destroyed %d\n", f.s.dmeNm, f.s.impactFpm, f.s.groundSpeedKt,
+              f.s.destroyed);
+  CHECK(f.s.destroyed == A320_DESTROYED_CRASH);
+  CHECK(f.s.impactFpm > -A320_CRASH_SINK_FPM);  // a gentle touchdown: the place made it a crash
+}
+
+// The real terrain under the flight model: the radio altimeter over Estonia's highest hill, and
+// flying level into it is a crash.
+TEST(terrain_under_the_flight_model) {
+  Flight f(A320_SCENARIO_APPROACH);
+  if (!f.sim) { CHECK(false); return; }
+  int r = 0;
+  for (int i = 0; i < a320_runway_count(f.sim); ++i) {
+    A320RunwayInfo info;
+    a320_get_runway(f.sim, i, &info);
+    if (std::strcmp(info.icao, "EETU") == 0 && std::strcmp(info.ident, "26") == 0) r = i;
+  }
+  // 80 NM east of Tartu's runway 26 lies Russia; 40 NM out at FL090 is over the hills of
+  // south-east Estonia's edge: check the radio altimeter against the ground map there.
+  a320_start_flight(f.sim, A320_SCENARIO_APPROACH, r, r, 40.0, A320_PLAN_FULL);
+  a320_get_state(f.sim, &f.s);
+  a320_get_controls(f.sim, &f.c);
+  f.fly(1.0, [] { return true; });
+  const double groundFt = f.s.groundHeightM / 0.3048;
+  std::printf("  40 NM east of EETU: ground %.0f m above Tallinn's field, RA %.0f ft, altitude %.0f ft\n", f.s.groundHeightM,
+              f.s.radioAltFt, f.s.altitudeFt);
+  if (std::fabs(f.s.groundHeightM) < 1e-6) {
+    std::printf("  no ground map (Content/Terrain/ground.*): skipped\n");
+    return;
+  }
+  CHECK(std::fabs(f.s.altitudeFt - (f.s.radioAltFt + 8.4 + groundFt + 131.0)) < 60.0);
+  // Down to the ground at full thrust, level: flying into the terrain is a crash, whatever the
+  // sink rate.
+  a320_fcu_command(f.sim, A320_FCU_AP1);
+  f.fly(400.0, [&] {
+    if (f.s.destroyed) return false;
+    if (std::getenv("A320_TRACE") && std::fmod(f.s.simTimeS, 5.0) < kDt)
+      std::printf("    t %.0f alt %.0f RA %.0f gnd %.1f onGnd %d gs %.0f vs %.0f\n", f.s.simTimeS, f.s.altitudeFt, f.s.radioAltFt,
+                  f.s.groundHeightM, f.s.onGround, f.s.groundSpeedKt, f.s.verticalSpeedFpm);
+    const double fpa = f.s.radioAltFt > 150.0 ? -6.0 : 0.0;
+    f.c.stickPitch = clampd(0.2 * (fpa - f.s.flightPathDeg), -0.5, 0.5);
+    f.c.thrustLever = clampd(0.3 + 0.03 * (250.0 - f.s.iasKt), 0.0, 0.9);
+    return true;
+  });
+  std::printf("  destroyed %d at RA %.0f ft, ground %.0f m\n", f.s.destroyed, f.s.radioAltFt, f.s.groundHeightM);
+  CHECK(f.s.destroyed == A320_DESTROYED_CRASH);
 }
