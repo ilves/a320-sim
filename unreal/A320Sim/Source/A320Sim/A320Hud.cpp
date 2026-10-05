@@ -176,6 +176,7 @@ void AA320Hud::DrawHUD()
 {
 	Super::DrawHUD();
 	Buttons.Reset();
+	MapBlockers.Reset();
 	Levers.Reset();
 	TargetBoxes.Reset();
 	PanelBoxes.Reset();
@@ -189,6 +190,21 @@ void AA320Hud::DrawHUD()
 	if (!Aircraft)
 	{
 		DrawLoadingStatus(nullptr);
+		return;
+	}
+
+	if (Aircraft->IsSimReady() && Aircraft->IsSetupVisible())
+	{
+		// The setup screen covers the cockpit; the sim waits paused behind it.
+		DrawSetup(*Aircraft);
+		const AA320PlayerController* SetupPC = Cast<AA320PlayerController>(PC);
+		if (SetupPC && SetupPC->IsJoystickPanelVisible())
+		{
+			DrawJoystickPanel(*SetupPC);
+			MapArea = FBox2D(ForceInit);  // the map under the panel takes no clicks
+		}
+		DrawConfirm(*Aircraft);
+		DrawLoadingStatus(Aircraft);
 		return;
 	}
 
@@ -269,18 +285,15 @@ void AA320Hud::DrawHUD()
 	{
 		DrawGuideMenu();  // modal: on top of everything, and its clicks win
 	}
-	if (Aircraft->IsSimReady() && Aircraft->IsFlightMenuVisible())
+	if (Aircraft->IsSimReady() && Aircraft->IsMapWindowVisible())
 	{
-		DrawFlightMenu(*Aircraft);  // modal too
-	}
-	if (Aircraft->IsSimReady() && Aircraft->IsMapVisible())
-	{
-		DrawMap(*Aircraft);  // over everything but the top bar
+		DrawMap(*Aircraft, FBox2D(ForceInit), false);  // over everything but the top bar
 	}
 	else
 	{
 		MapArea = FBox2D(ForceInit);
 	}
+	DrawConfirm(*Aircraft);
 	DrawLoadingStatus(Aircraft);
 }
 
@@ -1028,7 +1041,7 @@ void AA320Hud::DrawOverlays(const AA320Aircraft& Aircraft)
 		Fill(BoxX, BoxY, BoxW, BoxH, FLinearColor(0.0f, 0.0f, 0.0f, 0.6f));
 		Frame(BoxX, BoxY, BoxW, BoxH, Red, 2.0);
 		Text(What, W / 2.0, BoxY + 32.0 * Scale, Red, 2, 1);
-		Text(TEXT("F11 new flight    F5 line up again    C view"), W / 2.0, BoxY + 70.0 * Scale, White, 1, 1);
+		Text(TEXT("Esc flight setup    F5 line up again    C view"), W / 2.0, BoxY + 70.0 * Scale, White, 1, 1);
 	}
 	if (St.simRate > 1.0)
 	{
@@ -1053,7 +1066,7 @@ void AA320Hud::DrawHelp()
 		TEXT("ILS on PFD     L (LS button)             ND range  , and ."),
 		TEXT("Pause          P                         Sim rate  ="),
 		TEXT("View           C cockpit / outside,  right mouse drag to look, middle click to reset"),
-		TEXT("Flight         F11 (or FLIGHT, top right): departure and arrival airport and runway, cold and dark, in the air, distance"),
+		TEXT("Flight setup   Esc or F11 (or SETUP, top right): ends the flight; the setup screen chooses the next (map, start, weather)"),
 		TEXT("Scenarios      F5 lined up,  Shift+F5 cold and dark,  F4 in the air,  F6 10 NM final,  F7 4 NM final,  F9 other runway direction"),
 		TEXT("Cockpit        drag the thrust, flaps and speedbrake levers;  click switches;  O overhead panel"),
 		TEXT("Joystick       F2 (or JOYSTICK, top right): pick axes with LEARN; trigger = AP disconnect, hat = look"),
@@ -1066,7 +1079,7 @@ void AA320Hud::DrawHelp()
 		TEXT("Sound          - (minus) on/off,  M silence master warning"),
 		TEXT("Takeoff        N (release brake), Home (TOGA), rotate ~150 kt with Down arrow, G at positive climb"),
 		TEXT("Landing        Vapp = VLS + 5 (amber strip), keep diamonds centred, flare ~30 ft, End at RETARD"),
-		TEXT("Quit           Esc (standalone game; first closes the FLIGHT menu or the MCDU)"),
+		TEXT("Quit           Esc on the setup screen (in flight Esc first closes the map or the MCDU)"),
 	};
 	const double LineH = 24.0 * Scale;
 	const int32 NumLines = UE_ARRAY_COUNT(Lines);
@@ -1536,8 +1549,8 @@ void AA320Hud::DrawSimBar(const AA320Aircraft& Aircraft)
 		{Aircraft.IsSoundOn() ? TEXT("SOUND ON") : TEXT("SOUND OFF"), EA320Command::SoundToggle, !Aircraft.IsSoundOn()},
 		{TEXT("HELP"), EA320Command::HelpToggle, Aircraft.IsHelpVisible()},
 		{TEXT("LESSONS"), EA320Command::GuideMenu, Aircraft.IsGuideMenuVisible() || Aircraft.GetGuideStatus().active != 0},
-		{TEXT("FLIGHT"), EA320Command::FlightMenu, Aircraft.IsFlightMenuVisible()},
-		{TEXT("MAP"), EA320Command::MapToggle, Aircraft.IsMapVisible()},
+		{TEXT("SETUP"), EA320Command::FlightMenu, false},
+		{TEXT("MAP"), EA320Command::MapToggle, Aircraft.IsMapWindowVisible()},
 		{TEXT("LINE UP"), EA320Command::ResetRunway, false},
 		{TEXT("APPROACH"), EA320Command::ResetApproach, false},
 	};
@@ -2560,10 +2573,59 @@ namespace
 	}
 }
 
-void AA320Hud::DrawFlightMenu(const AA320Aircraft& Aircraft)
+void AA320Hud::DrawSetup(const AA320Aircraft& Aircraft)
 {
 	const double W = Canvas->ClipX, H = Canvas->ClipY;
 	Scale = FMath::Max(H / 1080.0, 0.6);
+	Fill(0.0, 0.0, W, H, FLinearColor(0.035f, 0.04f, 0.05f));
+	Buttons.Add({FBox2D(FVector2D(0.0, 0.0), FVector2D(W, H)), EA320Command::None});  // nothing behind it is clicked
+	// Top bar: the name, then QUIT, CONTROLS and FLY at the right.
+	const double BarH = 56.0 * Scale, Gap = 10.0 * Scale;
+	Text(TEXT("A320 SIM"), 20.0 * Scale, BarH / 2.0, White, 2, 0);
+	Text(TEXT("FLIGHT SETUP  -  choose the flight on the map or at the right, then FLY"), 170.0 * Scale, BarH / 2.0, Cyan, 1, 0);
+	const double FlyW = 220.0 * Scale, BW = 160.0 * Scale, BH = 38.0 * Scale, BY = (BarH - BH) / 2.0;
+	double BX = W - 20.0 * Scale - FlyW;
+	AddButton(BX, BY, FlyW, BH, TEXT("FLY  (Enter)"), EA320Command::FlightGo, true);
+	BX -= Gap + BW;
+	AddButton(BX, BY, BW, BH, TEXT("CONTROLS (F2)"), EA320Command::JoystickPanel, false);
+	BX -= Gap + BW;
+	AddButton(BX, BY, BW, BH, TEXT("QUIT (Esc)"), EA320Command::QuitAsk, false);
+	// The map at the left, the flight's options at the right.
+	const double Top = BarH + Gap, Bottom = H - Gap;
+	const double OptW = FMath::Min(W * 0.42, 860.0 * Scale);
+	DrawMap(Aircraft, FBox2D(FVector2D(Gap, Top), FVector2D(W - OptW - 2.0 * Gap, Bottom)), true);
+	DrawFlightOptions(Aircraft, W - OptW - Gap, Top, OptW, Bottom - Top);
+}
+
+void AA320Hud::DrawConfirm(const AA320Aircraft& Aircraft)
+{
+	const EA320Confirm What = Aircraft.GetConfirm();
+	if (What == EA320Confirm::None)
+	{
+		return;
+	}
+	const double W = Canvas->ClipX, H = Canvas->ClipY;
+	Scale = FMath::Max(H / 1080.0, 0.6);
+	MapArea = FBox2D(ForceInit);  // the map under the dialog takes no clicks
+	Fill(0.0, 0.0, W, H, FLinearColor(0.0f, 0.0f, 0.0f, 0.55f));
+	Buttons.Add({FBox2D(FVector2D(0.0, 0.0), FVector2D(W, H)), EA320Command::None});
+	const bool bLeave = What == EA320Confirm::LeaveFlight;
+	const double DW = 640.0 * Scale, DH = 200.0 * Scale, DX = (W - DW) / 2.0, DY = (H - DH) / 2.0;
+	Fill(DX, DY, DW, DH, FLinearColor(0.06f, 0.07f, 0.08f, 0.98f));
+	Frame(DX, DY, DW, DH, FLinearColor(0.5f, 0.52f, 0.55f), 2.0);
+	Text(bLeave ? TEXT("END THIS FLIGHT?") : TEXT("QUIT A320 SIM?"), DX + DW / 2.0, DY + 40.0 * Scale, White, 2, 1);
+	Text(bLeave ? TEXT("The flight ends here and the flight setup opens: map, flight and weather.")
+				: TEXT("The simulator closes."),
+		DX + DW / 2.0, DY + 85.0 * Scale, Grey, 0, 1);
+	const double BW = 260.0 * Scale, BH = 44.0 * Scale, BY = DY + DH - BH - 24.0 * Scale;
+	AddButton(DX + DW / 2.0 - BW - 10.0 * Scale, BY, BW, BH, bLeave ? TEXT("YES, TO SETUP (Enter)") : TEXT("QUIT (Enter)"),
+		EA320Command::ConfirmYes, true);
+	AddButton(DX + DW / 2.0 + 10.0 * Scale, BY, BW, BH, bLeave ? TEXT("KEEP FLYING (Esc)") : TEXT("STAY (Esc)"),
+		EA320Command::ConfirmNo, false);
+}
+
+void AA320Hud::DrawFlightOptions(const AA320Aircraft& Aircraft, double PX, double PY, double PW, double PH)
+{
 	const TArray<A320RunwayInfo>& Runways = Aircraft.GetRunways();
 	const TArray<A320AirportInfo>& Airports = Aircraft.GetAirports();
 	const int32 Dep = Aircraft.GetDepRunway(), Arr = Aircraft.GetArrRunway();
@@ -2576,19 +2638,14 @@ void AA320Hud::DrawFlightMenu(const AA320Aircraft& Aircraft)
 	const int32 Distance = Aircraft.GetFlightDistanceNm();
 	const int32 Lessons = FMath::Min(a320_guide_count(), 4);
 
-	const double PW = FMath::Min(W * 0.66, 1150.0 * Scale), PX = (W - PW) / 2.0, PY = H * 0.06;
 	const double Pad = 18.0 * Scale, BH = 34.0 * Scale, Gap = 8.0 * Scale, LabelW = 120.0 * Scale;
-	const double PH = FMath::Min(H * 0.92, 810.0 * Scale);
 	Fill(PX, PY, PW, PH, FLinearColor(0.06f, 0.07f, 0.08f, 0.97f));
-	Buttons.Add({FBox2D(FVector2D(PX, PY), FVector2D(PX + PW, PY + PH)), EA320Command::None});  // swallows clicks
 	Frame(PX, PY, PW, PH, FLinearColor(0.5f, 0.52f, 0.55f), 2.0);
 	Text(TEXT("FLIGHT"), PX + Pad, PY + 26.0 * Scale, White, 1, 0);
-	AddButton(PX + PW - 46.0 * Scale, PY + 10.0 * Scale, 36.0 * Scale, 30.0 * Scale, TEXT("X"), EA320Command::FlightMenu, false);
 	double CY = PY + 50.0 * Scale;
-	CY += TextWrapped(TEXT("Where you depart and land, and how the flight starts. All optional: FLY starts what is selected, "
-		"X keeps the current flight. F11 opens this menu again."), PX + Pad, CY, PW - 2.0 * Pad, Grey, 0) + Gap;
+	CY += TextWrapped(TEXT("Where you depart and land (here, or click an airport or a town on the map), how the flight starts, "
+		"the flight plan and the weather. FLY starts it; in flight Esc brings you back here."), PX + Pad, CY, PW - 2.0 * Pad, Grey, 0) + Gap;
 
-	AddButton(PX + PW - 230.0 * Scale, PY + 10.0 * Scale, 170.0 * Scale, 30.0 * Scale, TEXT("CHOOSE ON MAP (F12)"), EA320Command::MapToggle, false);
 	// Per end of the trip: the airports by ICAO code, then the selected one's runways.
 	const FA320Destination& Place = Aircraft.GetPlaceDestination();
 	auto AirportRows = [&](const TCHAR* Label, int32 Selected, EA320Command AirportCommand, EA320Command RunwayCommand, bool bUsed,
@@ -2599,7 +2656,7 @@ void AA320Hud::DrawFlightMenu(const AA320Aircraft& Aircraft)
 		double BX = PX + Pad + LabelW;
 		for (int32 a = 0; a < Airports.Num(); ++a)
 		{
-			const double BW = 86.0 * Scale;
+			const double BW = FMath::Min(86.0 * Scale, (PW - 2.0 * Pad - LabelW) / Airports.Num() - Gap);
 			AddButton(BX, CY, BW, BH, UTF8_TO_TCHAR(Airports[a].icao), AirportCommand, bUsed && !bPlace && a == SelectedAirport, a);
 			BX += BW + Gap;
 		}
@@ -2658,7 +2715,7 @@ void AA320Hud::DrawFlightMenu(const AA320Aircraft& Aircraft)
 		AddButton(BX, CY, 90.0 * Scale, BH, FString::Printf(TEXT("%d NM"), Nm), EA320Command::FlightDistance, bDistance && Nm == Distance, Nm);
 		BX += 90.0 * Scale + Gap;
 	}
-	Text(TEXT("from the arrival runway, for IN THE AIR"), BX + Gap, CY + BH / 2.0, Grey, 0, 0);
+	Text(TEXT("out, IN THE AIR"), BX + Gap, CY + BH / 2.0, Grey, 0, 0);
 	CY += BH + Gap;
 	const bool bPlan = Aircraft.GetFlightPlan() != A320_PLAN_EMPTY;
 	Text(TEXT("MCDU"), PX + Pad, CY + BH / 2.0, White, 1, 0);
@@ -2669,7 +2726,7 @@ void AA320Hud::DrawFlightMenu(const AA320Aircraft& Aircraft)
 	// The weather and the time of day apply at once, in flight too.
 	Text(TEXT("WEATHER"), PX + Pad, CY + BH / 2.0, White, 1, 0);
 	BX = PX + Pad + LabelW;
-	const double WxW = 105.0 * Scale;
+	const double WxW = FMath::Min(105.0 * Scale, (PW - 2.0 * Pad - LabelW - 9.0 * Gap) / (A320_WEATHER_COUNT + 2));
 	for (int32 Wx = 0; Wx < A320_WEATHER_COUNT; ++Wx)
 	{
 		A320WeatherInfo Info;
@@ -2795,7 +2852,8 @@ bool AA320Hud::IsMapCommand(EA320Command Command)
 
 bool AA320Hud::IsOverMap(const FVector2D& ScreenPos) const
 {
-	return MapArea.bIsValid && MapArea.IsInside(ScreenPos);
+	return MapArea.bIsValid && MapArea.IsInside(ScreenPos) &&
+		!MapBlockers.ContainsByPredicate([&ScreenPos](const FBox2D& B) { return B.IsInside(ScreenPos); });
 }
 
 FVector2D AA320Hud::MapToScreen(double NorthM, double EastM) const
@@ -3021,7 +3079,7 @@ UTexture2D* AA320Hud::MapTile(int32 Level, int32 Row, int32 Col, int32& LoadBudg
 	return Texture;
 }
 
-void AA320Hud::DrawMap(const AA320Aircraft& Aircraft)
+void AA320Hud::DrawMap(const AA320Aircraft& Aircraft, const FBox2D& Area, bool bSetup)
 {
 	const double W = Canvas->ClipX, H = Canvas->ClipY;
 	Scale = FMath::Max(H / 1080.0, 0.6);
@@ -3031,12 +3089,29 @@ void AA320Hud::DrawMap(const AA320Aircraft& Aircraft)
 	const TArray<A320RunwayInfo>& Runways = Aircraft.GetRunways();
 	const std::vector<a320::worldmap::Place>& Places = MapData->GetPlaces();
 
-	const double PX = 0.012 * W, PY = 46.0 * Scale, PW = W - 2.0 * PX, PH = H - PY - 0.015 * H;
-	const double SideW = FMath::Min(0.27 * W, 480.0 * Scale), Gap = 8.0 * Scale;
-	Fill(PX, PY, PW, PH, FLinearColor(0.05f, 0.06f, 0.07f, 0.98f));
-	Buttons.Add({FBox2D(FVector2D(PX, PY), FVector2D(PX + PW, PY + PH)), EA320Command::None});  // swallows clicks
-	Frame(PX, PY, PW, PH, FLinearColor(0.5f, 0.52f, 0.55f), 2.0);
-	const double MX = PX + Gap, MY = PY + Gap, MW = PW - SideW - 3.0 * Gap, MH = PH - 2.0 * Gap;
+	const double Gap = 8.0 * Scale;
+	double MX = 0.0, MY = 0.0, MW = 0.0, MH = 0.0, SideW = 0.0;
+	if (bSetup)
+	{
+		// The setup screen's map fills Area; the search and the selection sit on a card over its corner.
+		MX = Area.Min.X;
+		MY = Area.Min.Y;
+		MW = Area.Max.X - Area.Min.X;
+		MH = Area.Max.Y - Area.Min.Y;
+		SideW = FMath::Min(380.0 * Scale, MW * 0.45);
+	}
+	else
+	{
+		const double PX = 0.012 * W, PY = 46.0 * Scale, PW = W - 2.0 * PX, PH = H - PY - 0.015 * H;
+		SideW = FMath::Min(0.27 * W, 480.0 * Scale);
+		Fill(PX, PY, PW, PH, FLinearColor(0.05f, 0.06f, 0.07f, 0.98f));
+		Buttons.Add({FBox2D(FVector2D(PX, PY), FVector2D(PX + PW, PY + PH)), EA320Command::None});  // swallows clicks
+		Frame(PX, PY, PW, PH, FLinearColor(0.5f, 0.52f, 0.55f), 2.0);
+		MX = PX + Gap;
+		MY = PY + Gap;
+		MW = PW - SideW - 3.0 * Gap;
+		MH = PH - 2.0 * Gap;
+	}
 	MapArea = FBox2D(FVector2D(MX, MY), FVector2D(MX + MW, MY + MH));
 	Fill(MX, MY, MW, MH, FLinearColor(0.02f, 0.06f, 0.11f));  // open sea where there are no tiles
 
@@ -3227,13 +3302,26 @@ void AA320Hud::DrawMap(const AA320Aircraft& Aircraft)
 	}
 	Frame(MX, MY, MW, MH, Grey, 1.0);
 
-	// Side panel: search, the selection, the flight.
-	const double SX = MX + MW + 2.0 * Gap, SW = SideW;
-	double CY = MY;
-	Text(TEXT("WORLD MAP - ESTONIA"), SX, CY + 14.0 * Scale, White, 1, 0);
-	AddButton(SX + SW - 40.0 * Scale, CY, 36.0 * Scale, 30.0 * Scale, TEXT("X"), EA320Command::MapToggle, false);
-	CY += 40.0 * Scale;
+	// Side panel (a card on the setup screen's map): search, the selection, the flight.
 	const double BH = 30.0 * Scale;
+	const double SX = bSetup ? MX + 2.0 * Gap : MX + MW + 2.0 * Gap, SW = SideW;
+	double CY = bSetup ? MY + 2.0 * Gap : MY;
+	if (bSetup)
+	{
+		const double CardH = 40.0 * Scale + BH + Gap + MapResults.Num() * (BH * 0.9 + 3.0 * Scale) + Gap +
+			(MapSelected != -1 ? Gap + 48.0 * Scale + BH + 2.0 * Gap : 0.0);
+		const FBox2D Card(FVector2D(SX - Gap, CY - Gap), FVector2D(SX + SW + Gap, CY + CardH));
+		Fill(Card.Min.X, Card.Min.Y, Card.Max.X - Card.Min.X, Card.Max.Y - Card.Min.Y, FLinearColor(0.03f, 0.04f, 0.05f, 0.88f));
+		Buttons.Add({Card, EA320Command::None});
+		MapBlockers.Add(Card);
+		Text(TEXT("FIND A TOWN OR AIRPORT"), SX, CY + 14.0 * Scale, White, 1, 0);
+	}
+	else
+	{
+		Text(TEXT("WORLD MAP - ESTONIA"), SX, CY + 14.0 * Scale, White, 1, 0);
+		AddButton(SX + SW - 40.0 * Scale, CY, 36.0 * Scale, 30.0 * Scale, TEXT("X"), EA320Command::MapToggle, false);
+	}
+	CY += 40.0 * Scale;
 	const FString SearchLabel = MapSearch.IsEmpty() && !bMapSearchActive ? FString(TEXT("Search a town or airport..."))
 		: MapSearch + (bMapSearchActive && FMath::Fmod(GetWorld()->GetRealTimeSeconds(), 1.0) < 0.5 ? TEXT("_") : TEXT(""));
 	AddButton(SX, CY, SW, BH, TEXT(""), EA320Command::MapSearchFocus, bMapSearchActive);
@@ -3262,13 +3350,37 @@ void AA320Hud::DrawMap(const AA320Aircraft& Aircraft)
 		Text(FString::Printf(TEXT("%s%.0f NM from the aircraft"), bPoint ? TEXT("") : *FString::Printf(TEXT("%s, "), UTF8_TO_TCHAR(P->type.c_str())), FromAc),
 			SX, CY + 8.0 * Scale, Grey, 0, 0);
 		CY += 22.0 * Scale;
-		const double HalfW = (SW - Gap) / 2.0;
-		if (P && P->airport >= 0)
+		// Choosing the flight belongs to the setup screen; in flight the map only shows.
+		if (bSetup)
 		{
-			AddButton(SX, CY, HalfW, BH, TEXT("DEPART FROM HERE"), EA320Command::MapDeparture, Runways[Aircraft.GetDepRunway()].airport == P->airport, P->airport);
+			const double HalfW = (SW - Gap) / 2.0;
+			if (P && P->airport >= 0)
+			{
+				AddButton(SX, CY, HalfW, BH, TEXT("DEPART FROM HERE"), EA320Command::MapDeparture, Runways[Aircraft.GetDepRunway()].airport == P->airport, P->airport);
+			}
+			AddButton(SX + HalfW + Gap, CY, HalfW, BH, TEXT("FLY TO HERE"), EA320Command::MapDestination, false, bPoint ? -2 : MapSelected);
+			CY += BH + 2.0 * Gap;
 		}
-		AddButton(SX + HalfW + Gap, CY, HalfW, BH, TEXT("FLY TO HERE"), EA320Command::MapDestination, false, bPoint ? -2 : MapSelected);
-		CY += BH + 2.0 * Gap;
+	}
+	if (bSetup)
+	{
+		// Zoom at the map's bottom right, the data's sources at its bottom left.
+		const double ZW = 46.0 * Scale, ZY = MY + MH - BH - 2.0 * Gap;
+		const double ZX = MX + MW - 2.0 * Gap - 2.0 * (ZW + Gap) - 110.0 * Scale;
+		AddButton(ZX, ZY, ZW, BH, TEXT("+"), EA320Command::MapZoomIn, false);
+		AddButton(ZX + ZW + Gap, ZY, ZW, BH, TEXT("-"), EA320Command::MapZoomOut, false);
+		AddButton(ZX + 2.0 * (ZW + Gap), ZY, 110.0 * Scale, BH, TEXT("AIRCRAFT"), EA320Command::MapCentreAircraft, false);
+		const FString Sources = UTF8_TO_TCHAR(MapData->GetManifest().attribution.c_str());
+		if (!Sources.IsEmpty())
+		{
+			TextWrapped(Sources, MX + 2.0 * Gap, MY + MH - 46.0 * Scale, FMath::Max(ZX - MX - 6.0 * Gap, 100.0 * Scale),
+				FLinearColor(0.75f, 0.77f, 0.8f), 0);
+		}
+		else if (!MapData->HasTiles())
+		{
+			Text(TEXT("No map tiles found (Content/Map): run tools/make_map.py."), MX + 2.0 * Gap, MY + MH - 30.0 * Scale, Amber, 0, 0);
+		}
+		return;
 	}
 
 	// The flight as set up.
@@ -3290,14 +3402,9 @@ void AA320Hud::DrawMap(const AA320Aircraft& Aircraft)
 		const double TrueBrg = FMath::RadiansToDegrees(FMath::Atan2(DestE - DepAp.eastM, DestN - DepAp.northM));
 		const int32 MagBrg = (FMath::RoundToInt(TrueBrg - DepAp.magneticVariationDeg) % 360 + 360) % 360;
 		Text(FString::Printf(TEXT("%.0f NM, course %03d MAG"), Nm, MagBrg == 0 ? 360 : MagBrg), SX, CY + 8.0 * Scale, White, 0, 0);
-		CY += 20.0 * Scale;
-		AddButton(SX, CY, SW, BH * 0.9, TEXT("BACK TO A LOCAL FLIGHT"), EA320Command::MapClearDestination, false);
-		CY += BH + Gap;
+		CY += 20.0 * Scale + Gap;
 	}
 	const double ThirdW = (SW - 2.0 * Gap) / 3.0;
-	AddButton(SX, CY, ThirdW * 1.5, BH * 1.2, TEXT("FLY  (Enter)"), EA320Command::MapFly, true);
-	AddButton(SX + ThirdW * 1.5 + Gap, CY, SW - ThirdW * 1.5 - Gap, BH * 1.2, TEXT("FLIGHT OPTIONS"), EA320Command::FlightMenu, false);
-	CY += BH * 1.2 + 2.0 * Gap;
 	AddButton(SX, CY, ThirdW, BH, TEXT("+"), EA320Command::MapZoomIn, false);
 	AddButton(SX + ThirdW + Gap, CY, ThirdW, BH, TEXT("-"), EA320Command::MapZoomOut, false);
 	AddButton(SX + 2.0 * (ThirdW + Gap), CY, ThirdW, BH, TEXT("AIRCRAFT"), EA320Command::MapCentreAircraft, false);

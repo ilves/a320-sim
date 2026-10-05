@@ -527,9 +527,17 @@ void AA320PlayerController::PlayerTick(float DeltaTime)
 			++Reply;
 		}
 	}
+	// On the setup screen and while the dialog asks, the cockpit keys wait (F2 still opens the
+	// controls setup on the setup screen).
+	const bool bSetup = Aircraft->IsSetupVisible();
+	const bool bAsking = Aircraft->GetConfirm() != EA320Confirm::None;
 	for (const FKeyCommand& Binding : Bindings)
 	{
 		if ((bMcduTyping && IsMcduTypingKey(Binding.Key)) || (bMapTyping && IsMapTypingKey(Binding.Key)))
+		{
+			continue;
+		}
+		if (bAsking || (bSetup && Binding.Command != EA320Command::JoystickPanel))
 		{
 			continue;
 		}
@@ -551,26 +559,58 @@ void AA320PlayerController::PlayerTick(float DeltaTime)
 		}
 	}
 
-	if ((Aircraft->IsFlightMenuVisible() || (Aircraft->IsMapVisible() && !bMapTyping)) && WasInputKeyJustPressed(EKeys::Enter))
+	// Enter: yes to the dialog, or FLY on the setup screen. Esc: no to the dialog; in flight it
+	// closes the open window first, then asks to end the flight; on the setup screen it asks to quit.
+	const bool bEnter = WasInputKeyJustPressed(EKeys::Enter);
+	const bool bEscape = WasInputKeyJustPressed(EKeys::Escape);
+	if (bAsking)
 	{
-		Aircraft->ExecuteCommand(EA320Command::FlightGo, false);
+		if (bEnter || WasInputKeyJustPressed(EKeys::Y))
+		{
+			Aircraft->ExecuteCommand(EA320Command::ConfirmYes, false);
+		}
+		else if (bEscape || WasInputKeyJustPressed(EKeys::N))
+		{
+			Aircraft->ExecuteCommand(EA320Command::ConfirmNo, false);
+		}
 	}
-	if (WasInputKeyJustPressed(EKeys::Escape) && Aircraft->IsMapVisible())
+	else if (bSetup)
 	{
-		Aircraft->ExecuteCommand(EA320Command::MapToggle, false);  // Esc closes the map first
+		if (bEnter && !bMapTyping)
+		{
+			Aircraft->ExecuteCommand(EA320Command::FlightGo, false);
+		}
+		else if (bEscape && bJoystickPanel)
+		{
+			HandleJoystickCommand(EA320Command::JoystickPanel);
+		}
+		else if (bEscape)
+		{
+			Aircraft->ExecuteCommand(EA320Command::QuitAsk, false);
+		}
 	}
-	else if (WasInputKeyJustPressed(EKeys::Escape) && Aircraft->IsFlightMenuVisible())
+	else if (bEscape)
 	{
-		Aircraft->ExecuteCommand(EA320Command::FlightMenu, false);  // Esc closes the FLIGHT menu first
-	}
-	else if (WasInputKeyJustPressed(EKeys::Escape) && bMcduTyping)
-	{
-		Aircraft->ExecuteCommand(EA320Command::McduToggle, false);  // Esc closes the MCDU first
-	}
-	else if (WasInputKeyJustPressed(EKeys::Escape) && GetWorld()->WorldType == EWorldType::Game)
-	{
-		ConsoleCommand(TEXT("quit"));
-		return;
+		if (Aircraft->IsMapWindowVisible())
+		{
+			Aircraft->ExecuteCommand(EA320Command::MapToggle, false);
+		}
+		else if (bMcduTyping)
+		{
+			Aircraft->ExecuteCommand(EA320Command::McduToggle, false);
+		}
+		else if (Aircraft->IsGuideMenuVisible())
+		{
+			Aircraft->ExecuteCommand(EA320Command::GuideMenu, false);
+		}
+		else if (bJoystickPanel)
+		{
+			HandleJoystickCommand(EA320Command::JoystickPanel);
+		}
+		else
+		{
+			Aircraft->ExecuteCommand(EA320Command::FlightMenu, false);  // asks to end the flight
+		}
 	}
 
 	// Keyboard stick: a spring-loaded sidestick. Half deflection, full with Shift held.

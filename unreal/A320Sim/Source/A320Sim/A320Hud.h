@@ -76,7 +76,8 @@ private:
 	// First-start progress (shader/asset compilation) instead of a black screen; also logs
 	// progress lines and "READY" for the launcher window (scripts/play.ps1).
 	void DrawLoadingStatus(const AA320Aircraft* Aircraft);
-	void DrawMap(const AA320Aircraft& Aircraft);
+	// The world map: a window over the cockpit in flight, or the setup screen's map in Area.
+	void DrawMap(const AA320Aircraft& Aircraft, const FBox2D& Area, bool bSetup);
 	void EnsureMapData(const AA320Aircraft& Aircraft);
 	FVector2D MapToScreen(double NorthM, double EastM) const;
 	void ScreenToMap(const FVector2D& Screen, double& NorthM, double& EastM) const;
@@ -100,7 +101,11 @@ private:
 	void DrawGuideMenu();
 	void DrawGuide(const AA320Aircraft& Aircraft);
 	// The FLIGHT menu: departure and arrival runways, how the flight starts, and the lessons.
-	void DrawFlightMenu(const AA320Aircraft& Aircraft);
+	// Before every flight: the map, the flight's options and the weather, full screen.
+	void DrawSetup(const AA320Aircraft& Aircraft);
+	void DrawFlightOptions(const AA320Aircraft& Aircraft, double PX, double PY, double PW, double PH);
+	// "End this flight?" / "Quit?", over everything.
+	void DrawConfirm(const AA320Aircraft& Aircraft);
 	// A free space across the screen between this frame's windows over the band Top..Bottom: the
 	// left-most gap that fits MaxW, else the widest, at most MaxW wide. When even that is narrower
 	// than MinW, the overhead (YieldingBoxes) gives way; RADIO and MCDU never do.
@@ -159,6 +164,7 @@ private:
 	UPROPERTY() TMap<FString, TObjectPtr<UTexture2D>> MapTextures;
 	TArray<FString> MapTextureOrder;  // least recently used first
 	FBox2D MapArea = FBox2D(ForceInit);
+	TArray<FBox2D> MapBlockers;  // cards drawn over the map: not clicked through
 	double MapCentreN = 0.0, MapCentreE = 0.0, MapMetresPerPixel = 600.0;
 	bool bMapViewSet = false;
 	FString MapSearch;

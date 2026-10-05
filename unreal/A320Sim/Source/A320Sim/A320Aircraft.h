@@ -76,8 +76,11 @@ public:
 	double GetFieldElevationFt() const;
 	// The FLIGHT menu and the flight it sets up: departure and arrival (indices into GetRunways()),
 	// how the flight starts and, for a start in the air, how far out.
-	bool IsFlightMenuVisible() const { return bFlightMenu; }
-	bool IsMapVisible() const { return bMapVisible; }
+	// The flight setup screen (map, flight, weather) before every flight; the sim waits paused.
+	bool IsSetupVisible() const { return bSetup; }
+	bool IsMapVisible() const { return bMapVisible || bSetup; }
+	bool IsMapWindowVisible() const { return bMapVisible && !bSetup; }
+	EA320Confirm GetConfirm() const { return Confirm; }
 	// From the world map: depart from an airport (its best runway), fly to an airport or to a place.
 	void SetDepartureAirport(int32 Airport);
 	void SetArrivalAirport(int32 Airport);
@@ -162,7 +165,12 @@ private:
 	int32 Weather = A320_WEATHER_SUNNY;
 	bool bNight = false;
 	void ApplyWeather();
-	bool bFlightMenu = true;  // shown at start; closing it keeps the default flight
+	bool bSetup = true;  // shown at start, and after a flight ended with Esc
+	EA320Confirm Confirm = EA320Confirm::None;
+	bool bPausedBeforeConfirm = false;
+	void EnterSetup();
+	void LeaveSetup();  // FLY: the flight as set up
+	void AskConfirm(EA320Confirm What);
 	bool bMapVisible = false;
 	FA320Destination PlaceDestination;
 	bool bLessonStart = false;  // ResetScenario for a lesson: its own flight plan

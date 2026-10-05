@@ -2,7 +2,7 @@
 
 Fly an Airbus A320 out of and back into Tallinn (EETN), or between Tallinn and Kuressaare (EEKE):
 take off, fly a circuit or the route, intercept the ILS and land, from a glass cockpit with a
-working PFD, ND and E/WD. A FLIGHT menu at start picks the airports and how the flight starts.
+working PFD, ND and E/WD. A flight setup screen before every flight picks the airports, the start and the weather on a map.
 
 - **Flight model:** [JSBSim](https://github.com/JSBSim-Team/jsbsim) (open source, used by
   FlightGear) with its A320 model, plus a simplified Airbus **Normal Law** fly-by-wire.
@@ -153,7 +153,7 @@ Other scripts:
 | ND range | , and . | |
 | Pause / sim rate | P / = | Start |
 | Cockpit ↔ outside view | C; right-drag to look around, middle-click to reset | Back |
-| Flight menu | F11: departure and arrival, cold and dark / lined up / in the air, distance, lessons | |
+| Flight setup | Esc (or F11, SETUP): asks, then ends the flight and opens the setup screen | |
 | World map | F12: wheel to zoom, drag to move, click to select, type to search, Enter to fly | |
 | Scenarios | F5 lined up, Shift+F5 cold and dark, F4 in the air, F6 10 NM final, F7 4 NM final, F9 other runway direction | |
 | Lessons | F3 | |
@@ -169,7 +169,7 @@ Other scripts:
 | Joystick setup | F2 | |
 | Cold and dark | Shift + F5 | |
 | Help overlay | H or F1 | |
-| Quit | Esc (standalone game) | |
+| Quit | Esc on the setup screen, then Enter (QUIT) | |
 
 Every action is also on the cockpit panels, where you click switches and drag levers. The
 simulator functions (pause, views, scenarios, sound) are in the bar at the top right.
@@ -400,11 +400,17 @@ Your callsign is the MCDU's flight number (INIT page), or SIM320.
 
 ## Choosing a flight
 
-The FLIGHT menu opens at start (F11, or FLIGHT at the top right). Everything in it is optional:
-close it to fly the default, lined up on EETN 26.
+Every session starts on the **flight setup** screen, as in Microsoft Flight Simulator: the world
+map at the left, the flight at the right, FLY at the top. The sim waits behind it, paused.
+Everything is optional: FLY (or Enter) flies the default, lined up on EETN 26.
+- **In flight, Esc** first closes the map or the MCDU, then asks "END THIS FLIGHT?": Enter (or
+  YES) goes back to the setup screen, Esc (KEEP FLYING) carries on. F11 and SETUP at the top do
+  the same. The sim waits while it asks.
+- **On the setup screen, Esc** asks to quit (Enter quits, Esc stays). CONTROLS (F2) sets up the
+  joystick and the hardware panels.
 - **FROM and TO:** an airport (by its ICAO code) and a runway. The same airport is a local
   flight; another is a route (Tallinn to Tartu is 90 NM). The MCDU flight plan, the ILS and ATC
-  are set up for it. CHOOSE ON MAP opens the [world map](#world-map).
+  are set up for it. Or click it on the [map](#world-map).
 - **START:** cold and dark at the runway, lined up with engines running, in the air, or on final
   at 10 or 4 NM.
 - **DISTANCE:** for a start in the air: 10, 20, 40 or 80 NM from the arrival runway. Beyond 20 NM
@@ -415,7 +421,7 @@ close it to fly the default, lined up on EETN 26.
   ARRIVAL, PERF. In the air FROM/TO is always set; without the approach inserted no ILS is tuned.
 - **WEATHER:** SUNNY, CLOUDS (broken 2500-4500 ft), RAIN (overcast 1200-6000 ft, 4 km) or FOG
   (300 m in a 200 ft deep bank: the runway shows up on short final), and DAY or NIGHT. It
-  changes at once, in flight too, and stays for the next flights; the ATIS reports it.
+  is chosen on the setup screen and stays for the next flights; the ATIS reports it.
   - **Clouds** are a deck you can fly through: inside it the view closes in (white-out in the
     overcast), above it the sun is out.
   - **Rain** falls below the cloud base, runs over the windscreen in the cockpit view (up the
@@ -425,25 +431,24 @@ close it to fly the default, lined up on EETN 26.
 
 ## World map
 
-F12, or MAP at the top: Estonia from the satellite imagery, with the motorways and main roads,
-rivers, lakes and railways from OpenStreetMap; towns, villages, islands and lakes are labelled,
-more as you zoom in.
+On the setup screen, and in flight with F12 (or MAP at the top): Estonia from the satellite
+imagery, with the motorways and main roads, rivers, lakes and railways from OpenStreetMap; towns,
+villages, islands and lakes are labelled, more as you zoom in.
 - **Move and zoom:** drag with the left mouse button, the mouse wheel zooms at the cursor (or
   `+` / `-`); AIRCRAFT centres on your position (the yellow arrow).
 - **Search:** click the search box and type a town, village, island, lake, airport name or ICAO
   code (`parnu` finds Pärnu); Enter or a click on a result goes there.
-- **Select:** click an airport, a label or any point on the map.
+- **Select:** click an airport, a label or any point on the map. On the setup screen:
   - **DEPART FROM HERE** (airports): the flight starts there, on its ILS runway if it has one.
   - **FLY TO HERE:** an airport becomes the arrival, with ATC; a town or a map point makes a free
     flight without ATC (RADIO can switch it on) with the route on the map and on the ND.
-- **FLY** (or Enter) starts the flight as the FLIGHT menu is set (cold and dark, lined up, in the
-  air...); FLIGHT OPTIONS goes back to that menu.
+- In flight the map only shows: the route, the aircraft and the selection's distance.
 - The magenta line is the route, with its distance and magnetic course; you can fly anywhere,
   there are no borders.
 
 ## Route and NAV
 
-Choose a departure and an arrival airport (FLIGHT menu, map, or MCDU INIT FROM/TO with the
+Choose a departure and an arrival airport (the setup screen, or MCDU INIT FROM/TO with the
 departure and arrival runways) and the flight plan gets a route the autopilot can fly:
 - **Departure:** the runway, a climb on its track to 1500 ft above the field (`(1630)` at
   Tallinn), then direct to the airport's FRA departure point (Tallinn and Tartu have them, e.g.
@@ -489,7 +494,7 @@ departure and arrival runways) and the flight plan gets a route the autopilot ca
 - The view stays as it was (C still switches). From the seat you fall with the nose section and
   the instruments keep showing how it falls: altitude, vertical speed, airspeed, attitude and
   heading, with the engines winding down. The outside camera follows without tumbling.
-- A new flight (F11, or F5) puts everything back.
+- A new flight (Esc to the setup screen, or F5) puts everything back.
 
 380 kt is the A320's design dive speed (VD), the highest it is shown to survive. Normal flight
 stays below 350 kt (VMO, the overspeed warning); between the two the aircraft holds together. The

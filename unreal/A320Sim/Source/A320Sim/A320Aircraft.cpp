@@ -13,6 +13,7 @@
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/World.h"
+#include "GameFramework/PlayerController.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "HAL/PlatformTime.h"
 #include "Misc/Paths.h"
@@ -192,6 +193,7 @@ void AA320Aircraft::BeginPlay()
 	ApplyWeather();
 
 	ResetScenario(A320_SCENARIO_RUNWAY);
+	EnterSetup();  // every session starts on the flight setup screen
 	ApplyView();
 	StartAudio();
 	Voice = MakeShared<FA320Voice>();
@@ -660,10 +662,40 @@ void AA320Aircraft::ExecuteCommand(EA320Command Command, bool bLarge, int32 Para
 		ResetScenario(A320_SCENARIO_RUNWAY);
 		break;
 	case EA320Command::FlightMenu:
-		bFlightMenu = !bFlightMenu;
-		bMapVisible = bMapVisible && !bFlightMenu;
-		bGuideMenu = bGuideMenu && !bFlightMenu;
+		// In flight: end it and go back to the flight setup, once confirmed.
+		if (!bSetup)
+		{
+			AskConfirm(EA320Confirm::LeaveFlight);
+		}
 		break;
+	case EA320Command::QuitAsk: AskConfirm(EA320Confirm::Quit); break;
+	case EA320Command::ConfirmNo:
+		if (Confirm != EA320Confirm::None && Sim && !bSetup)
+		{
+			a320_set_paused(Sim, bPausedBeforeConfirm ? 1 : 0);
+			State.paused = bPausedBeforeConfirm ? 1 : 0;
+		}
+		Confirm = EA320Confirm::None;
+		break;
+	case EA320Command::ConfirmYes:
+	{
+		const EA320Confirm What = Confirm;
+		Confirm = EA320Confirm::None;
+		if (What == EA320Confirm::LeaveFlight)
+		{
+			EnterSetup();
+		}
+		else if (What == EA320Confirm::Quit)
+		{
+			// The standalone game quits; in the editor (PIE) the dialog only closes.
+			APlayerController* PC = GetWorld()->GetFirstPlayerController();
+			if (PC && GetWorld()->WorldType == EWorldType::Game)
+			{
+				PC->ConsoleCommand(TEXT("quit"));
+			}
+		}
+		break;
+	}
 	case EA320Command::FlightDep:
 		if (Runways.IsValidIndex(Param))
 		{
@@ -686,23 +718,29 @@ void AA320Aircraft::ExecuteCommand(EA320Command Command, bool bLarge, int32 Para
 	case EA320Command::FlightDepAirport: SetDepartureAirport(Param); break;
 	case EA320Command::FlightArrAirport: SetArrivalAirport(Param); break;
 	case EA320Command::MapToggle:
-		bMapVisible = !bMapVisible;
-		bFlightMenu = bFlightMenu && !bMapVisible;
-		bGuideMenu = bGuideMenu && !bMapVisible;
+		// The setup screen is the map; in flight the map is a window.
+		if (!bSetup)
+		{
+			bMapVisible = !bMapVisible;
+			bGuideMenu = bGuideMenu && !bMapVisible;
+		}
 		break;
 	case EA320Command::FlightGo:
-		bFlightMenu = false;
-		bMapVisible = false;
-		ResetScenario(FlightScenario);
+		if (bSetup)
+		{
+			LeaveSetup();
+		}
 		break;
 	case EA320Command::ResetRunway: ResetScenario(A320_SCENARIO_RUNWAY); break;
 	case EA320Command::ResetFinal10: ResetScenario(A320_SCENARIO_FINAL_10NM); break;
 	case EA320Command::ResetFinal4: ResetScenario(A320_SCENARIO_FINAL_4NM); break;
 	case EA320Command::ResetApproach: ResetScenario(A320_SCENARIO_APPROACH); break;
 	case EA320Command::GuideMenu:
-		bGuideMenu = !bGuideMenu;
-		bFlightMenu = bFlightMenu && !bGuideMenu;
-		bMapVisible = bMapVisible && !bGuideMenu;
+		if (!bSetup)  // the setup screen lists the lessons itself
+		{
+			bGuideMenu = !bGuideMenu;
+			bMapVisible = bMapVisible && !bGuideMenu;
+		}
 		break;
 	case EA320Command::GuideStart0:
 	case EA320Command::GuideStart1:
@@ -781,9 +819,58 @@ void AA320Aircraft::StartGuide(int32 Guide)
 	bLessonStart = false;
 	a320_guide_start(Sim, Guide);
 	bGuideMenu = false;
-	bFlightMenu = false;
 	bHelpVisible = false;
 	bOverheadVisible = false;
+	if (bSetup)
+	{
+		bSetup = false;
+		bMapVisible = false;
+		a320_set_paused(Sim, 0);
+		a320_get_state(Sim, &State);
+	}
+}
+
+void AA320Aircraft::EnterSetup()
+{
+	// The flight stops where it is, paused, behind the setup screen; FLY starts a new one.
+	bSetup = true;
+	Confirm = EA320Confirm::None;
+	bMapVisible = bGuideMenu = bMcduVisible = bRadioVisible = bOverheadVisible = false;
+	if (Sim)
+	{
+		a320_guide_stop(Sim);
+		a320_set_paused(Sim, 1);
+		a320_get_state(Sim, &State);
+	}
+}
+
+void AA320Aircraft::LeaveSetup()
+{
+	bSetup = false;
+	bMapVisible = false;
+	Confirm = EA320Confirm::None;
+	ResetScenario(FlightScenario);
+	if (Sim)
+	{
+		a320_set_paused(Sim, 0);
+		a320_get_state(Sim, &State);
+	}
+}
+
+void AA320Aircraft::AskConfirm(EA320Confirm What)
+{
+	if (Confirm != EA320Confirm::None)
+	{
+		return;
+	}
+	// The sim waits while the question is open (unless it already was paused).
+	bPausedBeforeConfirm = State.paused != 0;
+	Confirm = What;
+	if (Sim && !bSetup)
+	{
+		a320_set_paused(Sim, 1);
+		State.paused = 1;
+	}
 }
 
 A320GuideStatus AA320Aircraft::GetGuideStatus() const

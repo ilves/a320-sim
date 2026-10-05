@@ -143,6 +143,18 @@ enum class EA320Command : uint8
 	// FLIGHT menu: the weather (Param: A320Weather) and day or night (Param 1 = night).
 	WeatherSet,
 	NightSet,
+	// The confirmation dialog (back to the flight setup, or quit), and asking to quit.
+	ConfirmYes,
+	ConfirmNo,
+	QuitAsk,
+};
+
+// What the confirmation dialog asks.
+enum class EA320Confirm : uint8
+{
+	None,
+	LeaveFlight,  // end the flight and go back to the flight setup
+	Quit,
 };
 
 // Levers dragged with the mouse; the value is the handle position, 0 at the top of its slot.
