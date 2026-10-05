@@ -201,6 +201,12 @@ TEST(hdg_push_engages_nav_in_the_air) {
   a320_fcu_command(sim, A320_FCU_HDG_PUSH);
   s = state(sim);
   CHECK(s.latMode == A320_LAT_NAV);
+  // Pulling the knob leaves NAV, and the sim says so (easily done by mistake); a push returns.
+  a320_fcu_command(sim, A320_FCU_HDG_PULL);
+  CHECK(state(sim).latMode == A320_LAT_HDG && std::strstr(state(sim).hint, "NAV is off") != nullptr);
+  a320_fcu_command(sim, A320_FCU_HDG_PUSH);
+  s = state(sim);
+  CHECK(s.latMode == A320_LAT_NAV);
   a320_fcu_command(sim, A320_FCU_APPR);
   double t = 0.0;
   for (; t < 400.0 && s.latMode != A320_LAT_LOC; t += kDt) {

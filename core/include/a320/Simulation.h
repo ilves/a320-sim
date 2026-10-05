@@ -132,6 +132,7 @@ class Simulation {
   double pathNm_ = -1.0;
   int pathCst_ = -1;
   void updateVnav();
+  uint32_t navLostSeen_ = 0;
   Atc atc_;
   double stepTimeS_ = 0.0;
   void updateAtc();

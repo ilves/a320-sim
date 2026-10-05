@@ -464,8 +464,10 @@ departure and arrival runways) and the flight plan gets a route the autopilot ca
   RW at the threshold. Coming from beside or beyond the runway, a downwind (DW) and base (BS)
   point lead onto it. CF and FF carry the intercept altitude.
 - **NAV:** armed for the takeoff (cyan on the FMA), it engages at 30 ft and flies the legs with
-  fly-by turns. HDG pull leaves it, HDG push (Shift+U, Shift-click on HDG, or the panel's push)
-  re-engages it, direct to the next fix when far from the route. With APPR armed, LOC and G/S
+  fly-by turns. HDG pull (U, a click on the HDG/TRK button) leaves it for the selected heading
+  or track, and the sim says so; HDG push (Shift+U, a click on the HDG/TRK window, or the panel's
+  push) re-engages it, direct to the next fix when far from the route. The FMA's lateral column
+  shows which: NAV, or HDG/TRK. With APPR armed, LOC and G/S
   capture from NAV.
 - **On the displays:** the ND draws the legs still to fly in green with the TO waypoint in white,
   and its name, bearing and distance at the top right; the map draws the whole route. The HDG
@@ -557,7 +559,7 @@ The lesson ends once you have stopped on the runway.
 - the selected values are in the amber windows;
 - −/+ change them, and Shift-click changes them ten times faster;
 - the HDG, LVL/CH and V/S buttons "pull" the knob, which tells the autopilot to fly the
-  selected value, and Shift-click "pushes" it (hold the heading, level off, V/S 0);
+  selected value, and Shift-click (or a click on the window) "pushes" it (NAV, CLB/DES, V/S 0);
 - HDG V/S switches to TRK FPA: the same windows then select a track and a flight path angle.
 
 1. **After takeoff.** The FCU is preset to 200 kt and 5000 ft.

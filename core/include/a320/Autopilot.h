@@ -70,6 +70,7 @@ class Autopilot {
   double fpaDeg() const { return fpa_; }
   bool trkFpa() const { return trkFpa_; }
   uint32_t disconnectSeq() const { return disconnects_; }
+  uint32_t navLostSeq() const { return navLost_; }  // +1 when NAV reverts, having no leg left to fly
 
  private:
   void disconnectAp();
@@ -108,6 +109,7 @@ class Autopilot {
   bool athrWasActive_ = false;
   bool aFloor_ = false, togaLock_ = false;
   uint32_t disconnects_ = 0;
+  uint32_t navLost_ = 0;
 };
 
 const char* latModeName(int mode);

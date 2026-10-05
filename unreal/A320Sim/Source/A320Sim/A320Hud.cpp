@@ -1075,7 +1075,7 @@ void AA320Hud::DrawHelp()
 		TEXT("MCDU           Tab (or MCDU, top right): arrival ILS, RAD NAV, PERF; type on the keyboard, Backspace = CLR"),
 		TEXT("Radio / ATC    F10 (or RADIO, top right): COM 1, transponder, ATC log; keys 1-6 pick a reply while it's open"),
 		TEXT("FCU            1/2 SPD,  3/4 HDG,  5/6 ALT,  7/8 V/S  (Shift = x10);  U fly HDG,  9 climb/descend to ALT,  0 hold V/S"),
-		TEXT("               \\ HDG-V/S / TRK-FPA;  Shift+U, Shift+9, Shift+0 (or Shift+click) push the knob: NAV, CLB/DES along the flight plan, V/S 0"),
+		TEXT("               \\ HDG-V/S / TRK-FPA;  Shift+U, Shift+9, Shift+0 (or Shift+click) push the knob: NAV, CLB/DES along the flight plan, V/S 0; or click its window"),
 		TEXT("Sound          - (minus) on/off,  M silence master warning"),
 		TEXT("Takeoff        N (release brake), Home (TOGA), rotate ~150 kt with Down arrow, G at positive climb"),
 		TEXT("Landing        Vapp = VLS + 5 (amber strip), keep diamonds centred, flare ~30 ft, End at RETARD"),
@@ -1142,6 +1142,7 @@ void AA320Hud::DrawFcu(const AA320Aircraft& Aircraft, double X, double Y, double
 		const TCHAR* PullLabel;
 		bool bPullLit;
 		bool bManaged = false;  // NAV: dashes and the managed dot
+		EA320Command Push = EA320Command::None;  // a click on the window pushes the knob
 	};
 	// The HDG-V/S / TRK-FPA pushbutton turns the heading and V/S windows into track and FPA.
 	const bool bTrkFpa = St.fcuTrkFpa != 0;
@@ -1153,9 +1154,9 @@ void AA320Hud::DrawFcu(const AA320Aircraft& Aircraft, double X, double Y, double
 		: (bTrkFpa ? FString::Printf(TEXT("%+.1f"), St.fcuFpaDeg) : FString::Printf(TEXT("%+05d"), FMath::RoundToInt(St.fcuVsFpm)));
 	const FWindow FcuWindows[] = {
 		{TEXT("SPD"), FString::Printf(TEXT("%03d"), FMath::RoundToInt(St.fcuSpdKt)), EA320Command::SpdDec, EA320Command::SpdInc, EA320Command::None, TEXT(""), false},
-		{bTrkFpa ? TEXT("TRK") : TEXT("HDG"), bNav ? FString(TEXT("---")) : FString::Printf(TEXT("%03d"), (FMath::RoundToInt(St.fcuHdgMagDeg) + 359) % 360 + 1), EA320Command::HdgDec, EA320Command::HdgInc, EA320Command::FcuHdgPull, bTrkFpa ? TEXT("TRK") : TEXT("HDG"), St.latMode == A320_LAT_HDG || St.latMode == A320_LAT_TRK, bNav},
-		{TEXT("ALT"), FString::Printf(TEXT("%05d"), FMath::RoundToInt(St.fcuAltFt)), EA320Command::AltDec, EA320Command::AltInc, EA320Command::FcuAltPull, TEXT("LVL/CH"), St.vertMode == A320_VERT_OP_CLB || St.vertMode == A320_VERT_OP_DES, bManagedAlt},
-		{bTrkFpa ? TEXT("FPA") : TEXT("V/S"), VsValue, EA320Command::VsDec, EA320Command::VsInc, EA320Command::FcuVsPull, bTrkFpa ? TEXT("FPA") : TEXT("V/S"), bVs},
+		{bTrkFpa ? TEXT("TRK") : TEXT("HDG"), bNav ? FString(TEXT("---")) : FString::Printf(TEXT("%03d"), (FMath::RoundToInt(St.fcuHdgMagDeg) + 359) % 360 + 1), EA320Command::HdgDec, EA320Command::HdgInc, EA320Command::FcuHdgPull, bTrkFpa ? TEXT("TRK") : TEXT("HDG"), St.latMode == A320_LAT_HDG || St.latMode == A320_LAT_TRK, bNav, EA320Command::FcuHdgPush},
+		{TEXT("ALT"), FString::Printf(TEXT("%05d"), FMath::RoundToInt(St.fcuAltFt)), EA320Command::AltDec, EA320Command::AltInc, EA320Command::FcuAltPull, TEXT("LVL/CH"), St.vertMode == A320_VERT_OP_CLB || St.vertMode == A320_VERT_OP_DES, bManagedAlt, EA320Command::FcuAltPush},
+		{bTrkFpa ? TEXT("FPA") : TEXT("V/S"), VsValue, EA320Command::VsDec, EA320Command::VsInc, EA320Command::FcuVsPull, bTrkFpa ? TEXT("FPA") : TEXT("V/S"), bVs, false, EA320Command::FcuVsPush},
 	};
 	Fill(X, Y, W, H, FLinearColor(0.09f, 0.095f, 0.1f));
 	const double Gap = 6.0 * Scale;
@@ -1183,6 +1184,10 @@ void AA320Hud::DrawFcu(const AA320Aircraft& Aircraft, double X, double Y, double
 		{
 			const double Dot = H * 0.09;
 			Fill(CX + BoxW - Dot * 1.8, Y + H * 0.67 - Dot / 2.0, Dot, Dot, Amber);
+		}
+		if (Win.Push != EA320Command::None)
+		{
+			Buttons.Add({FBox2D(FVector2D(CX, Y + H * 0.42), FVector2D(CX + BoxW, Y + H * 0.92)), Win.Push});
 		}
 		const double SmallW = WindowW * 0.15;
 		AddButton(CX + BoxW + 2.0, Y + H * 0.42, SmallW, H * 0.5, TEXT("-"), Win.Dec, false);

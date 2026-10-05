@@ -890,6 +890,11 @@ void Simulation::applyControls() {
   lnav_.update(route_, lnavAircraft());
   updateVnav();
   const ApOutput ap = ap_.update(apInput());
+  if (ap_.navLostSeq() != navLostSeen_) {
+    navLostSeen_ = ap_.navLostSeq();
+    hint(ap_.trkFpa() ? "NAV lost: the flight plan has no leg left to fly. The autopilot holds the present track (TRK)."
+                      : "NAV lost: the flight plan has no leg left to fly. The autopilot holds the present heading (HDG).");
+  }
   const bool alphaFloor = ap_.athrMode() == A320_ATHR_AFLOOR;
   if (alphaFloor && !wasAlphaFloor_)
     hint("ALPHA FLOOR: the angle of attack came close to the stall, so A/THR set TOGA thrust. Once the speed is back, "

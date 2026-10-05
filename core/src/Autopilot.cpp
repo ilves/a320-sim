@@ -176,8 +176,10 @@ const char* Autopilot::command(A320FcuCommand cmd, const ApInput& in) {
         return nullptr;
       }
       [[fallthrough]];
-    case A320_FCU_HDG_PULL:
+    case A320_FCU_HDG_PULL: {
       if (landing) return kLandLocked;
+      // Pulling leaves NAV for the selected heading or track: say so, it is easily done by mistake.
+      const bool leftNav = cmd == A320_FCU_HDG_PULL && (lat_ == A320_LAT_NAV || navArmed_);
       navArmed_ = false;
       lat_ = selectedLateral();
       locArmed_ = gsArmed_ = false;
@@ -185,12 +187,20 @@ const char* Autopilot::command(A320FcuCommand cmd, const ApInput& in) {
         syncVerticalTargets(in);
         enterVertical(selectedVertical(), in);
       }
-      if (cmd == A320_FCU_HDG_PULL) return nullptr;
+      if (cmd == A320_FCU_HDG_PULL) {
+        if (!leftNav) return nullptr;
+        hint_ = std::string(trkFpa_ ? "TRK" : "HDG") + " pulled: NAV is off, the autopilot flies the selected " +
+                (trkFpa_ ? "track " : "heading ") + std::to_string(static_cast<int>(hdg_) == 0 ? 360 : static_cast<int>(hdg_)) +
+                ". Back to the flight plan: push the knob (Shift+U, click the " + (trkFpa_ ? "TRK" : "HDG") +
+                " window, or the panel's push).";
+        return hint_.c_str();
+      }
       hdg_ = presentDirection(in);
       return trkFpa_ ? "HDG pushed: no flight plan to navigate (NAV), so the autopilot holds the present track, "
-                       "wings level. Choose departure and arrival on the FLIGHT menu or the MCDU for a route."
+                       "wings level. Choose departure and arrival on the setup screen or the MCDU for a route."
                      : "HDG pushed: no flight plan to navigate (NAV), so the autopilot holds the present heading, "
-                       "wings level. Choose departure and arrival on the FLIGHT menu or the MCDU for a route.";
+                       "wings level. Choose departure and arrival on the setup screen or the MCDU for a route.";
+    }
     case A320_FCU_TRK_FPA: {
       trkFpa_ = !trkFpa_;
       // An engaged HDG or V/S becomes TRK or FPA on the present values; a preselected
@@ -291,6 +301,7 @@ void Autopilot::updateModes(const ApInput& in) {
   if (lat_ == A320_LAT_NAV && !in.navValid) {
     lat_ = selectedLateral();
     hdg_ = presentDirection(in);
+    ++navLost_;
   }
   // Localizer capture: within 1.8 dots and converging, then track once nearly centred.
   if (locArmed_ && in.locValid && std::fabs(in.locDots) < 1.8) {
