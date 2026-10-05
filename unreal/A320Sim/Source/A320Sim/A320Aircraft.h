@@ -71,6 +71,8 @@ public:
 	const TArray<A320AirportInfo>& GetAirports() const { return Airports; }
 	// The flight plan's waypoints (a320_get_waypoint), refreshed every frame.
 	const TArray<A320Waypoint>& GetRoute() const { return Route; }
+	// The route the flight being set up will get (a320_preview_route), while the setup screen is open.
+	const TArray<A320Waypoint>& GetPreviewRoute() const { return PreviewRoute; }
 	// At the nearest airport.
 	double GetMagneticVariation() const { return State.magneticVariationDeg; }
 	double GetFieldElevationFt() const;
@@ -155,6 +157,9 @@ private:
 	FString SimError;
 	TArray<A320RunwayInfo> Runways;
 	TArray<A320Waypoint> Route;
+	TArray<A320Waypoint> PreviewRoute;
+	FString PreviewKey;  // the selection PreviewRoute was made for
+	void RefreshPreviewRoute();
 	TArray<A320AirportInfo> Airports;
 	int32 DepRunway = 0;
 	int32 ArrRunway = 0;

@@ -2793,6 +2793,23 @@ void AA320Hud::DrawFlightOptions(const AA320Aircraft& Aircraft, double PX, doubl
 			? TEXT(" MCDU: only FROM/TO; insert the approach yourself (F-PLN, destination, ARRIVAL) or the ILS is not tuned.")
 			: TEXT(" MCDU: empty; enter INIT FROM/TO, F-PLN departure and arrival, and PERF TAKE OFF yourself.");
 	}
+	// The waypoints NAV will fly (on the map too), or why there are none.
+	const TArray<A320Waypoint>& Preview = Aircraft.GetPreviewRoute();
+	if (Preview.Num() >= 2 && !Place.bSet)
+	{
+		FString Names;
+		double RouteNm = 0.0;
+		for (const A320Waypoint& Wpt : Preview)
+		{
+			Names += (Names.IsEmpty() ? TEXT("") : TEXT(" ")) + FString(UTF8_TO_TCHAR(Wpt.ident));
+			RouteNm += Wpt.legNm;
+		}
+		Summary += FString::Printf(TEXT(" Route for NAV: %s, %.0f NM."), *Names, RouteNm);
+	}
+	else if (!Place.bSet && D.airport != A.airport)
+	{
+		Summary += TEXT(" No route: with the flight plan NOT ENTERED, it is made once you enter the departure and arrival on the MCDU.");
+	}
 	CY += TextWrapped(Summary, PX + Pad, CY, PW - 2.0 * Pad, White, 0) + Gap;
 	AddButton(PX + Pad, CY, 200.0 * Scale, BH * 1.3, TEXT("FLY  (Enter)"), EA320Command::FlightGo, true);
 	CY += BH * 1.3 + 2.0 * Gap;
@@ -3180,11 +3197,13 @@ void AA320Hud::DrawMap(const AA320Aircraft& Aircraft, const FBox2D& Area, bool b
 	const double DestN = Place.bSet ? Place.NorthM : Airports[ArrRw.airport].northM;
 	const double DestE = Place.bSet ? Place.EastM : Airports[ArrRw.airport].eastM;
 	const bool bTrip = Place.bSet || ArrRw.airport != DepRw.airport;
-	// The loaded flight's route, unless the menu or the map has chosen another flight since.
-	const TArray<A320Waypoint>& Route = Aircraft.GetRoute();
+	// The setup screen shows the route the flight being set up will get; in flight, the loaded
+	// flight's route, unless a different flight has been chosen since.
+	const TArray<A320Waypoint>& Route = bSetup ? Aircraft.GetPreviewRoute() : Aircraft.GetRoute();
 	auto Near = [](double N0, double E0, double N1, double E1) { return FMath::Abs(N0 - N1) < 50.0 && FMath::Abs(E0 - E1) < 50.0; };
-	const bool bRouteShown = !Place.bSet && Route.Num() >= 2 && Near(Route.Last().northM, Route.Last().eastM, ArrRw.thresholdNorthM, ArrRw.thresholdEastM) &&
-		(Route[0].kind == A320_WPT_POSITION || Near(Route[0].northM, Route[0].eastM, DepRw.startNorthM, DepRw.startEastM));
+	const bool bRouteShown = !Place.bSet && Route.Num() >= 2 && (bSetup ||
+		(Near(Route.Last().northM, Route.Last().eastM, ArrRw.thresholdNorthM, ArrRw.thresholdEastM) &&
+		 (Route[0].kind == A320_WPT_POSITION || Near(Route[0].northM, Route[0].eastM, DepRw.startNorthM, DepRw.startEastM))));
 	if (bRouteShown)
 	{
 		// The flight plan's waypoints, named when zoomed in; the aircraft to its TO waypoint.
@@ -3199,13 +3218,13 @@ void AA320Hud::DrawMap(const AA320Aircraft& Aircraft, const FBox2D& Area, bool b
 			if (InMap(P, 0.0) && Route[i].kind != A320_WPT_RUNWAY)
 			{
 				Arc(P.X, P.Y, 4.0 * Scale, 0.0, 360.0, Magenta, 2.0);
-				if (MapMetresPerPixel < 250.0)
+				if (MapMetresPerPixel < 250.0 || bSetup)
 				{
 					Text(UTF8_TO_TCHAR(Route[i].ident), P.X + 7.0 * Scale, P.Y + 9.0 * Scale, Magenta, 0, 0);
 				}
 			}
 		}
-		if (!St.onGround && Route.IsValidIndex(St.routeActive))
+		if (!bSetup && !St.onGround && Route.IsValidIndex(St.routeActive))
 		{
 			const FVector2D Ac = MapToScreen(St.northM, St.eastM);
 			const FVector2D To = MapToScreen(Route[St.routeActive].northM, Route[St.routeActive].eastM);

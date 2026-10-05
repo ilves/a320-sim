@@ -289,3 +289,42 @@ TEST(managed_climb_and_descent) {
   CHECK(std::strcmp(a320_vert_mode_name(A320_VERT_ALT_CST), "ALT CST") == 0);
   a320_destroy(sim);
 }
+
+// The setup screen's preview is the route the flight then gets, on the ground and in the air.
+TEST(route_preview_matches_the_flight) {
+  char err[256] = {0};
+  A320Sim* sim = a320_create(A320_DATA_DIR, err, sizeof(err));
+  if (!sim) { CHECK(false); return; }
+  struct Case {
+    A320Scenario scenario;
+    const char *depIcao, *depRwy, *arrIcao, *arrRwy;
+    double nm;
+    int plan;
+  };
+  const Case cases[] = {
+      {A320_SCENARIO_RUNWAY, "EETN", "26", "EEKE", "17", 0.0, A320_PLAN_FULL},
+      {A320_SCENARIO_COLD_DARK, "EETU", "26", "EEKA", "32", 0.0, A320_PLAN_ROUTE},
+      {A320_SCENARIO_APPROACH, "EETN", "26", "EETU", "26", 40.0, A320_PLAN_FULL},
+      {A320_SCENARIO_FINAL_10NM, "EETN", "26", "EETN", "26", 0.0, A320_PLAN_FULL},
+  };
+  for (const Case& k : cases) {
+    const int dep = runway(sim, k.depIcao, k.depRwy), arr = runway(sim, k.arrIcao, k.arrRwy);
+    A320Waypoint preview[32];
+    const int n = a320_preview_route(sim, k.scenario, dep, arr, k.nm, k.plan, preview, 32);
+    a320_start_flight(sim, k.scenario, dep, arr, k.nm, k.plan);
+    const std::vector<A320Waypoint> flown = route(sim);
+    std::printf("  %s%s -> %s%s, scenario %d: preview %d, flight %d points\n", k.depIcao, k.depRwy, k.arrIcao, k.arrRwy,
+                static_cast<int>(k.scenario), n, static_cast<int>(flown.size()));
+    CHECK(n > 0 && n == static_cast<int>(flown.size()));
+    for (int i = 0; i < n && i < static_cast<int>(flown.size()); ++i) {
+      CHECK(std::strcmp(preview[i].ident, flown[static_cast<size_t>(i)].ident) == 0);
+      CHECK(std::fabs(preview[i].northM - flown[static_cast<size_t>(i)].northM) < 50.0 &&
+            std::fabs(preview[i].eastM - flown[static_cast<size_t>(i)].eastM) < 50.0);
+    }
+  }
+  // No route: a circuit, and an empty flight plan on the ground.
+  const int tln = runway(sim, "EETN", "26"), eeke = runway(sim, "EEKE", "17");
+  CHECK(a320_preview_route(sim, A320_SCENARIO_RUNWAY, tln, tln, 0.0, A320_PLAN_FULL, nullptr, 0) == 0);
+  CHECK(a320_preview_route(sim, A320_SCENARIO_RUNWAY, tln, eeke, 0.0, A320_PLAN_EMPTY, nullptr, 0) == 0);
+  a320_destroy(sim);
+}

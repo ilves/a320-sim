@@ -225,10 +225,9 @@ void a320_fcu_set_targets(A320Sim* sim, double spdKt, double hdgMagDeg, double a
 
 int a320_route_count(const A320Sim* sim) { return sim ? static_cast<int>(sim->sim.route().points.size()) : 0; }
 
-int a320_get_waypoint(const A320Sim* sim, int index, A320Waypoint* out) {
-  if (!sim || !out || index < 0 || index >= a320_route_count(sim)) return 0;
-  const a320::World& w = sim->sim.world();
-  const std::vector<a320::Waypoint>& pts = sim->sim.route().points;
+namespace {
+
+void fillWaypoint(const a320::World& w, const std::vector<a320::Waypoint>& pts, int index, A320Waypoint* out) {
   const a320::Waypoint& p = pts[static_cast<size_t>(index)];
   *out = A320Waypoint{};
   std::snprintf(out->ident, sizeof(out->ident), "%s", p.ident.c_str());
@@ -250,7 +249,23 @@ int a320_get_waypoint(const A320Sim* sim, int index, A320Waypoint* out) {
     out->legCourseMagDeg = std::fmod(trueDeg - var + 720.0, 360.0);
     out->legNm = std::hypot(p.n - q.n, p.e - q.e) / a320::kNmToM;
   }
+}
+
+}  // namespace
+
+int a320_get_waypoint(const A320Sim* sim, int index, A320Waypoint* out) {
+  if (!sim || !out || index < 0 || index >= a320_route_count(sim)) return 0;
+  fillWaypoint(sim->sim.world(), sim->sim.route().points, index, out);
   return 1;
+}
+
+int a320_preview_route(const A320Sim* sim, A320Scenario scenario, int depRunway, int arrRunway, double distanceNm,
+                       int flightPlan, A320Waypoint* out, int maxPoints) {
+  if (!sim) return 0;
+  const a320::Route r = sim->sim.previewRoute(scenario, depRunway, arrRunway, distanceNm, flightPlan);
+  const int n = static_cast<int>(r.points.size());
+  for (int i = 0; out && i < n && i < maxPoints; ++i) fillWaypoint(sim->sim.world(), r.points, i, &out[i]);
+  return n;
 }
 
 void a320_fcu_set_fpa(A320Sim* sim, double fpaDeg) {

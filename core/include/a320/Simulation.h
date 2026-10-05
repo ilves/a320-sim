@@ -72,6 +72,8 @@ class Simulation {
   void mcduKey(int key);
   void mcduDisplay(A320McduDisplay& out) const;
   const Route& route() const { return route_; }
+  // The route startFlight would give, for the flight setup screen.
+  Route previewRoute(A320Scenario scenario, int depRunway, int arrRunway, double distanceNm, int flightPlan) const;
   Fms& fms() { return fms_; }
   const Fms& fms() const { return fms_; }
 
@@ -89,6 +91,12 @@ class Simulation {
   void refreshState();
   // The MCDU's data for a new flight, as much as flightPlan (A320FlightPlan) says.
   void loadFlightPlan(int flightPlan, bool onRunway, int depRunway, int arrRunway);
+  // Its FROM/TO and runways only (what the route is made from).
+  Fms routeFms(int flightPlan, bool onRunway, int depRunway, int arrRunway) const;
+  // Where an airborne start puts the aircraft on the arrival runway's axes (startAltFt: the
+  // altitude of the APPROACH start).
+  RunwayPoint airborneStart(A320Scenario scenario, const Ils& ils, const Runway& runway, double distanceNm,
+                            double& startAltFt) const;
   double prop(const char* name) const;
   void setProp(const char* name, double v);
 

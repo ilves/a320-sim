@@ -21,7 +21,7 @@
 extern "C" {
 #endif
 
-#define A320_API_VERSION 15
+#define A320_API_VERSION 16
 
 typedef enum A320Scenario {
   A320_SCENARIO_RUNWAY = 0,     /* lined up, engines idle, CONF 1+F, park brake set */
@@ -436,6 +436,11 @@ typedef struct A320Waypoint {
 } A320Waypoint;
 A320_API int a320_route_count(const A320Sim* sim);
 A320_API int a320_get_waypoint(const A320Sim* sim, int index, A320Waypoint* out);
+/* The route a flight would get (API 16), without starting it: the same arguments as
+ * a320_start_flight. Fills up to maxPoints of out; returns the route's length (0: no route, e.g. a
+ * circuit, or an empty flight plan on the ground). */
+A320_API int a320_preview_route(const A320Sim* sim, A320Scenario scenario, int depRunway, int arrRunway, double distanceNm,
+                                int flightPlan, A320Waypoint* out, int maxPoints);
 
 A320_API const char* a320_lat_mode_name(int latMode);
 A320_API const char* a320_vert_mode_name(int vertMode);

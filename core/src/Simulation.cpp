@@ -104,8 +104,8 @@ bool Simulation::startFlight(A320Scenario scenario, int depRunway, int arrRunway
   const int last = static_cast<int>(world_.runways.size()) - 1;
   depRunway = clamp(depRunway, 0, last);
   arrRunway = clamp(arrRunway, 0, last);
-  const bool airborneStart = scenario != A320_SCENARIO_RUNWAY && scenario != A320_SCENARIO_COLD_DARK;
-  runwayIndex_ = airborneStart ? arrRunway : depRunway;
+  const bool inAir = scenario != A320_SCENARIO_RUNWAY && scenario != A320_SCENARIO_COLD_DARK;
+  runwayIndex_ = inAir ? arrRunway : depRunway;
   const Runway& rw = world_.runways[static_cast<size_t>(runwayIndex_)];
   const Ils& rwIls = ils();
   const LocalFrame& rwFrame = airportFrames_[static_cast<size_t>(rw.airport)];
@@ -151,18 +151,11 @@ bool Simulation::startFlight(A320Scenario scenario, int depRunway, int arrRunway
     controls_.parkBrake = 1;
     if (!coldDark) flaps_.setLever(1, 0.0);  // CONF 1+F for takeoff; cold and dark starts clean
   } else if (intercept) {
-    // 3 NM left of the extended centreline, 20 NM out, at 3000 ft: a 30 degree intercept
-    // that captures the localizer near 15 NM and the glideslope from below near 9 NM.
-    // Further out, higher: on a 3 degree profile above 3000 ft, at most FL200.
-    const double nm = clamp(distanceNm, 8.0, 150.0);
-    startAltFt = std::min(20000.0, 3000.0 + std::max(0.0, nm - 20.0) * 318.0);
-    if (startAltFt > 3000.0) startAltFt = std::round(startAltFt / 1000.0) * 1000.0;
-    start = {-nm * kNmToM, -3.0 * kNmToM, startAltFt * kFtToM - rw.threshold.altM};
+    start = airborneStart(scenario, rwIls, rw, distanceNm, startAltFt);
     controls_.gearDown = 0;
     speedKt = 220.0;
   } else {
-    const double distM = (scenario == A320_SCENARIO_FINAL_10NM ? 10.0 : 4.0) * kNmToM;
-    start = rwIls.glidepathPoint(-distM);
+    start = airborneStart(scenario, rwIls, rw, distanceNm, startAltFt);
     flaps_.setLever(scenario == A320_SCENARIO_FINAL_10NM ? 3 : 4, 200.0);
     speedKt = scenario == A320_SCENARIO_FINAL_10NM ? 160.0 : 150.0;
   }
@@ -523,23 +516,66 @@ void Simulation::updateVnav() {
          "ALT knob for DES.");
 }
 
-void Simulation::loadFlightPlan(int flightPlan, bool onRunway, int depRunway, int arrRunway) {
-  fms_ = Fms{};
+RunwayPoint Simulation::airborneStart(A320Scenario scenario, const Ils& ils, const Runway& runway, double distanceNm,
+                                      double& startAltFt) const {
+  if (scenario == A320_SCENARIO_APPROACH) {
+    // 3 NM left of the extended centreline, 20 NM out, at 3000 ft: a 30 degree intercept
+    // that captures the localizer near 15 NM and the glideslope from below near 9 NM.
+    // Further out, higher: on a 3 degree profile above 3000 ft, at most FL200.
+    const double nm = clamp(distanceNm, 8.0, 150.0);
+    startAltFt = std::min(20000.0, 3000.0 + std::max(0.0, nm - 20.0) * 318.0);
+    if (startAltFt > 3000.0) startAltFt = std::round(startAltFt / 1000.0) * 1000.0;
+    return {-nm * kNmToM, -3.0 * kNmToM, startAltFt * kFtToM - runway.threshold.altM};
+  }
+  const double distM = (scenario == A320_SCENARIO_FINAL_10NM ? 10.0 : 4.0) * kNmToM;
+  return ils.glidepathPoint(-distM);
+}
+
+Fms Simulation::routeFms(int flightPlan, bool onRunway, int depRunway, int arrRunway) const {
+  Fms f;
   const Runway& dep = world_.runways[static_cast<size_t>(depRunway)];
   const Runway& arr = world_.runways[static_cast<size_t>(arrRunway)];
-  fms_.flown = !onRunway;
+  f.flown = !onRunway;
   // In the air the route is always known (INIT FROM/TO can only be entered on the ground).
   const bool route = flightPlan != A320_PLAN_EMPTY || !onRunway;
-  fms_.originAirport = route ? dep.airport : -1;
-  fms_.destAirport = route ? arr.airport : -1;
-  if (flightPlan == A320_PLAN_EMPTY) return;
+  f.originAirport = route ? dep.airport : -1;
+  f.destAirport = route ? arr.airport : -1;
+  if (flightPlan == A320_PLAN_EMPTY) return f;
   if (onRunway) {
-    fms_.depRunway = depRunway;
+    f.depRunway = depRunway;
     // A trip elsewhere starts with its arrival; a circuit gets it in the full plan only.
-    if (arrRunway != depRunway || flightPlan == A320_PLAN_FULL) fms_.arrRunway = arrRunway;
+    if (arrRunway != depRunway || flightPlan == A320_PLAN_FULL) f.arrRunway = arrRunway;
   } else {
-    fms_.arrRunway = arrRunway;
+    f.arrRunway = arrRunway;
   }
+  return f;
+}
+
+Route Simulation::previewRoute(A320Scenario scenario, int depRunway, int arrRunway, double distanceNm, int flightPlan) const {
+  if (world_.runways.empty()) return {};
+  const int last = static_cast<int>(world_.runways.size()) - 1;
+  depRunway = clamp(depRunway, 0, last);
+  arrRunway = clamp(arrRunway, 0, last);
+  const bool onRunway = scenario == A320_SCENARIO_RUNWAY || scenario == A320_SCENARIO_COLD_DARK;
+  double northM = 0.0, eastM = 0.0;
+  if (!onRunway) {
+    // Where startFlight would put the aircraft.
+    const Runway& rw = world_.runways[static_cast<size_t>(arrRunway)];
+    const Ils& ils = ilsAll_[static_cast<size_t>(arrRunway)];
+    double altFt = 0.0;
+    const RunwayPoint start = airborneStart(scenario, ils, rw, distanceNm, altFt);
+    const Enu p = frame_.toEnu(airportFrames_[static_cast<size_t>(rw.airport)].toGeo(ils.axes().toEnu(start)));
+    northM = p.n;
+    eastM = p.e;
+  }
+  const Fms fms = routeFms(flightPlan, onRunway, depRunway, arrRunway);
+  return buildRoute(RouteRequest{world_, frame_, fms, onRunway, northM, eastM});
+}
+
+void Simulation::loadFlightPlan(int flightPlan, bool onRunway, int depRunway, int arrRunway) {
+  fms_ = routeFms(flightPlan, onRunway, depRunway, arrRunway);
+  const Runway& dep = world_.runways[static_cast<size_t>(depRunway)];
+  const Runway& arr = world_.runways[static_cast<size_t>(arrRunway)];
   if (flightPlan != A320_PLAN_FULL) return;
 
   fms_.flightNumber = "SIM320";

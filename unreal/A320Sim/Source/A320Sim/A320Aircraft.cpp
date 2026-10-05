@@ -234,6 +234,10 @@ void AA320Aircraft::Tick(float DeltaSeconds)
 	{
 		a320_get_waypoint(Sim, i, &Route[i]);
 	}
+	if (bSetup)
+	{
+		RefreshPreviewRoute();
+	}
 	// Only once the core has actually stepped (not when paused, or on a frame shorter than its
 	// 120 Hz step): release the momentary APU START, and let the autobrake selector follow the
 	// core, which disarms it when the pilot brakes.
@@ -391,6 +395,22 @@ void AA320Aircraft::AdjustFcu(double DSpd, double DHdg, double DAlt, double DVs)
 		a320_fcu_set_targets(Sim, State.fcuSpdKt + DSpd, State.fcuHdgMagDeg + DHdg, State.fcuAltFt + DAlt, State.fcuVsFpm + DVs);
 		a320_get_state(Sim, &State);
 	}
+}
+
+void AA320Aircraft::RefreshPreviewRoute()
+{
+	// Remade only when the selection changes: FROM/TO, the start, the distance, the flight plan.
+	const FString Key = FString::Printf(TEXT("%d/%d/%d/%d/%d"), DepRunway, ArrRunway, static_cast<int32>(FlightScenario),
+		FlightDistanceNm, FlightPlan);
+	if (!Sim || Key == PreviewKey)
+	{
+		return;
+	}
+	PreviewKey = Key;
+	A320Waypoint Points[32];
+	const int32 Count = a320_preview_route(Sim, FlightScenario, DepRunway, ArrRunway, FlightDistanceNm, FlightPlan, Points, 32);
+	PreviewRoute.Reset();
+	PreviewRoute.Append(Points, FMath::Min(Count, 32));
 }
 
 void AA320Aircraft::ApplyWeather()

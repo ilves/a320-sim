@@ -442,6 +442,10 @@ villages, islands and lakes are labelled, more as you zoom in.
   - **DEPART FROM HERE** (airports): the flight starts there, on its ILS runway if it has one.
   - **FLY TO HERE:** an airport becomes the arrival, with ATC; a town or a map point makes a free
     flight without ATC (RADIO can switch it on) with the route on the map and on the ND.
+- **The route's waypoints:** on the setup screen the map draws the route the chosen flight will
+  get (see [Route and NAV](#route-and-nav)), every waypoint named, and the summary lists it with
+  its length. It changes as you change FROM/TO, the start or the flight plan; with the flight
+  plan NOT ENTERED on the ground there is none until you enter it on the MCDU.
 - In flight the map only shows: the route, the aircraft and the selection's distance.
 - The magenta line is the route, with its distance and magnetic course; you can fly anywhere,
   there are no borders.
@@ -717,7 +721,7 @@ The flight tests fly the real JSBSim A320 with a scripted pilot:
   40 NM straight-in to Kuressaare, flown by a crew that reads back, tunes and squawks;
 - the autopilot: OP CLB with ALT capture, a HDG turn, a V/S descent with capture, TRK in a
   40 kt crosswind, an FPA descent with capture, the HDG/ALT/V/S pushes, a route from the
-  departure and arrival, NAV from 30 ft along Tallinn 08 to Tartu onto the ILS 26 (downwind and
+  departure and arrival (and its preview on the setup screen matching the flight's), NAV from 30 ft along Tallinn 08 to Tartu onto the ILS 26 (downwind and
   base), HDG push to NAV in the air, managed CLB from 1500 ft and DES from T/D on the path to ALT
   CST then G/S, the weather on the ATIS and the rain's sound, LOC
   intercept from a heading, instinctive disconnect, and a full autoland to a stop;
